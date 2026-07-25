@@ -1,0 +1,752 @@
+/* ┌── APHOTIC CONTRACT ─────────────────────────────────────────────────────── */
+/* @task       T0.4                                                             */
+/* @phase      0                                                                */
+/* @status     DONE                                                             */
+/* @spec       docs/RECON.md R13 (re-theme surface = the colour literals in this */
+/*             file; public/fonts/cravelo.otf is the MANDATORY display face;     */
+/*             .hscroll-section 300vh / .hscroll-track 300vw hardcode 3 cards)   */
+/* @rules      G7                                                               */
+/* @depends    app/public/fonts/cravelo.otf · app/src/theme.css (loaded first)   */
+/* @facts      Ported VERBATIM from the upstream LandingPage.css (RECON R13).    */
+/* @facts        Every size, timing, easing and breakpoint is byte-identical.    */
+/* @facts        ONLY colour literals changed (palette "Abysse + Bitcoin orange")*/
+/* @facts      PALETTE MAP applied mechanically:                                 */
+/* @facts        #6366f1 -> #16c8d9   #818cf8 -> #4fdcea   #a78bfa -> #7fe3ef    */
+/* @facts        #a855f7 -> #F7931A   #4338ca -> #0d3550   #060b11 -> #04080d    */
+/* @facts        (#818cf8 / #a78bfa occur only in BeamSection.jsx, not here.)    */
+/* @facts      PANEL GRADIENTS (rewritten, not mapped):                          */
+/* @facts        .p1 135deg #04080d 0% -> #0b2c3d 60% -> #16c8d9 100%            */
+/* @facts        .p2 135deg #06131f 0% -> #0d3550 60% -> #16c8d9 100%            */
+/* @facts        .p3 135deg #1a0d05 0% -> #6e3a10 60% -> #F7931A 100%            */
+/* @facts      CTA BUTTON: linear-gradient(110deg,#8a4a06,45%,#F7931A,55%,#8a4a06)*/
+/* @facts        + border 2px solid #F7931A, background-size 200% 100%,          */
+/* @facts        animation landing-shimmer 4s linear infinite.                   */
+/* @facts      DO NOT TOUCH:                                                     */
+/* @facts        .landing overflow-x: clip  (NOT hidden — hidden kills sticky)   */
+/* @facts        .hero height 360vh · .hscroll-section 300vh · .hscroll-track    */
+/* @facts          300vw · .beam-section 200vh · .big-title font-size 44vw       */
+/* @facts        every rgba(255,255,255,x) value and the #000 backgrounds        */
+/* @implements the .landing/.landing-nav style scope for src/landing/*.jsx       */
+/* @forbidden  a 4th hscroll card without changing 300vh + 300vw together        */
+/* @forbidden  overflow-x: hidden on .landing — it breaks position: sticky       */
+/* @invariant  1. @font-face Cravelo resolves to /fonts/cravelo.otf (public/).   */
+/* @invariant  2. No indigo/violet literal from the PALETTE MAP above survives in */
+/*                any CSS RULE (they appear only in that map, as documentation). */
+/* @ac         hero, 3 panels, beams, FAQ and CTA all render in the new palette. */
+/* @verify     cd app && npm run build                                           */
+/* └── END CONTRACT ────────────────────────────────────────────────────────── */
+
+@font-face {
+  font-family: 'Cravelo';
+  src: url('/fonts/cravelo.otf') format('opentype');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
+.landing {
+  font-family: 'Cravelo', 'Inter', sans-serif;
+  background: #000;
+  color: #e8ecf0;
+  min-height: 100vh;
+  /* Do NOT use overflow-x: hidden here — it breaks position: sticky on children */
+  overflow-x: clip;
+}
+
+/* Override App.css body background when landing is active */
+body:has(.landing) {
+  background: #000 !important;
+}
+
+/* Black loading screen */
+.landing .loader {
+  position: fixed;
+  inset: 0;
+  background: #000;
+  z-index: 9999;
+  transition: opacity 0.8s ease;
+}
+.landing .loader.hide {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* ── HERO ── */
+.landing .hero {
+  position: relative;
+  height: 360vh;
+}
+
+.landing .globe-wrap {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 1;
+  will-change: transform, opacity;
+  pointer-events: none;
+}
+
+.landing .globe-wrap > div {
+  width: 100%;
+  height: 100%;
+}
+.landing .globe-wrap canvas {
+  pointer-events: none;
+}
+
+/* ── Nav bar ── */
+.landing-nav {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1.5rem 2.5rem;
+  z-index: 20;
+  pointer-events: none;
+}
+
+.landing-nav .nav-logo {
+  font-family: 'Cravelo', sans-serif;
+  font-size: 3rem;
+  font-weight: normal;
+  letter-spacing: 0.02em;
+  color: #fff;
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+.landing-nav .nav-logo-img {
+  height: 2.4rem;
+  width: auto;
+  filter: brightness(0) invert(1);
+}
+
+.landing-nav .nav-btn {
+  padding: 1.25rem 3.25rem;
+  border-radius: 0.875rem;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(255,255,255,0.04);
+  color: #fff;
+  font-family: 'Cravelo', sans-serif;
+  font-size: 1.4rem;
+  font-weight: 500;
+  cursor: pointer;
+  pointer-events: auto;
+  backdrop-filter: blur(0.75rem);
+  transition: all 0.25s;
+}
+.landing-nav .nav-btn:hover {
+  background: rgba(255,255,255,0.1);
+  border-color: rgba(255,255,255,0.2);
+}
+
+/* ── Giant footer title ── */
+.landing .footer-title {
+  position: relative;
+  z-index: 20;
+  background: #000;
+  text-align: left;
+  overflow: hidden;
+  max-width: 100vw;
+  padding-bottom: 0;
+  line-height: 0.85;
+}
+
+.landing .footer-title-inner {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1vw;
+}
+
+.landing .big-title {
+  font-family: 'Cravelo', sans-serif;
+  font-size: 44vw;
+  font-weight: normal;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  color: #fff;
+  margin-left: 0.3125rem;
+  -webkit-mask-image: linear-gradient(to bottom, white 40%, transparent 100%);
+  mask-image: linear-gradient(to bottom, white 40%, transparent 100%);
+  opacity: 0.9;
+  max-height: 0.55em;
+  overflow: hidden;
+}
+
+@media (max-width: 48rem) {
+  .landing .big-title {
+    margin-left: 0;
+  }
+}
+
+.landing .mini-globe-wrap {
+  width: 7vw;
+  height: 7vw;
+  flex-shrink: 0;
+  transform: rotate(-15deg);
+  margin-bottom: 2vw;
+}
+.landing .mini-globe-wrap > div {
+  width: 100%;
+  height: 100%;
+}
+
+/* ── Stats (bottom-left) ── */
+.landing .stats-row {
+  position: fixed;
+  bottom: 3rem;
+  left: 2.5rem;
+  z-index: 20;
+  display: flex;
+  gap: 3.5rem;
+  opacity: 0;
+  transition: opacity 0.6s;
+}
+.landing .stats-row.ready { opacity: 1; }
+
+.landing .stat-label {
+  font-size: 2rem;
+  font-weight: 500;
+  color: #586878;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin-bottom: 0.75rem;
+}
+
+.landing .stat-value {
+  font-family: 'Cravelo', sans-serif;
+  font-size: 2.8rem;
+  font-weight: normal;
+  color: #fff;
+  letter-spacing: -0.02em;
+}
+.landing .stat-value .dollar {
+  color: #586878;
+  font-weight: 500;
+}
+
+/* ── HORIZONTAL SCROLL SECTION ── */
+.landing .hscroll-section {
+  position: relative;
+  z-index: 20;
+  height: 300vh;
+  background: #04080d;
+}
+.landing .hscroll-sticky {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow: hidden;
+}
+.landing .hscroll-track {
+  display: flex;
+  height: 100vh;
+  width: 300vw;
+  will-change: transform;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.landing .hscroll-panel {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: 0 6vw;
+}
+.landing .hscroll-panel.p1 { background: linear-gradient(135deg, #04080d 0%, #0b2c3d 60%, #16c8d9 100%); }
+.landing .hscroll-panel.p2 { background: linear-gradient(135deg, #06131f 0%, #0d3550 60%, #16c8d9 100%); }
+.landing .hscroll-panel.p3 { background: linear-gradient(135deg, #1a0d05 0%, #6e3a10 60%, #F7931A 100%); }
+
+.landing .hscroll-bigtitle {
+  font-family: 'Cravelo', sans-serif;
+  font-size: 18vw;
+  font-weight: normal;
+  color: rgba(255,255,255,0.92);
+  letter-spacing: -0.02em;
+  line-height: 1;
+  white-space: nowrap;
+  will-change: transform;
+  pointer-events: none;
+}
+
+.landing .hscroll-content {
+  position: absolute;
+  bottom: 8vh;
+  left: 6vw;
+  right: 6vw;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 4vw;
+  z-index: 2;
+}
+.landing .hscroll-content-text {
+  max-width: 48.75rem;
+  color: #fff;
+}
+.landing .hscroll-content-text p {
+  font-family: 'Cravelo', sans-serif;
+  font-size: 2.4rem;
+  color: rgba(255,255,255,0.92);
+  line-height: 1.35;
+  letter-spacing: -0.01em;
+}
+.landing .hscroll-content-icon {
+  width: 8.75rem;
+  height: 8.75rem;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.95);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  box-shadow: 0 1.25rem 3.75rem rgba(0,0,0,0.4);
+}
+.landing .hscroll-content-icon img,
+.landing .hscroll-content-icon svg {
+  width: 65%;
+  height: 65%;
+  object-fit: contain;
+}
+
+.landing .hscroll-counter {
+  position: absolute;
+  top: 8vh;
+  right: 6vw;
+  font-family: 'Cravelo', sans-serif;
+  color: rgba(255,255,255,0.6);
+  font-size: 1rem;
+  letter-spacing: 0.1em;
+  z-index: 2;
+}
+
+@media (max-width: 50rem) {
+  .landing .hscroll-bigtitle { font-size: 22vw; }
+  .landing .hscroll-content { flex-direction: column; align-items: flex-start; }
+  .landing .hscroll-content-text p { font-size: 1.6rem; }
+  .landing .hscroll-content-icon { width: 5rem; height: 5rem; }
+}
+
+/* ── ANIMATED BEAM SECTION ── */
+.landing .beam-section {
+  position: relative;
+  height: 200vh;
+  background: #000;
+  z-index: 20;
+}
+
+.landing .beam-inner {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  display: grid;
+  grid-template-columns: minmax(27.5rem, 38vw) 1fr;
+  align-items: center;
+  gap: 5vw;
+  padding: 0 4vw 0 8.5vw;
+}
+
+.landing .beam-container {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1.1 / 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2.5rem;
+}
+
+.landing .beam-grid {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 2rem;
+  position: relative;
+  z-index: 2;
+}
+.landing .beam-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.landing .beam-circle {
+  width: 4.25rem;
+  height: 4.25rem;
+  border-radius: 50%;
+  background: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 0.875rem rgba(255,255,255,0.06), inset 0 0 0 1px rgba(0,0,0,0.06);
+  flex-shrink: 0;
+  overflow: hidden;
+}
+.landing .beam-circle.center {
+  width: 6rem;
+  height: 6rem;
+  box-shadow: 0 0 2.25rem rgba(255, 255, 255, 0.18);
+}
+.landing .beam-circle img,
+.landing .beam-circle svg {
+  width: 70%;
+  height: 70%;
+  object-fit: contain;
+}
+.landing .beam-circle.center img,
+.landing .beam-circle.center svg {
+  width: 75%;
+  height: 75%;
+}
+
+.landing .beam-text-side {
+  color: #fff;
+  max-width: 40rem;
+  align-self: start;
+  padding-top: 25vh;
+  transform: translateX(5vw);
+}
+.landing .beam-text-side h2 {
+  font-family: 'Cravelo', sans-serif;
+  font-size: 5.4rem;
+  line-height: 1.02;
+  margin-bottom: 3.125rem;
+  letter-spacing: -0.015em;
+}
+.landing .beam-text-side h2 .line-1 {
+  white-space: nowrap;
+}
+.landing .beam-text-side p {
+  font-family: 'Cravelo', sans-serif;
+  color: #8898a8;
+  font-size: 1.95rem;
+  line-height: 1.5;
+}
+@media (max-width: 56.25rem) {
+  .landing .beam-inner {
+    grid-template-columns: 1fr;
+    gap: 4vh;
+    padding: 6vh 6vw;
+  }
+  .landing .beam-text-side h2 { font-size: 2.4rem; }
+}
+
+/* ── FAQ SECTION ── */
+.landing .faq-section {
+  position: relative;
+  z-index: 20;
+  background: #000;
+  padding: 8.75rem 6vw 10rem;
+  overflow: visible;
+}
+.landing .faq-inner {
+  display: grid;
+  grid-template-columns: minmax(17.5rem, 32%) 1fr;
+  gap: 6vw;
+  max-width: 87.5rem;
+  margin: 0 auto;
+  align-items: start;
+}
+.landing .faq-title {
+  font-family: 'Cravelo', sans-serif;
+  font-size: 5rem;
+  color: #fff;
+  letter-spacing: -0.01em;
+  line-height: 1;
+  position: sticky;
+  top: 8.75rem;
+  align-self: start;
+  height: max-content;
+  margin: 0;
+  z-index: 2;
+  will-change: transform;
+}
+.landing .faq-list {
+  width: 100%;
+}
+.landing .faq-item {
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+.landing .faq-item:first-child {
+  border-top: 1px solid rgba(255,255,255,0.08);
+}
+.landing .faq-question {
+  display: flex;
+  align-items: center;
+  gap: 1.375rem;
+  width: 100%;
+  padding: 2rem 0.375rem;
+  background: none;
+  border: none;
+  color: #fff;
+  font-family: 'Cravelo', sans-serif;
+  font-size: 1.7rem;
+  text-align: left;
+  cursor: pointer;
+  transition: color 0.2s;
+}
+.landing .faq-question:hover {
+  color: #cfd8e0;
+}
+.landing .faq-icon {
+  width: 1.75rem;
+  height: 1.75rem;
+  flex-shrink: 0;
+  color: #8898a8;
+  transition: transform 0.3s ease, color 0.2s;
+  margin-left: auto;
+  order: 2;
+}
+.landing .faq-item.open .faq-icon {
+  transform: rotate(45deg);
+  color: #fff;
+}
+.landing .faq-content {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.4s ease;
+}
+.landing .faq-item.open .faq-content {
+  grid-template-rows: 1fr;
+}
+.landing .faq-content > div {
+  overflow: hidden;
+}
+.landing .faq-content p {
+  padding: 0 3.75rem 2rem 0.375rem;
+  font-family: 'Cravelo', sans-serif;
+  color: #8898a8;
+  font-size: 1.25rem;
+  line-height: 1.6;
+  max-width: 92%;
+}
+@media (max-width: 50rem) {
+  .landing .faq-inner { grid-template-columns: 1fr; gap: 2rem; }
+  .landing .faq-title { font-size: 3rem; position: static; }
+  .landing .faq-question { font-size: 1.2rem; padding: 1.375rem 0.25rem; }
+  .landing .faq-content p { font-size: 1rem; padding: 0 2.5rem 1.375rem 0.25rem; }
+}
+
+/* ── CTA SECTION ── */
+.landing .cta-section {
+  position: relative;
+  z-index: 20;
+  background: #000;
+  padding: 8.75rem 2.5rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+.landing .cta-section h2 {
+  font-family: 'Cravelo', sans-serif;
+  font-size: 3.6rem;
+  color: #fff;
+  margin-bottom: 1rem;
+  letter-spacing: -0.01em;
+}
+.landing .cta-section p {
+  font-family: 'Cravelo', sans-serif;
+  color: #8898a8;
+  font-size: 1.2rem;
+  margin-bottom: 2.25rem;
+  max-width: 33.75rem;
+}
+
+.landing .cta-buttons {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+}
+.landing .gradient-btn {
+  height: 3.375rem;
+  padding: 0 2.375rem;
+  border-radius: 0.6875rem;
+  border: 2px solid #F7931A;
+  background: linear-gradient(110deg, #8a4a06, 45%, #F7931A, 55%, #8a4a06);
+  background-size: 200% 100%;
+  color: #fff;
+  font-family: 'Cravelo', sans-serif;
+  font-size: 1.1rem;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  animation: landing-shimmer 4s linear infinite;
+  transition: border-color 0.2s, transform 0.15s;
+}
+.landing .gradient-btn:hover {
+  border-color: #fff;
+}
+.landing .gradient-btn:active {
+  transform: scale(0.97);
+}
+.landing .ghost-btn {
+  height: 3.375rem;
+  padding: 0 2rem;
+  border-radius: 0.6875rem;
+  border: 1px solid rgba(255,255,255,0.18);
+  background: rgba(255,255,255,0.04);
+  color: #fff;
+  font-family: 'Cravelo', sans-serif;
+  font-size: 1.1rem;
+  cursor: pointer;
+  backdrop-filter: blur(0.5rem);
+  transition: all 0.2s;
+}
+.landing .ghost-btn:hover {
+  background: rgba(255,255,255,0.1);
+  border-color: rgba(255,255,255,0.32);
+}
+.landing .ghost-btn:active {
+  transform: scale(0.97);
+}
+@keyframes landing-shimmer {
+  from { background-position: 200% 0; }
+  to   { background-position: -200% 0; }
+}
+
+/* ── CONTACT MODAL ── */
+.landing .modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.65);
+  backdrop-filter: blur(0.625rem);
+  -webkit-backdrop-filter: blur(0.625rem);
+  z-index: 9500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s ease;
+}
+.landing .modal-backdrop.open {
+  opacity: 1;
+  pointer-events: auto;
+}
+.landing .modal-content {
+  background: #0c1218;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 1.125rem;
+  padding: 3.5rem 3.5rem 3rem;
+  width: 90%;
+  max-width: 42.5rem;
+  box-shadow: 0 2.5rem 7.5rem rgba(0,0,0,0.7);
+  transform: scale(0.92) translateY(1.5rem);
+  opacity: 0;
+  transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.25s ease;
+  position: relative;
+}
+.landing .modal-backdrop.open .modal-content {
+  transform: scale(1) translateY(0);
+  opacity: 1;
+}
+.landing .modal-header h3 {
+  font-family: 'Cravelo', sans-serif;
+  font-size: 2.4rem;
+  color: #fff;
+  margin-bottom: 0.625rem;
+  letter-spacing: -0.01em;
+}
+.landing .modal-header p {
+  font-family: 'Cravelo', sans-serif;
+  color: #586878;
+  font-size: 1.1rem;
+  margin-bottom: 2.25rem;
+  line-height: 1.5;
+}
+.landing .modal-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+.landing .modal-form label {
+  font-family: 'Cravelo', sans-serif;
+  font-size: 1rem;
+  color: #8898a8;
+  margin-bottom: 0.5rem;
+  display: block;
+}
+.landing .modal-form input,
+.landing .modal-form textarea {
+  width: 100%;
+  height: 3.375rem;
+  padding: 0.875rem 1.125rem;
+  border-radius: 0.625rem;
+  border: 1px solid rgba(255,255,255,0.1);
+  background: rgba(255,255,255,0.03);
+  color: #fff;
+  font-family: 'Cravelo', sans-serif;
+  font-size: 1.1rem;
+  outline: none;
+  transition: border-color 0.2s;
+  resize: none;
+}
+.landing .modal-form textarea {
+  height: auto;
+  min-height: 6.875rem;
+  line-height: 1.4;
+}
+.landing .modal-form input:focus,
+.landing .modal-form textarea:focus {
+  border-color: #16c8d9;
+}
+.landing .modal-submit {
+  width: 100%;
+  margin-top: 0.875rem;
+  padding: 1.125rem;
+  background: #fff;
+  color: #04080d;
+  border: none;
+  border-radius: 0.625rem;
+  font-family: 'Cravelo', sans-serif;
+  font-size: 1.15rem;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.landing .modal-submit:hover {
+  background: #e8ecf0;
+}
+.landing .modal-close {
+  position: absolute;
+  top: 0.875rem;
+  right: 0.875rem;
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 50%;
+  border: 1px solid rgba(255,255,255,0.1);
+  background: transparent;
+  color: #586878;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.875rem;
+  transition: all 0.2s;
+}
+.landing .modal-close:hover {
+  color: #fff;
+  border-color: rgba(255,255,255,0.3);
+}
+
+@media (max-width: 48rem) {
+  .landing-nav { padding: 1rem 1.25rem; }
+  .landing .stats-row { left: 1.25rem; bottom: 2rem; gap: 2rem; }
+  .landing .stat-value { font-size: 1.6rem; }
+}

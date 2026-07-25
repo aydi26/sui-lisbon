@@ -1,0 +1,32 @@
+# --- secrets (NEVER commit) ---
+.env
+.env.*
+!.env.example
+*.key
+*.keystore
+sui.keystore
+
+# --- node ---
+node_modules/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+.vite/
+.eslintcache
+npm-debug.log*
+pnpm-debug.log*
+
+# --- Move ---
+move/build/
+move/deps/**/build/
+
+# --- OS / editor ---
+Thumbs.db
+.DS_Store
+*.swp
+.idea/
+
+# --- local scratch ---
+*.local
+tmp/

@@ -1,0 +1,31 @@
+{
+  "name": "aphotic-keeper",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Aphotic x Hashi keeper — deterministic off-chain executor (DeepBook TradeCap only).",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "main": "./dist/index.js",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "dev": "npm run build && node dist/index.js",
+    "dev:watch": "tsc -p tsconfig.build.json --watch"
+  },
+  "dependencies": {
+    "@mysten/hashi": "0.6.0",
+    "@mysten/sui": "2.22.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}

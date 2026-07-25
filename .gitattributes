@@ -1,0 +1,20 @@
+# Normalise line endings — this repo is authored on Windows, built on Linux CI.
+* text=auto eol=lf
+
+*.move   text eol=lf
+*.ts     text eol=lf
+*.tsx    text eol=lf
+*.js     text eol=lf
+*.jsx    text eol=lf
+*.md     text eol=lf
+*.toml   text eol=lf
+*.json   text eol=lf
+*.ps1    text eol=crlf
+
+# Binary assets — never touched by EOL conversion.
+*.otf    binary
+*.woff2  binary
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.ico    binary

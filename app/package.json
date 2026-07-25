@@ -1,0 +1,34 @@
+{
+  "name": "aphotic-app",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Aphotic x Hashi - The Bitcoin Dark Vault (React 19 + Vite 6 frontend)",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@mysten/dapp-kit": "1.1.9",
+    "@mysten/enoki": "^1.2.7",
+    "@mysten/hashi": "^0.6.0",
+    "@mysten/sui": "2.22.1",
+    "@number-flow/react": "^0.6.0",
+    "@tanstack/react-query": "^5.90.2",
+    "globe.gl": "^2.45.3",
+    "qrcode.react": "^4.2.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "react-router-dom": "^7.9.3",
+    "three": "^0.183.2"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@vitejs/plugin-react": "^4.4.1",
+    "typescript": "^5.9.2",
+    "vite": "^6.3.1"
+  }
+}

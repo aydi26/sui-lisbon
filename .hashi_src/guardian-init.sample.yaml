@@ -1,0 +1,79 @@
+# Sample configuration for hashi-guardian-init production commands.
+#
+# Reuse this same file for:
+#   cargo run -p hashi-guardian-init -- operator ceremony --config guardian-init.sample.yaml
+#   cargo run -p hashi-guardian-init -- operator provision --config guardian-init.sample.yaml
+#   cargo run -p hashi-guardian-init -- operator activate --config guardian-init.sample.yaml
+#   cargo run -p hashi-guardian-init -- key-provisioner ceremony --config guardian-init.sample.yaml --encrypted-shares-path /secure/path/kp-shares.json
+#   cargo run -p hashi-guardian-init -- key-provisioner provision --config guardian-init.sample.yaml
+#   cargo run -p hashi-guardian-init -- key-provisioner rotate-cert --config guardian-init.sample.yaml --target-kp-pgp-fingerprint 0123456789ABCDEF0123456789ABCDEF01234567 --new-kp-pgp-cert-path /path/to/kp3-new.asc
+
+# gRPC endpoint of the guardian. `operator ceremony` expects ceremony mode;
+# `operator provision` and `operator activate` expect withdraw mode.
+guardian_endpoint: "http://localhost:3000"
+
+# Relay endpoint the KP's share is submitted to. `key-provisioner provision`
+# also uses this endpoint's GuardianInfo to pin the standby session.
+relay_endpoint: "http://localhost:50051"
+
+# Bitcoin network the withdraw-mode guardian validates withdrawal addresses for.
+# One of: mainnet, testnet, regtest, signet.
+bitcoin_network: "signet"
+
+# Path to the armored OpenPGP public cert this KP uses to identify itself.
+# Optional for operator commands. KP ceremony uses it to select this KP's full
+# roster entry and verifies every cert there; provisioning and cert rotation
+# decrypt and sign with only this cert/YubiKey.
+kp_pgp_cert_path: /path/to/kp3-a.asc
+
+# S3 config for the guardian's log bucket. Must have object-lock enabled.
+# If access_key and secret_key are omitted, guardian-init uses the default AWS
+# credential chain.
+guardian_s3:
+  bucket: "hashi-guardian-logs"
+  region: "us-east-1"
+  access_key:
+  secret_key:
+  # S3 object-lock retention class. One of: devnet, mainnet, testnet.
+  # TODO(s3-retention): Should this be replaced by, or derived from, a
+  # repository-wide Hashi network identifier?
+  retention_environment: "testnet"
+
+hashi:
+  # Sui RPC URL used to fetch Hashi on-chain state.
+  sui_rpc: "https://fullnode.devnet.sui.io:443"
+  # Original published Hashi package id.
+  package_id: "0x0000000000000000000000000000000000000000000000000000000000000000"
+  # Shared Hashi object id.
+  hashi_object_id: "0x0000000000000000000000000000000000000000000000000000000000000000"
+
+kp_roster:
+  # Secret-sharing parameters. `num_shares` MUST equal `kp_pgp_cert_paths.len()`.
+  num_shares: 5
+  threshold: 3
+
+  # Paths to each KP's armored OpenPGP public cert set from the expected ceremony
+  # roster. Each entry is one KP/share id and may contain multiple certs
+  # for that KP.
+  kp_pgp_cert_paths:
+    - [/path/to/kp1-a.asc, /path/to/kp1-b.asc]
+    - [/path/to/kp2-a.asc, /path/to/kp2-b.asc]
+    - [/path/to/kp3-a.asc, /path/to/kp3-b.asc]
+    - [/path/to/kp4-a.asc, /path/to/kp4-b.asc]
+    - [/path/to/kp5-a.asc, /path/to/kp5-b.asc]
+
+  # Expected enclave build: git revision + PCR0 (hex).
+  current_build:
+    git_revision: "0000000000000000000000000000000000000000"
+    pcr0: "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+
+  # Older still-trusted builds accepted only for historical S3 logs during an upgrade window.
+  prev_builds: []
+  # prev_builds:
+  #   - git_revision: "1111111111111111111111111111111111111111"
+  #     pcr0: "111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111"
+
+# Limiter parameters the withdraw-mode guardian will be initialized with.
+limiter_config:
+  refill_rate: 1000
+  max_bucket_capacity: 100000000

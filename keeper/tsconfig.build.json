@@ -1,0 +1,15 @@
+{
+  "// APHOTIC CONTRACT": "T0.3 — emit config. `npm run build` => tsc -p tsconfig.build.json. src/ only; tests are never emitted.",
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "rootDir": "src",
+    "outDir": "dist",
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "removeComments": false
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["test/**/*", "dist/**/*", "node_modules"]
+}

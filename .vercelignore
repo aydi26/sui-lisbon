@@ -1,0 +1,26 @@
+# Vercel only builds app/ (see vercel.json). Everything below is dead weight in
+# the deployment upload — keep it out so deploys stay fast.
+#
+# app/ is fully self-contained: it has NO imports from keeper/ or move/.
+# If that ever changes, remove the corresponding line here or the build breaks.
+
+move/
+keeper/
+scripts/
+.hashi_src/
+.hashi_raw/
+
+# Reference docs — not served by the app.
+docs/
+HASHI_INTEGRATION.md
+BTC_FIXED_INCOME.md
+CLAUDE.md
+README (8).md
+
+# Never upload local state or secrets (also covered by .gitignore).
+**/node_modules
+**/.env
+**/.env.*
+!**/.env.example
+**/dist
+move/build
