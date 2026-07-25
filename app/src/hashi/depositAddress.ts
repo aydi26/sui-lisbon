@@ -66,8 +66,8 @@
 
 import { arkworksToSec1Compressed, generateDepositAddress } from '@mysten/hashi';
 
-import { config } from '../../config';
-import { getSuiClient } from '../../lib/suiClient';
+import { config } from '../config';
+import { getSuiClient } from '../lib/suiClient';
 
 /** The Bitcoin network the Hashi testnet deployment settles on. */
 const BITCOIN_NETWORK = 'signet' as const;

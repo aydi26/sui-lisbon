@@ -61,7 +61,7 @@ import { formatBtc, formatSats, truncateMiddle } from '../../lib/format';
 import { suiTxUrl } from '../../lib/explorer';
 import { useAphoticSession } from '../../session/useSession';
 
-import { bip21 } from './depositAddress';
+import { bip21 } from '../../hashi/depositAddress';
 import { useDepositAddress } from './useDepositAddress';
 
 import './deposit.css';

@@ -43,7 +43,7 @@ import {
   readHashiDepositKeys,
   bytesToHex,
   type SelfCheckResult,
-} from './depositAddress';
+} from '../../hashi/depositAddress';
 
 export interface DepositAddressState {
   /** The depositor's Sui address, or null when signed out. */

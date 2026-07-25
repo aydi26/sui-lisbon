@@ -30,7 +30,7 @@ import { useMemo, useState } from 'react';
 
 import { AddressPill } from '../../components/AddressPill';
 import CallPreview from './CallPreview';
-import { parseExitAddressInput } from './bech32';
+import { parseExitAddressInput } from '../../lib/bech32';
 import { describeRegisterCall } from './ptb';
 
 export interface RegisterExitAddressProps {

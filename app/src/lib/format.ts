@@ -1,7 +1,7 @@
 // ┌── APHOTIC CONTRACT ────────────────────────────────────────────────────────
 // @task       T0.4, T3.2
 // @phase      0
-// @status     PARTIAL
+// @status     DONE
 // @spec       docs/APP.md §1 (lib/: sats formatting, bech32 render, explorer links)
 // @spec       docs/APP.md §3.1 (<ExitRequestForm/> validation)
 // @rules      G1 G10
@@ -25,6 +25,11 @@
 // @ac         docs/APP.md §7 A6
 // @verify     cd app && npx tsc --noEmit
 // └── END CONTRACT ───────────────────────────────────────────────────────────
+
+// The bech32/bech32m codec lives in ./bech32 so there is exactly ONE
+// implementation in the app. A second copy could drift, and a drifted address
+// encoder silently sends Bitcoin somewhere unrecoverable.
+import { SIGNET_HRP, encodeWitnessAddress, hexFromProgram } from './bech32';
 
 const SATS_PER_BTC = 100_000_000n;
 
@@ -91,12 +96,20 @@ export interface PinnedAddress {
  * Render the on-chain-pinned `Vault.btc_exit_address` witness program.
  * The bytes are the SOURCE OF TRUTH; bech32 is a display convenience (G2).
  */
-export function renderPinnedAddress(_bytes: Uint8Array): PinnedAddress {
-  // TODO(T3.2): bech32/bech32m encode with the signet HRP ('tb'), witness
-  // version 0 for 20-byte P2WPKH and version 1 for 32-byte P2TR. The UI must
-  // present this as IMMUTABLE — there is no editable field and no code path
-  // that lets a user supply a destination (G2, docs/APP.md §7 A4).
-  throw new Error('TODO(T3.2): renderPinnedAddress not implemented');
+export function renderPinnedAddress(bytes: Uint8Array): PinnedAddress {
+  const hex = hexFromProgram(bytes);
+
+  // Hashi accepts exactly two witness-program lengths (docs/RECON.md R7):
+  // 20 bytes = P2WPKH at witness version 0 (bech32), 32 bytes = P2TR at
+  // witness version 1 (bech32m, BIP-350). Anything else it rejects with
+  // EInvalidBitcoinAddress, so we surface it as INVALID rather than guessing.
+  if (bytes.length === 20) {
+    return { kind: 'P2WPKH', bech32: encodeWitnessAddress(SIGNET_HRP, 0, bytes), hex };
+  }
+  if (bytes.length === 32) {
+    return { kind: 'P2TR', bech32: encodeWitnessAddress(SIGNET_HRP, 1, bytes), hex };
+  }
+  return { kind: 'INVALID', bech32: '', hex };
 }
 
 /** `0xabcd…ef12` — for ids and digests in tight UI. */
