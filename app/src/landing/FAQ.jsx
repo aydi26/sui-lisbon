@@ -41,6 +41,10 @@ const ITEMS = [
     a: "hBTC is custodial-threshold wrapped BTC, and we say so plainly. Your Bitcoin is held under a threshold Schnorr key split across a subset of Sui validators, in a 2-of-2 arrangement with a Guardian enclave, with a roughly 60-day Bitcoin-script recovery leaf as the escape hatch. That is a real trust assumption and Aphotic does not remove it. Our differentiation is not the token's trust model, it is what we compose out of the bridge's on-chain machinery: exits pinned in Move, a withdrawal limiter anyone can re-derive from Hashi's own events, and a permissionless deposit crank.",
   },
   {
+    q: "Who does the encryption actually protect?",
+    a: "You, the depositor — not the strategy author. A market-making strategy that is readable on a public chain gets picked off: anyone can see where the vault is about to quote, trade ahead of it, and leave the vault holding the bad side. That loss is paid out of the vault, which means out of depositors' shares. Encrypting the strategy is front-running defence first and intellectual property second. And it is deliberately not the thing you have to trust: what protects your funds is that the keeper holds only a trading capability and that your exit address is written once on-chain and can never be changed — both of which hold whether or not the strategy is secret.",
+  },
+  {
     q: "What can the keeper actually do?",
     a: "It can place and cancel DeepBook orders. That is the whole list. The keeper holds only a DeepBook TradeCap, never a withdraw or deposit capability, and it never sees or supplies a Bitcoin address: exits are composed in Move directly into Hashi's request_withdrawal using the destination written once into the vault at deposit. A fully compromised keeper can lose you money by trading badly. It cannot take your funds, and it cannot send them anywhere else.",
   },

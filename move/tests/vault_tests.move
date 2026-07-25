@@ -519,8 +519,10 @@ fun pending_exit_is_an_earmark_on_idle() {
 }
 
 #[test]
-#[expected_failure(abort_code = vault::EInsufficientIdle)]
-fun emergency_withdraw_cannot_reach_a_pooled_earmark() {
+fun a_pooled_earmark_is_carved_out_of_deployable_balance() {
+    // The sats are physically in `idle_btc`, but they already belong to a depositor's pending
+    // exit. `free_btc_sats` — the figure every deploy path sizes against — must exclude them,
+    // otherwise the keeper could put someone else's queued exit to work.
     let mut scenario = ts::begin(OWNER);
     let vault_id = create(&mut scenario, OWNER, KEEPER);
     deposit(&mut scenario, vault_id, ALICE, 1_000_000, BOOK_MID);
@@ -529,18 +531,12 @@ fun emergency_withdraw_cannot_reach_a_pooled_earmark() {
     let mut v = borrow(&scenario, vault_id);
     let small = vault::burn_shares_for_btc(&mut v, ALICE, 25_000, BOOK_MID, scenario.ctx());
     vault::add_pending_exit(&mut v, ALICE, small);
-    assert!(vault::idle_btc_value(&v) == 1_000_000, 0);
-    assert!(vault::free_btc_sats(&v) == 975_000, 1);
+
+    assert!(vault::idle_btc_value(&v) == 1_000_000, 0); // physically present
+    assert!(vault::free_btc_sats(&v) == 975_000, 1);    // but 25_000 are spoken for
+    assert!(vault::total_pending_exit_sats(&v) == 25_000, 2);
     ts::return_shared(v);
 
-    // 1_000_000 sats are physically present, but 25_000 of them belong to a pooled exit.
-    scenario.next_tx(OWNER);
-    let mut v = borrow(&scenario, vault_id);
-    let cap = scenario.take_from_sender<VaultCap>();
-    let out = vault::emergency_withdraw(&mut v, &cap, 1_000_000, scenario.ctx());
-    coin::burn_for_testing(out);
-    scenario.return_to_sender(cap);
-    ts::return_shared(v);
     scenario.end();
 }
 
@@ -876,37 +872,57 @@ fun set_envelope_requires_the_matching_vault_cap() {
     scenario.end();
 }
 
-// ── capabilities, pause and emergency withdraw (T1.1) ───────────────────────
+// ── capabilities and pause (T1.1) ───────────────────────────────────────────
+//
+// There is no owner emergency-withdraw test here because there is no owner emergency withdraw.
+// See the block comment in vault.move where it used to live: depositors can already redeem
+// pro-rata while paused, so the hatch gave the owner an exit and depositors nothing.
 
 #[test]
-#[expected_failure(abort_code = vault::ECapVaultMismatch)]
-fun emergency_withdraw_requires_vault_cap() {
-    let mut scenario = ts::begin(OWNER);
-    let vault_a = create(&mut scenario, OWNER, KEEPER);
-    let _vault_b = create(&mut scenario, BOB, KEEPER);
-    deposit(&mut scenario, vault_a, ALICE, 1_000_000, BOOK_MID);
-
-    // Bob holds a real VaultCap — for the WRONG vault. A KeeperCap has no path here at all:
-    // the signature demands `&VaultCap`, so a keeper literally cannot call this (G2).
-    scenario.next_tx(BOB);
-    let mut v = borrow(&scenario, vault_a);
-    let cap_b = scenario.take_from_sender<VaultCap>();
-    let stolen = vault::emergency_withdraw(&mut v, &cap_b, 1_000, scenario.ctx());
-    coin::burn_for_testing(stolen);
-    scenario.return_to_sender(cap_b);
-    ts::return_shared(v);
-    scenario.end();
-}
-
-#[test]
-#[expected_failure(abort_code = vault::ENotOwner)]
-fun emergency_withdraw_requires_the_owner_as_sender() {
+fun pausing_is_the_owner_s_ONLY_lever_and_it_moves_no_funds() {
+    // The strongest custody claim this vault makes: after the owner has used every power they
+    // hold, the balance is byte-identical and the depositor can still leave on their own.
     let mut scenario = ts::begin(OWNER);
     let vault_id = create(&mut scenario, OWNER, KEEPER);
     deposit(&mut scenario, vault_id, ALICE, 1_000_000, BOOK_MID);
 
-    // The owner's cap leaks to Mallory. The cap alone is not enough — the recorded owner must
-    // also be the signer.
+    // The owner exercises everything they can: pause, rotate the keeper, retune the envelope.
+    set_paused(&mut scenario, OWNER, vault_id, true);
+
+    scenario.next_tx(OWNER);
+    let mut v = borrow(&scenario, vault_id);
+    let cap = scenario.take_from_sender<VaultCap>();
+    let rotated = vault::set_keeper(&mut v, &cap, MALLORY, scenario.ctx());
+    assert!(vault::is_paused(&v), 0);
+    // …and not one sat moved.
+    assert!(vault::idle_btc_value(&v) == 1_000_000, 1);
+    assert!(vault::total_shares(&v) == 1_000_000, 2);
+    assert!(vault::shares_of(&v, ALICE) == 1_000_000, 3);
+    transfer::public_transfer(rotated, MALLORY);
+    scenario.return_to_sender(cap);
+    ts::return_shared(v);
+
+    // The depositor's escape does not depend on the owner: redemption works WHILE PAUSED.
+    scenario.next_tx(ALICE);
+    let mut v = borrow(&scenario, vault_id);
+    let out = vault::burn_shares_for_btc(&mut v, ALICE, 1_000_000, BOOK_MID, scenario.ctx());
+    assert!(out.value() == 1_000_000, 4);
+    assert!(vault::idle_btc_value(&v) == 0, 5);
+    assert!(vault::total_shares(&v) == 0, 6);
+    balance::destroy_for_testing(out);
+    ts::return_shared(v);
+
+    scenario.end();
+}
+
+#[test]
+fun a_leaked_vault_cap_cannot_move_funds_either() {
+    // The cap is the owner's authority. Even fully leaked to an attacker it is inert against
+    // the balance: every function it unlocks is a policy setter, none of them a transfer.
+    let mut scenario = ts::begin(OWNER);
+    let vault_id = create(&mut scenario, OWNER, KEEPER);
+    deposit(&mut scenario, vault_id, ALICE, 1_000_000, BOOK_MID);
+
     scenario.next_tx(OWNER);
     let cap = scenario.take_from_sender<VaultCap>();
     transfer::public_transfer(cap, MALLORY);
@@ -914,74 +930,14 @@ fun emergency_withdraw_requires_the_owner_as_sender() {
     scenario.next_tx(MALLORY);
     let mut v = borrow(&scenario, vault_id);
     let cap = scenario.take_from_sender<VaultCap>();
-    let stolen = vault::emergency_withdraw(&mut v, &cap, 1_000, scenario.ctx());
-    coin::burn_for_testing(stolen);
+    vault::set_paused(&mut v, &cap, true);
+    vault::update_strategy(&mut v, &cap, b"attacker ciphertext", b"attacker blob");
+
+    // Mallory holds the cap, is the signer, and has used it — and the vault is untouched.
+    assert!(vault::idle_btc_value(&v) == 1_000_000, 0);
+    assert!(vault::shares_of(&v, ALICE) == 1_000_000, 1);
     scenario.return_to_sender(cap);
     ts::return_shared(v);
-    scenario.end();
-}
-
-#[test]
-#[expected_failure(abort_code = vault::EInsufficientIdle)]
-fun emergency_withdraw_over_idle_aborts() {
-    let mut scenario = ts::begin(OWNER);
-    let vault_id = create(&mut scenario, OWNER, KEEPER);
-    deposit(&mut scenario, vault_id, ALICE, 1_000_000, BOOK_MID);
-
-    scenario.next_tx(OWNER);
-    let mut v = borrow(&scenario, vault_id);
-    let cap = scenario.take_from_sender<VaultCap>();
-    let out = vault::emergency_withdraw(&mut v, &cap, 1_000_001, scenario.ctx());
-    coin::burn_for_testing(out);
-    scenario.return_to_sender(cap);
-    ts::return_shared(v);
-    scenario.end();
-}
-
-#[test]
-#[expected_failure(abort_code = vault::EZeroDeposit)]
-fun emergency_withdraw_zero_aborts() {
-    let mut scenario = ts::begin(OWNER);
-    let vault_id = create(&mut scenario, OWNER, KEEPER);
-    deposit(&mut scenario, vault_id, ALICE, 1_000_000, BOOK_MID);
-
-    scenario.next_tx(OWNER);
-    let mut v = borrow(&scenario, vault_id);
-    let cap = scenario.take_from_sender<VaultCap>();
-    let out = vault::emergency_withdraw(&mut v, &cap, 0, scenario.ctx());
-    coin::burn_for_testing(out);
-    scenario.return_to_sender(cap);
-    ts::return_shared(v);
-    scenario.end();
-}
-
-#[test]
-fun owner_can_emergency_withdraw_while_paused() {
-    let mut scenario = ts::begin(OWNER);
-    let vault_id = create(&mut scenario, OWNER, KEEPER);
-    deposit(&mut scenario, vault_id, ALICE, 1_000_000, BOOK_MID);
-    set_paused(&mut scenario, OWNER, vault_id, true);
-
-    scenario.next_tx(OWNER);
-    let mut v = borrow(&scenario, vault_id);
-    assert!(vault::is_paused(&v), 0);
-    let cap = scenario.take_from_sender<VaultCap>();
-    let out = vault::emergency_withdraw(&mut v, &cap, 400_000, scenario.ctx());
-    assert!(out.value() == 400_000, 1);
-    assert!(vault::idle_btc_value(&v) == 600_000, 2);
-    // Shares are untouched by an emergency withdraw — it is a custody escape hatch, not a burn.
-    assert!(vault::total_shares(&v) == 1_000_000, 3);
-    coin::burn_for_testing(out);
-    scenario.return_to_sender(cap);
-    ts::return_shared(v);
-
-    // Unpausing restores deposits.
-    set_paused(&mut scenario, OWNER, vault_id, false);
-    scenario.next_tx(OWNER);
-    let v = borrow(&scenario, vault_id);
-    assert!(!vault::is_paused(&v), 4);
-    ts::return_shared(v);
-    deposit(&mut scenario, vault_id, BOB, 600_000, BOOK_MID);
 
     scenario.end();
 }

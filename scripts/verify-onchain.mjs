@@ -75,14 +75,15 @@ const DEFAULTS = {
   // ── OUR OWN deployment (docs/DEPLOYED.md, published 2026-07-25) ────────────
   // Everything above is someone else's; everything here is ours. Overridable
   // from keeper/.env so a redeploy needs no code change.
-  // TARGET of every moveCall = the CURRENT published-at.
-  APHOTIC_PACKAGE_ID: '0xbf55eecc6c840c576c88e05c469f9753ab5ad9212e04c6cf56564f88929875bf',
-  // TYPE ORIGIN. `Vault<...>`'s type string keeps this forever, across every
-  // upgrade — the same two-id split DeepBook has (R4). Checking the vault's type
-  // against the target id instead would fail the moment we upgraded.
-  APHOTIC_ORIGINAL_PACKAGE_ID: '0xbe433a2726fc61391d180ce55cdb8177f9647760b23a7704d42e3b5b9bb72d66',
-  APHOTIC_VAULT_ID: '0xf03832c92d4bf745ac720c52fe9198fc928028ce51991059bfe59c0e4ef374e8',
-  APHOTIC_VAULT_ISV: 947353676,
+  // v3 — republished without the owner escape hatch. Fresh publish, so these two
+  // are equal today. They stay separate on purpose: `Vault<...>`'s type string
+  // keeps the ORIGINAL forever while moveCalls must target the published-at, so
+  // checking the vault's type against the target would break on the first upgrade
+  // — the same two-id trap DeepBook sets (R4).
+  APHOTIC_PACKAGE_ID: '0x148a11915b86ebb79d0a98f81da666ba92edfc03ff0a3ef937a3441df66dee54',
+  APHOTIC_ORIGINAL_PACKAGE_ID: '0x148a11915b86ebb79d0a98f81da666ba92edfc03ff0a3ef937a3441df66dee54',
+  APHOTIC_VAULT_ID: '0x9236a21c20e6d97e4507171d1709dfc31b90f4b2f2d4b528eb36626ec3fafec7',
+  APHOTIC_VAULT_ISV: 952944693,
   DEEPBOOK_BALANCE_MANAGER_ID: '0x5766ed0b5e3fd310da9ccd723912198450872d9e2c83a473ed59cd5ab51990e2',
   DEEPBOOK_BALANCE_MANAGER_ISV: 947353675,
 };

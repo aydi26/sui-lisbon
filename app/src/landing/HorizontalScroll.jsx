@@ -37,7 +37,7 @@ const CARDS = [
     title: "ENCRYPTED",
     counter: "01 / 03",
     className: "p1",
-    text: "The strategy lives Seal-encrypted; nobody reads the quotes before the book does. A Move seal_approve gate decides who may decrypt, namespaced to the vault and a version epoch — so rotating the keeper revokes every old key share.",
+    text: "The strategy lives Seal-encrypted, so nobody reads the quotes before the book does. That protects the depositor, not the author: a readable strategy gets front-run, and the vault eats the loss. A Move seal_approve gate decides who may decrypt, namespaced to the vault and a version epoch — rotating the keeper revokes every old key share.",
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="#16c8d9" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="65%" height="65%">
         <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />

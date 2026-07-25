@@ -6,7 +6,47 @@
 > stays resolvable.
 > Read after: `docs/RECON.md` (which records the ids we depend on but did not deploy).
 
-## v2 — 2026-07-25 (upgrade)
+## v3 — 2026-07-25 (fresh publish) — **THE CURRENT DEPLOYMENT**
+
+| What | Id |
+|---|---|
+| **`aphotic` package** | `0x148a11915b86ebb79d0a98f81da666ba92edfc03ff0a3ef937a3441df66dee54` |
+| **`Vault<hBTC, DBUSDC>`** | `0x9236a21c20e6d97e4507171d1709dfc31b90f4b2f2d4b528eb36626ec3fafec7` (Shared, isv `952944693`) |
+| `VaultCap` | `0x827877974aa5611eac496fa964c88cc0b098781e4c8c48a67b6010affbf101d4` |
+| `UpgradeCap` | `0xe635c3c9f055197d24df7fc5ed0b8202aa43ac7cf17200cfaf585deb9a42aec4` |
+| publish digest | `3zU4y144dysNTtPeppCvb8HjsxH7bxHHyjfuS6qZztxs` |
+| `create_vault` digest | `7EQRABBkHodd5ExNK3MgXs598rN4kx4WRHg5uFqbiEZC` |
+
+The DeepBook `BalanceManager` (`0x5766ed0b…`) and the keeper `TradeCap` (`0xc7629a3b…`) are **unchanged** — they belong to DeepBook, not to us, so they survive any republish of our package.
+
+### What changed: the owner can no longer withdraw
+
+`vault::emergency_withdraw` is **gone**. It let the owner take idle hBTC out to themselves, gated on the `VaultCap` plus the recorded owner as signer.
+
+It protected nobody but the owner. Depositors can already redeem pro-rata **while the vault is paused** (`redemption_still_works_while_paused`), so the honest failure path is: the owner pauses, the keeper stops, everyone exits on their own. An owner withdraw adds no recovery capability for depositors — it only lets the owner leave first.
+
+The trust claim therefore moves from *"the KEEPER cannot steal or redirect"* to *"NOBODY can — not the keeper, not the owner"*. The only two ways value leaves this vault are a depositor's own pro-rata redemption and `gateway::exit_to_bitcoin` to the write-once address pinned at deposit.
+
+The owner keeps only powers that cannot move funds: `set_paused`, `set_keeper` (rotating invalidates the old keeper cap), `set_envelope`, `update_strategy`. Two tests pin this down: `pausing_is_the_owner_s_ONLY_lever_and_it_moves_no_funds` and `a_leaked_vault_cap_cannot_move_funds_either` — the second hands the cap to an attacker, has them use it, and asserts the balance is untouched.
+
+### Why a fresh publish and not an upgrade
+
+Move's `compatible` upgrade policy **forbids removing a public function**. Attempted and rejected verbatim:
+
+```
+error[Compatibility E01001]: missing public declaration
+  public function 'emergency_withdraw' is missing
+  Public functions are part of a module's public interface and cannot be removed
+  or changed during a 'compatible' upgrade.
+```
+
+`--skip-verify-compatibility` only skips the *local* check; the chain rejects it anyway. Since the v2 vault held zero hBTC, republishing was cheaper and gives the stronger result: the function does not exist, rather than existing-but-always-aborting.
+
+Error code `1` (`ENotOwner`) is now **vacant** in `vault.move` and deliberately not reused — an old client decoding abort 1 should find nothing, not a different meaning.
+
+⚠ The v1/v2 packages below still exist on chain and still contain `emergency_withdraw`. Nothing of ours points at them and no vault of ours uses them. They are kept in this file only so old journal entries and digests stay resolvable.
+
+## v2 — 2026-07-25 (upgrade) — SUPERSEDED
 
 | What | Id |
 |---|---|

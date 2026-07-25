@@ -103,7 +103,7 @@ use sui::table::{Self, Table};
 //             PendingExitPooled { vault_id: ID, who: address, amount_sats: u64,
 //                 pooled_total_sats: u64 }                                       [ADDED T1.1]
 //             PendingExitTaken { vault_id: ID, who: address, amount_sats: u64 }  [ADDED T1.1]
-// @errors     ENotOwner · ENotAuthorized · EZeroShares · EZeroDeposit · EInsufficientShares
+// @errors     ENotAuthorized · EZeroShares · EZeroDeposit · EInsufficientShares
 //             · EPaused · EStaleVersionEpoch · EBadIdentityNamespace · ECapVaultMismatch
 //             · EUnregisteredDepositor · EZeroNav
 //             ADDED (T1.1, all G10-named): EOverflow (mul_div / NAV would not fit u64)
@@ -146,7 +146,9 @@ use sui::table::{Self, Table};
 // └── END CONTRACT ───────────────────────────────────────────────────────────
 
 // ── error constants (docs/MOVE-PACKAGE.md §3.7) ─────────────────────────────
-const ENotOwner: u64 = 1;
+// Code 1 was `ENotOwner`, thrown only by the removed owner emergency withdraw. The slot is left
+// vacant rather than reused: an old client decoding abort 1 should find nothing, not a different
+// meaning.
 const ENotAuthorized: u64 = 2;
 const EZeroShares: u64 = 3;
 const EZeroDeposit: u64 = 4;
@@ -765,26 +767,23 @@ public fun update_strategy<B, Q>(
     });
 }
 
-/// Owner-only emergency withdraw — NEVER keeper-gated (G2) and deliberately NOT blocked by
-/// `paused` (@invariant 9). Requires BOTH the `VaultCap` and the recorded owner as the signer,
-/// so a leaked/transferred cap alone cannot drain the vault.
-public fun emergency_withdraw<B, Q>(
-    vault: &mut Vault<B, Q>,
-    cap: &VaultCap,
-    amount: u64,
-    ctx: &mut TxContext,
-): Coin<B> {
-    assert_vault_cap(vault, cap);
-    assert!(ctx.sender() == vault.owner, ENotOwner);
-    assert!(amount > 0, EZeroDeposit);
-    // Even the owner's escape hatch cannot reach a depositor's pooled exit earmark.
-    assert!(free_btc_sats(vault) >= amount, EInsufficientIdle);
-
-    let out = vault.idle_btc.split(amount);
-    event::emit(EmergencyWithdraw { vault_id: object::id(vault), amount });
-
-    coin::from_balance(out, ctx)
-}
+// ── DELIBERATELY ABSENT: an owner emergency withdraw ────────────────────────────────────────
+//
+// Earlier revisions exposed `emergency_withdraw(vault, cap, amount, ctx): Coin<B>`, gated on the
+// `VaultCap` AND the recorded owner. It is gone, on purpose, and must not come back.
+//
+// It protected nobody but the owner. Depositors can already redeem pro-rata WHILE THE VAULT IS
+// PAUSED (see `redemption_still_works_while_paused`), so the honest failure path is: the owner
+// calls `set_paused`, the keeper stops, and every depositor exits on their own. An owner
+// withdraw adds no recovery capability for depositors — it only lets the owner leave first.
+//
+// Removing it upgrades the trust claim from "the KEEPER cannot steal or redirect" (G2) to
+// "NOBODY can: not the keeper, not the owner". The only ways value leaves this vault are a
+// depositor's own pro-rata redemption and `gateway::exit_to_bitcoin` to the write-once address
+// pinned at deposit.
+//
+// The owner keeps exactly the powers that cannot move funds: `set_paused`, `set_keeper`
+// (rotating the keeper invalidates its cap), `set_envelope` and `update_strategy`.
 
 /// The keeper authorization used by `router` and `journal`. A cap from another vault, a cap
 /// minted before the last rotation, or a paused vault all abort.
