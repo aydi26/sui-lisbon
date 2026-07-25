@@ -29,8 +29,10 @@ import type { Config } from '../src/config.js';
 import { createMockHashiAdapter } from '../src/hashi/mock.js';
 import type { RawSuiEvent } from '../src/hashi/normalize.js';
 import {
+  HASHI_SDK_SURFACE_0_6_0,
   UnsupportedByUpstreamError,
   bitcoinNetworkFor,
+  btcAddressCodec,
   buildJsonRpcEventQuery,
   compareRawEvents,
   createRealHashiAdapter,
@@ -260,7 +262,7 @@ function fakeSdk(): FakeSdk {
 }
 
 /** A gRPC-shaped execution result carrying `events`, so `requireEventField` can find the receipt. */
-function txResult(cfg: Config, digest: string, events: RawSuiEvent[]): unknown {
+function txResult(digest: string, events: RawSuiEvent[]): unknown {
   return {
     $kind: 'Transaction',
     Transaction: {
@@ -268,7 +270,6 @@ function txResult(cfg: Config, digest: string, events: RawSuiEvent[]): unknown {
       events: events.map((e) => ({ eventType: e.type, json: e.parsedJson, timestampMs: e.timestampMs })),
     },
   };
-  void cfg;
 }
 
 /** Deps that keep the whole adapter offline and on a LOGICAL clock. */
@@ -277,7 +278,7 @@ function offlineDeps(cfg: Config, user: string, over: Partial<RealHashiDeps> = {
   return {
     sdk: fakeSdk().client,
     eventQuery: singlePageQuery(cfg, user),
-    signAndExecute: async () => txResult(cfg, 'DIGEST-EXEC', []),
+    signAndExecute: async () => txResult('DIGEST-EXEC', []),
     guardianInfo: async () => {
       throw new Error('guardian unreachable in tests');
     },
@@ -303,16 +304,24 @@ describe('hashi/real — construction is I/O-free and configuration-pinned (G7)'
     expect(bitcoinNetworkFor(testConfig({ SUI_NETWORK: 'mainnet' }))).toBe('mainnet');
   });
 
-  it('raises UnsupportedByUpstreamError when no event transport exists (E-K8 gap #3)', () => {
-    // gRPC v2 has no event RPC; with the JSON-RPC mirror blanked there is nowhere to read from.
-    const cfg = testConfig({ SUI_JSON_RPC_URL: '' });
-    expect(() => buildJsonRpcEventQuery(cfg)).toThrow(UnsupportedByUpstreamError);
-    try {
-      buildJsonRpcEventQuery(cfg);
-    } catch (err) {
-      expect((err as UnsupportedByUpstreamError).code).toBe('UnsupportedByUpstream');
-      expect((err as Error).message).toMatch(/no event-query RPC/);
-    }
+  it('raises UnsupportedByUpstreamError when no event transport exists (E-K8 gap #3)', async () => {
+    // gRPC v2 has NO event RPC. With the JSON-RPC mirror fallback forbidden there is nowhere
+    // left to read from — that is a genuine upstream gap, not a stub, so it is typed.
+    const cfg = testConfig({ HASHI_ADAPTER: 'real' });
+    const adapter = createRealHashiAdapter(cfg, { allowJsonRpcEventFallback: false });
+
+    await expect(adapter.eventsSince({ seq: 0n })).rejects.toBeInstanceOf(UnsupportedByUpstreamError);
+
+    const thrown = await adapter.eventsSince({ seq: 0n }).then(
+      () => undefined,
+      (err: unknown) => err as UnsupportedByUpstreamError,
+    );
+    expect(thrown?.code).toBe('UnsupportedByUpstream');
+    expect(thrown?.what).toBe('eventsSince');
+    expect(thrown?.message).toMatch(/no event-query RPC/);
+
+    // The default path DOES build a pager (against the verified mirror) without any I/O.
+    expect(typeof buildJsonRpcEventQuery(cfg)).toBe('function');
   });
 });
 
@@ -597,7 +606,7 @@ describe('hashi/real — PTBs (G2: the keeper can crank, it can never redirect)'
       ...offlineDeps(cfg, user.toSuiAddress()),
       sdk: sdk.client,
       signAndExecute: async () =>
-        txResult(cfg, 'D', [
+        txResult('D', [
           raw(cfg, 'deposit', 'DepositRequested', { request_id: DEP_A, amount: '120000' }, 1_000, 'D'),
         ]),
     });
@@ -620,7 +629,7 @@ describe('hashi/real — PTBs (G2: the keeper can crank, it can never redirect)'
       ...offlineDeps(cfg, user.toSuiAddress()),
       sdk: sdk.client,
       signAndExecute: async () =>
-        txResult(cfg, 'C', [
+        txResult('C', [
           raw(cfg, 'withdrawal_queue', 'WithdrawalCancelled', {
             request_id: REQ_A,
             requester_address: user.toSuiAddress(),
@@ -640,7 +649,7 @@ describe('hashi/real — PTBs (G2: the keeper can crank, it can never redirect)'
     const user = testSigner(9);
     const adapter = createRealHashiAdapter(cfg, {
       ...offlineDeps(cfg, user.toSuiAddress()),
-      signAndExecute: async () => txResult(cfg, 'X', []),
+      signAndExecute: async () => txResult('X', []),
     });
     await expect(
       adapter.requestWithdrawal({ sats: 50_000n, bitcoinAddress: p2trAddress(), signer: user }),
@@ -748,6 +757,64 @@ describe('hashi/real — guardian is a HINT that never breaks the loop (E-K9, G5
     expect(await adapter.guardian.canWithdraw(cfg.limiter.maxBucketCapacitySats + 1n)).toBe(false);
 
     expect(guardianCalls).toBe(0);
+  });
+
+  it('★ refuses when the replay is INCOMPLETE — never a silent under-debit (G5)', async () => {
+    const cfg = testConfig({ HASHI_ADAPTER: 'real' });
+    const user = testSigner(13).toSuiAddress();
+    // A Signed batch whose request_ids were never Requested: normalize.ts marks it 'unresolved',
+    // so the bucket trajectory has a hole and NOTHING may be concluded from it.
+    const orphanSigned = raw(cfg, 'withdrawal_queue', 'WithdrawalSigned', {
+      withdrawal_txn_id: TXN_1,
+      request_ids: ['0xnever'],
+      signatures: ['sig'],
+    }, 5_000, 'DIGEST-ORPHAN');
+
+    const adapter = createRealHashiAdapter(cfg, {
+      ...offlineDeps(cfg, user),
+      eventQuery: pagedEventQuery({ withdrawal_queue: [[orphanSigned]], deposit: [[]], treasury: [[]] }),
+    });
+
+    const { events } = await adapter.signedEventsSince({ seq: 0n });
+    expect(events[0]?.satsSource).toBe('unresolved');
+    // Capacity is nominally the full 1-BTC bucket, but the replay cannot be trusted ⇒ false.
+    expect(await adapter.guardian.canWithdraw(50_000n)).toBe(false);
+  });
+
+  it('walks past pages that contain no WithdrawalSigned instead of stopping at the first one', async () => {
+    const cfg = testConfig({ HASHI_ADAPTER: 'real' });
+    const user = testSigner(14).toSuiAddress();
+    const adapter = createRealHashiAdapter(cfg, { ...offlineDeps(cfg, user), eventPageLimit: 1 });
+
+    // The Signed event is last in the merged log; a naive "empty page ⇒ done" walk would miss it.
+    const { events } = await adapter.signedEventsSince({ seq: 0n });
+    expect(events).toHaveLength(1);
+    expect(events[0]?.sats).toBe(50_000n);
+  });
+});
+
+describe('hashi/real — the recorded upstream surface (E-K8 tripwire)', () => {
+  it('documents the 0.6.0 exports and the capabilities that are genuinely missing', () => {
+    expect(HASHI_SDK_SURFACE_0_6_0.version).toBe('0.6.0');
+    // These are the symbols real.ts is allowed to reach for. A version bump that drops one
+    // should be caught here, next to the adapter, not on the demo floor.
+    expect(HASHI_SDK_SURFACE_0_6_0.values).toContain('HashiClient');
+    expect(HASHI_SDK_SURFACE_0_6_0.values).toContain('hashi');
+    expect(HASHI_SDK_SURFACE_0_6_0.values).toContain('fetchGuardianInfo');
+    expect(HASHI_SDK_SURFACE_0_6_0.values).toContain('bitcoinAddressToWitnessProgram');
+    // ...and the three hard gaps the adapter has to fill itself.
+    expect(HASHI_SDK_SURFACE_0_6_0.missing).toHaveLength(3);
+    expect(HASHI_SDK_SURFACE_0_6_0.missing.join(' ')).toMatch(/confirm_deposit/);
+    expect(HASHI_SDK_SURFACE_0_6_0.missing.join(' ')).toMatch(/event query/);
+    expect(Object.isFrozen(HASHI_SDK_SURFACE_0_6_0)).toBe(true);
+  });
+
+  it('re-exports the bech32(m) <-> witness-program codecs, the only sanctioned door (G7)', () => {
+    // BtcAddress is ALWAYS the raw witness program in our types; these are the conversions.
+    const program = p2trAddress(0x07);
+    const address = btcAddressCodec.fromWitnessProgram(program, 'signet');
+    expect(address.startsWith('tb1p')).toBe(true);
+    expect(btcAddressCodec.toWitnessProgram(address, 'signet').program).toEqual(program);
   });
 });
 

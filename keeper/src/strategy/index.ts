@@ -1,7 +1,7 @@
 // ┌── APHOTIC CONTRACT ────────────────────────────────────────────────────────
 // @task       T2.6, T5.1
 // @phase      2  [CUT-LINE CRITICAL]
-// @status     DONE   (barrel only — every module BEHIND it is STUB)
+// @status     DONE   (barrel; params/serialize/evaluate/pegflow behind it are all DONE — T2.6/T5.1)
 // @spec       docs/KEEPER.md §1 (top-level layout), §3 (strategy/)
 // @rules      G4 G5 G7 G8
 // @depends    ./params.ts · ./serialize.ts · ./evaluate.ts · ./pegflow.ts

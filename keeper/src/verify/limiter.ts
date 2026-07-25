@@ -341,16 +341,17 @@ export function limiterAt(
 ): LimiterSample {
   const atSecs = msToSecs(atMs);
 
+  // Scan the WHOLE trace rather than breaking at the first later boundary: ordering is
+  // committee-leader-discretionary (G3), so a stream is not guaranteed to be atMs-monotonic even
+  // though it is seq-ordered. "Last in seq order at or before `atMs`" is the causally correct pick.
   let state: LimiterState = cfg.genesisState ?? genesis(cfg.limiter);
   for (const sample of trajectory.samples) {
-    if (sample.atMs > atMs) break;
-    state = sample.state;
+    if (sample.atMs <= atMs) state = sample.state;
   }
 
   let queueDepth: Sats = 0n;
   for (const entry of trajectory.queue) {
-    if (entry.atMs > atMs) break;
-    queueDepth = entry.queueDepth;
+    if (entry.atMs <= atMs) queueDepth = entry.queueDepth;
   }
 
   return {

@@ -290,6 +290,13 @@ export interface RealHashiDeps {
   readonly sdk?: HashiSdkClient;
   /** Event pager. Default: JSON-RPC `queryEvents` against `cfg.sui.jsonRpcUrl` (E-K8 gap #3). */
   readonly eventQuery?: EventQuery;
+  /**
+   * Allow the JSON-RPC mirror fallback for event reads. Default `true` — it is the ONLY event
+   * transport that exists (gRPC v2 has no event RPC, E-K8 gap #3). Set `false` to forbid the
+   * deprecated JSON-RPC path; `eventsSince` then raises {@link UnsupportedByUpstreamError}
+   * unless {@link eventQuery} is injected.
+   */
+  readonly allowJsonRpcEventFallback?: boolean;
   /** PTB executor. Default: the Sui client's `signAndExecuteTransaction`. */
   readonly signAndExecute?: SignAndExecute;
   /** Guardian `/info` reader. Default: {@link fetchGuardianInfoOverHttp2} (E-K9). */
@@ -452,7 +459,18 @@ export function createRealHashiAdapter(cfg: Config, deps: RealHashiDeps = {}): H
 
   let eventQuery: EventQuery | undefined = deps.eventQuery;
   function events(): EventQuery {
-    eventQuery ??= buildJsonRpcEventQuery(cfg);
+    if (eventQuery === undefined) {
+      // E-K8 gap #3 + RECON R1: gRPC v2 has no event RPC, so events can ONLY come from a
+      // JSON-RPC mirror. An operator who forbids that deprecated path gets a typed error
+      // naming the missing capability instead of a silent, mysteriously empty stream.
+      if (deps.allowJsonRpcEventFallback === false) {
+        throw new UnsupportedByUpstreamError(
+          'eventsSince',
+          'gRPC v2 exposes no event-query RPC and the JSON-RPC fallback is disabled — inject RealHashiDeps.eventQuery',
+        );
+      }
+      eventQuery = buildJsonRpcEventQuery(cfg);
+    }
     return eventQuery;
   }
 
@@ -485,6 +503,10 @@ export function createRealHashiAdapter(cfg: Config, deps: RealHashiDeps = {}): H
   const digestOfRequest = new Map<string, string>();
   const moduleCursors = new Map<string, EventPageCursor | null>();
   const exhausted = new Set<string>();
+  /** Fetched-but-not-yet-orderable events, held behind the merge watermark (see `release`). */
+  const holding: RawSuiEvent[] = [];
+  /** Per-module high-water key: the last event that module has handed us. */
+  const moduleHighWater = new Map<string, RawEventKey>();
 
   const EVENT_MODULES: readonly string[] = [...new Set(Object.values(HASHI_EVENT_MODULE))];
 
@@ -500,14 +522,57 @@ export function createRealHashiAdapter(cfg: Config, deps: RealHashiDeps = {}): H
     }
   }
 
+  const allExhausted = (): boolean => EVENT_MODULES.every((m) => exhausted.has(m));
+
   /**
-   * Fetch one page from every Hashi module, merge them into a single deterministic order and
-   * append. Merge key = (envelope ms, txDigest, eventSeq) — the same total order any replayer
-   * derives from the chain, so two keepers reading the same range build identical logs.
+   * Release every held event that is provably ahead of no unseen event — a k-way merge watermark.
+   *
+   * ★ THIS IS WHY THE LOG IS PAGE-SIZE-INDEPENDENT. Three module streams are read separately, so
+   * naively appending each round's arrivals would let a page boundary decide `seq`. Two keepers
+   * with different `eventPageLimit` would then build different logs and their G5 replays would
+   * disagree. Instead we hold events until every non-exhausted module has reported PAST them
+   * (strictly), which makes the released prefix a pure function of the chain, not of paging.
    */
+  function release(): number {
+    if (holding.length === 0) return 0;
+
+    let ready: RawSuiEvent[];
+    if (allExhausted()) {
+      ready = holding.splice(0, holding.length);
+    } else {
+      let watermark: RawEventKey | undefined;
+      for (const module of EVENT_MODULES) {
+        if (exhausted.has(module)) continue;
+        const high = moduleHighWater.get(module);
+        // A live module that has produced nothing yet could still deliver the earliest event.
+        if (high === undefined) return 0;
+        if (watermark === undefined || compareRawEventKeys(high, watermark) < 0) watermark = high;
+      }
+      if (watermark === undefined) return 0;
+      const mark = watermark;
+      ready = [];
+      const keep: RawSuiEvent[] = [];
+      for (const event of holding) {
+        (compareRawEventKeys(rawEventKey(event), mark) < 0 ? ready : keep).push(event);
+      }
+      holding.length = 0;
+      holding.push(...keep);
+    }
+
+    if (ready.length === 0) return 0;
+    ready.sort(compareRawEvents);
+
+    const before = log.length;
+    for (const event of normalizeEvents(cfg, ready, BigInt(log.length), ctx)) {
+      log.push(event);
+      indexRequestDigest(event);
+    }
+    return log.length - before;
+  }
+
+  /** Pull one page from every live Hashi module, then release whatever became orderable. */
   async function fetchMore(): Promise<number> {
     const query = events();
-    const batch: RawSuiEvent[] = [];
 
     for (const module of EVENT_MODULES) {
       if (exhausted.has(module)) continue;
@@ -517,27 +582,22 @@ export function createRealHashiAdapter(cfg: Config, deps: RealHashiDeps = {}): H
         cursor: moduleCursors.get(module) ?? null,
         limit: pageLimit,
       });
-      for (const raw of page.data) batch.push(raw);
+      for (const raw of page.data) holding.push(raw);
+      const last = page.data[page.data.length - 1];
+      if (last !== undefined) moduleHighWater.set(module, rawEventKey(last));
       moduleCursors.set(module, page.nextCursor);
       if (!page.hasNextPage) exhausted.add(module);
     }
 
-    if (batch.length === 0) return 0;
-    batch.sort(compareRawEvents);
-
-    const before = log.length;
-    for (const event of normalizeEvents(cfg, batch, BigInt(log.length), ctx)) {
-      log.push(event);
-      indexRequestDigest(event);
-    }
-    return log.length - before;
+    return release();
   }
 
   /** Grow the log until it holds `want` events or the chain has nothing left. */
   async function fillTo(want: number): Promise<void> {
-    while (log.length < want) {
-      if (EVENT_MODULES.every((m) => exhausted.has(m))) return;
-      if ((await fetchMore()) === 0 && EVENT_MODULES.every((m) => exhausted.has(m))) return;
+    // Bounded: every iteration either exhausts a module stream or advances at least one cursor.
+    for (let guard = 0; log.length < want && guard < MAX_FETCH_ROUNDS; guard++) {
+      if (allExhausted()) return;
+      await fetchMore();
     }
   }
 
@@ -570,11 +630,11 @@ export function createRealHashiAdapter(cfg: Config, deps: RealHashiDeps = {}): H
     const known = digestOfRequest.get(requestId);
     if (known !== undefined) return known;
     // Walk forward until the whole stream has been indexed — the id may be older than our log.
-    for (;;) {
-      const grew = await fetchMore();
+    for (let guard = 0; guard < MAX_FETCH_ROUNDS; guard++) {
+      if (allExhausted()) break;
+      await fetchMore();
       const found = digestOfRequest.get(requestId);
       if (found !== undefined) return found;
-      if (grew === 0 && EVENT_MODULES.every((m) => exhausted.has(m))) break;
     }
     throw new NotFoundError(at(`request ${requestId} (no Hashi event references it)`));
   }
@@ -647,18 +707,19 @@ export function createRealHashiAdapter(cfg: Config, deps: RealHashiDeps = {}): H
       nextSeq: 0n,
     };
     let cursor: EventCursor = { seq: 0n };
-    for (;;) {
+    for (let guard = 0; guard < MAX_FETCH_ROUNDS; guard++) {
       const page = await adapter.signedEventsSince(cursor);
-      if (page.events.length === 0) return { state, complete: true };
       for (const event of page.events) {
         if (event.satsSource === 'unresolved') return { state, complete: false };
         const result = consume(cfg.limiter, state, state.nextSeq, event.atSecs, event.sats);
         // A rejected batch never advanced the real bucket either (G3) — skip it, keep going.
         if (result.ok) state = result.state;
       }
-      if (page.next.seq === cursor.seq) return { state, complete: true };
+      // An empty PAGE is not the end of the stream — only a cursor that stops advancing is.
+      if (page.next.seq <= cursor.seq) return { state, complete: true };
       cursor = page.next;
     }
+    return { state, complete: false };
   }
 
   const guardian: HashiGuardianViews = {
@@ -1002,23 +1063,35 @@ export function withdrawalViewOf(info: SdkWithdrawalInfo): WithdrawalView {
 }
 
 /**
- * Total order over raw events: (envelope ms, txDigest, eventSeq).
+ * The sort key of a raw event: (envelope ms, txDigest, eventSeq).
  *
  * Three module streams are merged into one log, so the ordering has to be a pure function of the
  * events themselves — otherwise two keepers reading the same range would assign different `seq`
  * and their replays would diverge (G5).
  */
-export function compareRawEvents(a: RawSuiEvent, b: RawSuiEvent): number {
-  const at = millisOf(a.timestampMs);
-  const bt = millisOf(b.timestampMs);
-  if (at !== bt) return at - bt;
-  const ad = a.transactionDigest ?? a.id?.txDigest ?? '';
-  const bd = b.transactionDigest ?? b.id?.txDigest ?? '';
-  if (ad !== bd) return ad < bd ? -1 : 1;
-  const as = Number(a.id?.eventSeq ?? 0);
-  const bs = Number(b.id?.eventSeq ?? 0);
-  return as - bs;
+export type RawEventKey = readonly [ms: Millis, txDigest: string, eventSeq: number];
+
+export function rawEventKey(event: RawSuiEvent): RawEventKey {
+  return [
+    millisOf(event.timestampMs),
+    event.transactionDigest ?? event.id?.txDigest ?? '',
+    Number(event.id?.eventSeq ?? 0),
+  ];
 }
+
+export function compareRawEventKeys(a: RawEventKey, b: RawEventKey): number {
+  if (a[0] !== b[0]) return a[0] - b[0];
+  if (a[1] !== b[1]) return a[1] < b[1] ? -1 : 1;
+  return a[2] - b[2];
+}
+
+/** Total order over raw events — see {@link rawEventKey}. */
+export function compareRawEvents(a: RawSuiEvent, b: RawSuiEvent): number {
+  return compareRawEventKeys(rawEventKey(a), rawEventKey(b));
+}
+
+/** Safety bound on the merge pump, so a misbehaving mirror cannot spin the keeper forever. */
+const MAX_FETCH_ROUNDS = 10_000;
 
 /** `$kind`-tagged execution result -> digest, for both gRPC and JSON-RPC shapes. */
 export function txDigestOf(result: unknown): string | undefined {

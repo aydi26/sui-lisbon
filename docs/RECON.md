@@ -215,3 +215,5 @@ Passing the displayed order registers a UTXO that does not exist. Nothing tells 
 `scripts/register-deposit.ps1` does the reversal for you — always hand it the explorer-displayed txid, so there is exactly one place this can be wrong.
 
 Registration is only accepted once the tx has `bitcoin_confirmation_threshold` (6) confirmations; the script refuses below that rather than letting the call abort.
+
+**3. Never register against a mempool txid — it can vanish.** Observed live: the faucet's first batch `04cb601a…` sat unconfirmed for hours, then was **replaced** (RBF) by `2275d890…` with a higher fee. Both explorers now return **404** for the original. The amounts changed too (591 692 → 144 137 per output), so even the vouts we had noted were wrong. Registering while it was in the mempool would have pinned a UTXO that no longer exists — and per point 2 above, that failure is completely silent. The confirmation gate is not a nicety; it is what makes registration safe.
