@@ -12,69 +12,44 @@
 // @facts      The replay assigns limiter seq = index in the WithdrawalSigned stream. That is
 // @facts        valid precisely because a REJECTED batch emits NO event and does not advance
 // @facts        `next_seq` (G3) — so the stream has no gaps.
-// @facts      ⚠ `deriveLimiter` is implemented INLINE here on purpose: the real
-// @facts        `keeper/src/verify/limiter.ts` arrives at T4.3 and is owned by a later task.
-// @facts        When it lands, DELETE the local copy and import it — the assertion must not drift.
+// @facts      ✔ B6 CLOSED (T4.3): the local `deriveLimiter` stand-in that used to live here is GONE.
+// @facts        This file now imports the REAL `../src/verify/limiter.js` — the parity assertion and
+// @facts        the production replay are the same code, so they cannot drift apart (G5).
+// @facts      The real `deriveLimiter` takes the FULL event slice (not just the Signed sub-stream)
+// @facts        because E-K3 requires the `WithdrawalRequested` join to recover the debit amount.
 // @implements a seeded randomized deposit/withdrawal sequence + the parity assertion
-// @implements the local `deriveLimiter` stand-in (to be replaced by verify/ at T4.3)
 // @invariant  1. deriveLimiter uses ONLY on-chain-observable events + the two genesis scalars.
 // @verify     npm test -- limiter.cross
 // └── END CONTRACT ───────────────────────────────────────────────────────────
 
 import { describe, expect, it } from 'vitest';
 
-import { consume, genesis, msToSecs, projectCapacityAtSecs, type LimiterConfig, type LimiterState } from '../src/hashi/limiter.js';
+import { type LimiterConfig } from '../src/hashi/limiter.js';
 import { createMockHashiAdapter, type MockHashiAdapter } from '../src/hashi/mock.js';
-import type { HashiEventOf, Sats } from '../src/hashi/types.js';
 import { createRng } from '../src/util/rng.js';
+import { deriveLimiter, limiterAt } from '../src/verify/limiter.js';
 
 import { FAST, p2trAddress, testConfig, testSigner } from './support/fixtures.js';
 
-/**
- * TODO(T4.3): delete this and import `deriveLimiter` from `../src/verify/limiter.js`.
- *
- * Trustless re-derivation of the Guardian bucket from the on-chain `WithdrawalSigned` stream
- * (G5). The ONLY inputs are the events and the two genesis scalars — no SDK read, no guardian
- * endpoint, no trust in the keeper.
- */
-function deriveLimiter(
-  cfg: LimiterConfig,
-  signedEvents: readonly HashiEventOf<'WithdrawalSigned'>[],
-): { state: LimiterState; samples: { atSecs: bigint; tokens: Sats }[] } {
-  let state = genesis(cfg);
-  const samples: { atSecs: bigint; tokens: Sats }[] = [];
-
-  signedEvents.forEach((event, index) => {
-    // seq = index: the signed stream is gap-free because rejected batches emit nothing (G3).
-    const result = consume(cfg, state, BigInt(index), event.atSecs, event.sats);
-    if (!result.ok) {
-      throw new Error(`replay diverged at index ${index}: ${result.error} (${result.reason})`);
-    }
-    state = result.state;
-    samples.push({ atSecs: event.atSecs, tokens: state.numTokensAvailableSats });
-  });
-
-  return { state, samples };
-}
-
-/** Capacity the replay projects at an arbitrary logical instant. */
-function replayTokensAt(cfg: LimiterConfig, state: LimiterState, atMs: number): Sats {
-  return projectCapacityAtSecs(cfg, state, msToSecs(atMs));
-}
-
 async function assertParity(cfg: LimiterConfig, mock: MockHashiAdapter, label: string): Promise<void> {
   const live = await mock.guardian.limiterStatus();
-  const { events } = await mock.signedEventsSince({ seq: 0n });
-  const derived = deriveLimiter(cfg, events);
+  // The FULL slice: Signed carries no amount, so the replay joins it to WithdrawalRequested (E-K3).
+  const { events } = await mock.eventsSince({ seq: 0n });
+  const derived = deriveLimiter(events, { limiter: cfg });
 
-  expect(derived.state.nextSeq, `${label}: next_seq`).toBe(live.nextSeq);
-  expect(derived.state.numTokensAvailableSats, `${label}: stored tokens`).toBe(
+  expect(derived.final.nextSeq, `${label}: next_seq`).toBe(live.nextSeq);
+  expect(derived.final.numTokensAvailableSats, `${label}: stored tokens`).toBe(
     mock.limiterState().numTokensAvailableSats,
   );
-  expect(derived.state.lastUpdatedAtSecs, `${label}: last_updated_at`).toBe(
+  expect(derived.final.lastUpdatedAtSecs, `${label}: last_updated_at`).toBe(
     mock.limiterState().lastUpdatedAtSecs,
   );
-  expect(replayTokensAt(cfg, derived.state, live.asOfMs), `${label}: projected tokens`).toBe(live.tokens);
+  expect(limiterAt(derived, live.asOfMs, { limiter: cfg }).tokens, `${label}: projected tokens`).toBe(
+    live.tokens,
+  );
+  // Every boundary joined to a REQUESTED amount, and nothing was rejected in the emitted stream (G3).
+  expect(derived.unresolvedCount, `${label}: unresolved boundaries`).toBe(0);
+  expect(derived.rejectedCount, `${label}: rejected boundaries`).toBe(0);
 }
 
 describe('A2 — mock.limiterStatus() === replay of mock.signedEventsSince(0) (G5)', () => {
@@ -140,13 +115,16 @@ describe('A2 — mock.limiterStatus() === replay of mock.signedEventsSince(0) (G
     await mock.requestWithdrawal({ sats: 60_000n, bitcoinAddress: p2trAddress(2), signer: user });
     mock.advanceMs(5_000_000);
 
-    const { events } = await mock.signedEventsSince({ seq: 0n });
-    expect(events).toHaveLength(1);
-    expect(events[0]?.sats).toBe(60_000n);
+    const { events: signed } = await mock.signedEventsSince({ seq: 0n });
+    expect(signed).toHaveLength(1);
+    expect(signed[0]?.sats).toBe(60_000n);
 
-    const derived = deriveLimiter(cfg.limiter, events);
-    expect(derived.state.numTokensAvailableSats).toBe(40_000n);
-    expect(derived.state.nextSeq).toBe(1n);
+    const { events } = await mock.eventsSince({ seq: 0n });
+    const derived = deriveLimiter(events, { limiter: cfg.limiter });
+    expect(derived.final.numTokensAvailableSats).toBe(40_000n);
+    expect(derived.final.nextSeq).toBe(1n);
+    // The second withdrawal was never signed, so it is still sitting in the global queue (G3).
+    expect(derived.finalQueueDepth).toBe(60_000n);
     await assertParity(cfg.limiter, mock, 'after rejection');
   });
 });

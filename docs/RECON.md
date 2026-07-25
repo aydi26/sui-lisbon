@@ -183,3 +183,35 @@ Move must emulate saturating arithmetic explicitly (`u64` add/mul **abort** on o
 - `HorizontalScroll.jsx` is hardcoded to **exactly 3 cards**; the count is baked into CSS as `.hscroll-section{height:300vh}` / `.hscroll-track{width:300vw}`.
 - Re-theme surface: colour literals in `LandingPage.css` (`#6366f1`, `#a855f7`, `#a78bfa`, `#818cf8`, `#4338ca`), `atmosphereColor()` in `Globe3D.jsx`, the 6 gradient pairs in `BeamSection.jsx`.
 - Copy to rewrite: `LandingPage.jsx` (nav/stats/CTA/footer), `BeamSection.jsx` (h2 + p + 6 logos), `HorizontalScroll.jsx` (`CARDS`), `FAQ.jsx` (`ITEMS`, 5 Q/A), `ContactModal.jsx` (headings/labels/mailto).
+
+## R14 — Deposit registration: there is no relayer, and the txid is byte-reversed
+
+Two facts that are silent failures if you get them wrong. Both verified empirically on 2026-07-25.
+
+**1. Nobody registers your deposit for you.** Sampling 20 consecutive `deposit::DepositRequested` events gave **20 distinct transaction senders**, and in every one `sender == derivation_path == requester_address`. There is no Hashi relayer watching deposit addresses; each depositor submits their own UTXO. `.hashi_src/design__docs__deposit.mdx` agrees — *"The user then submits the request."*
+
+The call chain (all verified against the deployed package):
+
+```move
+public fun hashi::utxo::utxo_id(txid: address, vout: u32): UtxoId
+public fun hashi::utxo::utxo(id: UtxoId, amount: u64, derivation_path: Option<address>): Utxo
+entry  fun hashi::deposit::deposit(hashi: &mut Hashi, utxo: Utxo, clock: &Clock, ctx: &mut TxContext)
+```
+
+`derivation_path` must be the Sui address the deposit address was derived from — it is where the hBTC gets minted.
+
+**2. ⚠⚠ `utxo_id` takes the txid in Bitcoin's INTERNAL byte order — the REVERSE of what every explorer displays.**
+
+Verified against three real `DepositConfirmed` events. For each, the txid stored on chain was **not found** on signet as-is, the byte-reversed form was **always** found, and the output amount at the recorded `vout` matched the event exactly:
+
+| on-chain txid (internal) | reversed → found on signet | vout | amount |
+|---|---|---|---|
+| `0x17b9ea28…9be71131` | `3111e79b…8528eab917` | 78 | 327 312 |
+| `0x48780348…74a9b8d1` | `d1b8a974…9f48037848` | 568 | 172 358 |
+| `0x577f6428…ef049b14` | `149b04ef…6628647f57` | 281 | 401 581 |
+
+Passing the displayed order registers a UTXO that does not exist. Nothing tells you why: the transaction succeeds, and the committee simply never approves it.
+
+`scripts/register-deposit.ps1` does the reversal for you — always hand it the explorer-displayed txid, so there is exactly one place this can be wrong.
+
+Registration is only accepted once the tx has `bitcoin_confirmation_threshold` (6) confirmations; the script refuses below that rather than letting the call abort.

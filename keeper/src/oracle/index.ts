@@ -14,6 +14,10 @@
 // @facts      Both prices land in the journal so the breaker decision is publicly reproducible (G5).
 // @facts      ⚠ Empty book (docs/RECON.md R10) ⇒ `deepbookMid`/`deepbookTwap` may be unavailable;
 // @facts        `read` fails closed rather than substituting the Pyth price.
+// @facts      The spot mid is taken from `L2Book.mid`, which `routing/deepbook.ts::readBook`
+// @facts        populates via `routing/book.ts::bookMid` and sets to `0n` on an empty book
+// @facts        (deepbook.ts invariant 2). Reading the field rather than re-deriving it keeps the
+// @facts        journalled `book` and the snapshot from ever disagreeing.
 // @facts      ★ COMMON SCALE. Every price in an OracleSnapshot is "USD per 1 BTC carrying
 // @facts        cfg.hashi.hbtcDecimals fractional digits". Pyth arrives via `scaleToSats`; the
 // @facts        DeepBook side via `deepbookPriceToUsdFixed`. Divergence is a ratio, so it is only
