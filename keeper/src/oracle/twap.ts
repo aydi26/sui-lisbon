@@ -1,7 +1,7 @@
 // ┌── APHOTIC CONTRACT ────────────────────────────────────────────────────────
 // @task       T2.8
 // @phase      2
-// @status     STUB
+// @status     DONE
 // @spec       docs/KEEPER.md §6 (DeepBook TWAP over TWAP_WINDOW_MS)
 // @spec       docs/BUILD-PLAN.md#phase-2 (T2.8) · docs/FACTS.md#deepbook-venue
 // @rules      G4 G7 G9
@@ -48,26 +48,66 @@ export interface TwapWindow {
 }
 
 /** Empty window of the given width. */
-// TODO(T2.8): return { windowMs, samples: [] } (frozen).
-export function createTwapWindow(_windowMs: Millis): TwapWindow {
-  throw new Error('TODO(T2.8): createTwapWindow not implemented');
+export function createTwapWindow(windowMs: Millis): TwapWindow {
+  return Object.freeze({ windowMs, samples: Object.freeze([]) as readonly MidSample[] });
 }
 
-/** Append a sample and evict everything older than `windowMs`. Returns a NEW window. */
-// TODO(T2.8): push, keep ascending order, drop samples older than sample.atMs - windowMs.
-export function pushSample(_window: TwapWindow, _sample: MidSample): TwapWindow {
-  throw new Error('TODO(T2.8): pushSample not implemented');
+/**
+ * Append a sample and evict everything older than `windowMs`. Returns a NEW window (invariant 1).
+ *
+ * Eviction is relative to the NEWEST timestamp seen, not to a wall clock — the whole module is
+ * replayable from a recorded tick sequence (G5).
+ */
+export function pushSample(window: TwapWindow, sample: MidSample): TwapWindow {
+  const merged = [...window.samples, sample].sort((a, b) => a.atMs - b.atMs);
+
+  const newestMs = merged[merged.length - 1]?.atMs ?? sample.atMs;
+  const cutoffMs = newestMs - window.windowMs;
+  const kept = merged.filter((s) => s.atMs >= cutoffMs);
+
+  return Object.freeze({ windowMs: window.windowMs, samples: Object.freeze(kept) as readonly MidSample[] });
 }
 
 /**
  * Time-weighted average mid over `[nowMs - windowMs, nowMs]`.
  * `undefined` when no usable sample covers the window (empty book — R10).
+ *
+ * Weighting (invariant 3): sample `i` holds until sample `i+1` arrives; the last sample holds
+ * until `nowMs`. Samples strictly outside the window contribute nothing and are NOT extrapolated
+ * backwards into it (invariant 2) — the average therefore spans `[firstInWindow, nowMs]`, and we
+ * never invent a price for a period we did not observe.
+ *
+ * All arithmetic is bigint; the final division truncates (deterministic and replayable).
  */
-// TODO(T2.8): dwell-time weighting between consecutive samples, clipped to the window; bigint only.
 export function twap(
-  _samples: readonly MidSample[],
-  _windowMs: Millis,
-  _nowMs: Millis,
+  samples: readonly MidSample[],
+  windowMs: Millis,
+  nowMs: Millis,
 ): bigint | undefined {
-  throw new Error('TODO(T2.8): twap not implemented');
+  const startMs = nowMs - windowMs;
+  const inWindow = samples
+    .filter((s) => s.atMs >= startMs && s.atMs <= nowMs && s.mid > 0n)
+    .sort((a, b) => a.atMs - b.atMs);
+
+  if (inWindow.length === 0) return undefined;
+
+  let weighted = 0n;
+  let totalWeight = 0n;
+  for (let i = 0; i < inWindow.length; i += 1) {
+    const sample = inWindow[i];
+    if (sample === undefined) continue; // noUncheckedIndexedAccess
+    const nextMs = inWindow[i + 1]?.atMs ?? nowMs;
+    const dwellMs = BigInt(nextMs - sample.atMs);
+    if (dwellMs <= 0n) continue;
+    weighted += sample.mid * dwellMs;
+    totalWeight += dwellMs;
+  }
+
+  if (totalWeight === 0n) {
+    // Every observation collapsed onto a single instant (or onto `nowMs`). There is no dwell time
+    // to weight by, but there IS a real observation — the newest one is the best estimate.
+    return inWindow[inWindow.length - 1]?.mid;
+  }
+
+  return weighted / totalWeight;
 }

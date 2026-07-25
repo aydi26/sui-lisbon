@@ -588,13 +588,17 @@ The devnet ids **do not exist on testnet** — verified (`Some requested entity 
 
 ### Signet faucets
 
-| Faucet | Reachability (2026-07-25) |
-|---|---|
-| `https://signet257.bublina.eu.org/` | HTTP 200 |
-| `https://signetfaucet.com` | HTTP 200 |
-| `https://alt.signetfaucet.com/` | HTTP 200 |
+⚠ **U6 RESOLVED, and HTTP 200 was misleading.** Every faucet below answers 200, but only one actually pays.
 
-Delivery time/amount NOT measured — both are human/captcha-gated (`#unknowns` U6). **Start dripping day one; hBTC cannot be obtained any other way (`#hbtc`).**
+| Faucet | State (2026-07-25) |
+|---|---|
+| `https://signetfaucet.com` | **THE ONLY WORKING ONE.** Amount field is in **BTC**, range `0.00001`–`0.01`. Captcha, and the page requires a **≥ 30 s pause before submitting** — submit sooner and the payout is silently discarded. First attempt delivered nothing; the second, respecting the pause, paid. |
+| `https://signet257.bublina.eu.org/` | **DEAD.** Serves 200 but the body reads *"Apologies, this faucet does not work at the moment (2025-01-30). Use the main signetfaucet.com in the meantime."* |
+| `https://alt.signetfaucet.com/` · `https://signetfaucet.bublina.eu.org` | **DEAD** — same page, same notice. |
+
+🚨 **Do NOT use Mutinynet** (`faucet.mutinynet.com`). It is a **different chain**: it shares signet's genesis hash, which makes it look compatible, but block 100 000 hashes differ and it sits at ~3.29 M blocks against standard signet's ~314 k. Addresses have the identical `tb1p…` form, so nothing would warn you — coins sent there are simply on a chain Hashi does not watch. Hashi's `bitcoin_chain_id` is the standard signet genesis (`#latencies`).
+
+Measured delivery: one request for `0.01` BTC produced **two outputs of 591 692 sats** (1 183 384 total) inside a 350-output faucet batch. Both clear the 30 000-sat minimum, so it registers as **two independent Hashi deposits**. **hBTC cannot be obtained any other way** (`#hbtc`) — `treasury::mint` is `public(package)`.
 
 ### Reference URLs
 

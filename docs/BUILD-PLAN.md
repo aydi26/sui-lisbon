@@ -172,7 +172,7 @@ Cross-ref: docs/APP.md#transparency, HASHI_INTEGRATION.md §3 mechanism #3 & #4,
 ## Standing ops (from day one, every day)
 
 - Keep 2–3 confirmed hBTC deposits and one broadcast withdrawal WARM at all times (G6) so the demo never waits on signet. See HASHI_INTEGRATION.md §7 (standing ops) + §9 risk register.
-- Keep both signet faucets dripping (`signet257.bublina.eu.org`, `signetfaucet.com`); consolidate UTXOs to clear the 30,000-sat minimum.
+- Keep `signetfaucet.com` dripping — it is the ONLY working signet faucet (`signet257.bublina.eu.org` and `alt.signetfaucet.com` are dead; Mutinynet is a DIFFERENT CHAIN and must never be used). Amount is in BTC, max `0.01`, and you must wait ≥ 30 s after the captcha or the payout is silently discarded. See `docs/FACTS.md#networks-faucets`.
 - Pin SDK/Pyth versions; Pyth DAO auto-upgrades Sui addresses 2026-08-18 → versions must be pinned before then (G9).
 
 ## Global definition of done (submission)

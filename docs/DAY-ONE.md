@@ -123,7 +123,9 @@ node -e "import('@mysten/hashi').then(async h=>{ /* const addr = sdk.generateDep
 
 ## D7 — Signet faucet throughput  (resolves U6) — start EARLY — ⚠️ **PARTIAL 2026-07-25: faucets alive, throughput UNMEASURED. OWNER: build lead.**
 
-- Request ≥ 30,000 sats from BOTH: `https://signet257.bublina.eu.org/` and `https://signetfaucet.com` to a wallet controlled for the demo. Time delivery.
+- ⚠ **`signet257.bublina.eu.org` and `alt.signetfaucet.com` are DEAD** — they answer HTTP 200 but the body says the faucet has not worked since 2025-01-30. `https://signetfaucet.com` is the only one that pays.
+- ⚠ **Never use Mutinynet** — it is a different chain that shares signet's genesis hash and uses identical `tb1p…` addresses, so a wrong send gives no warning. See `docs/FACTS.md#networks-faucets`.
+- On `signetfaucet.com`: paste the Hashi-derived deposit address, set the amount in **BTC** (max `0.01`), solve the captcha, then **wait ≥ 30 s before clicking Send** — the page discards payouts submitted sooner, silently and with a green "queued" message.
 - **RECORD:** U6 → per-faucet delivery time + amount. **Start dripping on day one and keep dripping** — deposits are ~70 min end-to-end (G6), you need warm confirmed hBTC.
 
 ## D8 — Seal + Walrus + zkLogin all live on testnet  (resolves U7) — BLOCKING for real mode — ✅ **PASS 2026-07-25**

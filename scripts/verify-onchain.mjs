@@ -71,6 +71,15 @@ const DEFAULTS = {
   WORMHOLE_STATE_ID: '0x31358d198147da50db32eda2562951d53973a0c0ad5ed738e9b17d88b213d790',
   PYTH_BTC_USD_FEED_ID: '0xf9c0172ba10dfa4d19088d94f5bf61d3b54d5bd7483a322a982e1373ee8ea31b',
   HERMES_ENDPOINT: 'https://hermes-beta.pyth.network',
+
+  // ── OUR OWN deployment (docs/DEPLOYED.md, published 2026-07-25) ────────────
+  // Everything above is someone else's; everything here is ours. Overridable
+  // from keeper/.env so a redeploy needs no code change.
+  APHOTIC_PACKAGE_ID: '0xbe433a2726fc61391d180ce55cdb8177f9647760b23a7704d42e3b5b9bb72d66',
+  APHOTIC_VAULT_ID: '0xf03832c92d4bf745ac720c52fe9198fc928028ce51991059bfe59c0e4ef374e8',
+  APHOTIC_VAULT_ISV: 947353676,
+  DEEPBOOK_BALANCE_MANAGER_ID: '0x5766ed0b5e3fd310da9ccd723912198450872d9e2c83a473ed59cd5ab51990e2',
+  DEEPBOOK_BALANCE_MANAGER_ISV: 947353675,
 };
 
 // RECON R1 — ordered JSON-RPC mirrors. `sui-testnet.public.blastapi.io` is dead (403).
@@ -346,6 +355,34 @@ async function checkP1() {
   await checkObject('Pyth State', CFG.PYTH_STATE_ID, { shared: true, typeStartsWith: `${CFG.PYTH_PACKAGE_ID}::state::State` });
   await checkObject('Pyth package', CFG.PYTH_PACKAGE_ID, { package: true });
   await checkObject('Wormhole State', CFG.WORMHOLE_STATE_ID, { shared: true, typeContains: ['::state::State'] });
+
+  // ── our own deployment ──────────────────────────────────────────────────────
+  // Skipped rather than failed when unset, so this script still runs green on a
+  // clean checkout that has not published yet.
+  if (!CFG.APHOTIC_PACKAGE_ID) {
+    row('P1', 'aphotic package', 'WARN', 'APHOTIC_PACKAGE_ID unset — not published yet');
+  } else {
+    await checkObject('aphotic package', CFG.APHOTIC_PACKAGE_ID, { package: true });
+  }
+  if (!CFG.APHOTIC_VAULT_ID) {
+    row('P1', 'Vault<hBTC,DBUSDC>', 'WARN', 'APHOTIC_VAULT_ID unset — no vault created yet');
+  } else {
+    // The type argument order is load-bearing: Vault<B, Q> must be <hBTC, DBUSDC>.
+    // Swapped, share math would price the base asset in the wrong unit.
+    await checkObject('Vault<hBTC,DBUSDC>', CFG.APHOTIC_VAULT_ID, {
+      shared: true,
+      isv: CFG.APHOTIC_VAULT_ISV,
+      typeStartsWith: `${CFG.APHOTIC_PACKAGE_ID}::vault::Vault<`,
+      typeContains: [CFG.HBTC_COIN_TYPE, CFG.DBUSDC_COIN_TYPE],
+    });
+  }
+  if (CFG.DEEPBOOK_BALANCE_MANAGER_ID) {
+    await checkObject('DeepBook BalanceManager', CFG.DEEPBOOK_BALANCE_MANAGER_ID, {
+      shared: true,
+      isv: CFG.DEEPBOOK_BALANCE_MANAGER_ISV,
+      typeStartsWith: `${CFG.DEEPBOOK_ORIGINAL_PACKAGE_ID}::balance_manager::BalanceManager`,
+    });
+  }
 }
 
 // ── P2 · coin metadata ───────────────────────────────────────────────────────
