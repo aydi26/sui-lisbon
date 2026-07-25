@@ -1,4 +1,4 @@
-module aphotic::envelope;
+module aphotic::oracle;
 
 use sui::clock::Clock;
 use sui::event;
