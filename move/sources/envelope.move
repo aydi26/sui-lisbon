@@ -1,13 +1,12 @@
-// Stub-phase lint suppression. The error constants and the event struct below are part of
-// the CONTRACT (docs/MOVE-PACKAGE.md §4.5) and are declared for real, but nothing references
-// them until the TODO(T4.1) bodies land. DELETE this attribute when the module status becomes DONE.
-#[allow(unused_const, unused_field)]
 module aphotic::envelope;
+
+use sui::clock::Clock;
+use sui::event;
 
 // ┌── APHOTIC CONTRACT ────────────────────────────────────────────────────────
 // @task       T4.1
 // @phase      4
-// @status     PARTIAL
+// @status     DONE
 // @spec       docs/MOVE-PACKAGE.md#module-envelope (L309-L414)
 // @spec       docs/RECON.md#R9-guardian-limiter (L113-L150)
 // @spec       docs/BUILD-PLAN.md#T4.1 (L150)
@@ -28,6 +27,12 @@ module aphotic::envelope;
 // @facts      NO on-chain queue-depth getter exists (RECON R7.2 — every
 // @facts        hashi withdrawal_queue getter is public(package)) ⇒ U3 = NO ⇒ `deployable_sats`
 // @facts        takes the STATIC-BUFFER + EVENT-REPLAY fallback UNCONDITIONALLY.
+// @facts      BPS_DENOMINATOR = 10_000.
+// @facts      DEFAULT_MAX_ORACLE_DIVERGENCE_BPS = 200  (keeper/.env.example ORACLE_DIVERGENCE_BPS,
+// @facts        keeper/src/config.ts oracleDivergenceBps). OWNER-set, never keeper-set — see
+// @facts        @invariant 7.
+// @facts      DEFAULT_EPOCH_LEN_MS = 86_400_000 (24 h) — the rolling window the per-epoch
+// @facts        notional cap is measured over. 0 disables rolling (a single open-ended epoch).
 // @external   (none — this module makes NO external calls. `oracle_mid` arrives as a u128
 //             PARAMETER; there is no Pyth Move dependency, RECON R3.)
 // @implements public fun project_capacity(tokens_sats: u64, last_signed_ms: u64, now_ms: u64,
@@ -39,17 +44,44 @@ module aphotic::envelope;
 //             public fun saturating_add/sub/mul(a: u64, b: u64): u64               [DONE]
 //             public fun deployable_sats(idle_sats: u64, nav_sats: u64,
 //                 earmarked_pending_exit_sats: u64, pending_exit_demand_sats: u64,
-//                 projected_capacity_sats: u64, params: &EnvelopeParams): u64      [TODO(T4.1)]
+//                 projected_capacity_sats: u64, params: &EnvelopeParams): u64      [DONE]
 //             public fun check_action(vault_id: ID, paused: bool, idle_sats: u64, nav_sats: u64,
 //                 earmarked_pending_exit_sats: u64, pending_exit_demand_sats: u64,
 //                 projected_capacity_sats: u64, params: &mut EnvelopeParams,
-//                 action_notional_sats: u64, book_mid: u128, oracle_mid: u128,
-//                 clock: &Clock)                                                   [TODO(T4.1)]
+//                 action_notional_sats: u64, action_price: u128, book_mid: u128,
+//                 oracle_mid: u128, clock: &Clock)                                 [DONE]
 //             public fun new_envelope_params(max_slippage_bps: u64,
 //                 max_notional_per_epoch_sats: u64, min_cooldown_ms: u64, buffer_ratio_bps: u64,
 //                 limiter_refill_rate: u64, limiter_max_capacity: u64,
-//                 epoch_start_ms: u64): EnvelopeParams                             [TODO(T4.1)]
-//             public fun assert_strategy_available(/* walrus blob object ref */)   [TODO(T4.1), OPTIONAL]
+//                 epoch_start_ms: u64): EnvelopeParams                             [DONE]
+//             public fun assert_strategy_available(blob_id: &vector<u8>,
+//                 attested_available: bool)                                        [DONE]
+//             public fun divergence_bps(book_mid: u128, oracle_mid: u128): u64     [DONE]
+//             public fun slippage_bps(action_price: u128, book_mid: u128): u64     [DONE]
+//             public fun buffer_sats(nav_sats: u64, pending_exit_demand_sats: u64,
+//                 projected_capacity_sats: u64, params: &EnvelopeParams): u64      [DONE]
+//             public fun max_slippage_bps / max_notional_per_epoch_sats / min_cooldown_ms /
+//                 buffer_ratio_bps / limiter_refill_rate / limiter_max_capacity /
+//                 epoch_start_ms / epoch_notional_used_sats / last_action_ms /
+//                 max_divergence_bps / epoch_len_ms  (&EnvelopeParams -> u64)      [DONE]
+//             public fun set_max_divergence_bps / set_epoch_len_ms
+//                 (&mut EnvelopeParams, u64)                                       [DONE]
+//             ⚠ DELTAS vs the skeleton banner + docs/MOVE-PACKAGE.md §4.4, deliberate,
+//               each forced by a hole in the original signature:
+//               (a) `action_price: u128` was ADDED to check_action. §4.4 orders `ESlippage`
+//                   sixth as `slippage(action, book_mid) <= max_slippage_bps`, and slippage is
+//                   NOT computable from `action_notional_sats` alone — without the action's own
+//                   price, ESlippage is dead code. `action_price == 0` means "this action has no
+//                   price leg" (e.g. a cancel) and skips ONLY the slippage bound.
+//               (b) `max_divergence_bps` and `epoch_len_ms` were ADDED as EnvelopeParams FIELDS,
+//                   not as check_action parameters. §4.4 requires a divergence threshold and an
+//                   epoch boundary; neither existed anywhere. They are fields so they are
+//                   OWNER-set (vault::set_envelope needs a VaultCap) — a keeper-supplied
+//                   threshold could be widened to u64::MAX by a compromised keeper, which would
+//                   delete the G9 breaker. `new_envelope_params` KEEPS its 7-argument shape and
+//                   defaults them, so every existing caller still compiles.
+//               (c) `deployable_sats` / `check_action` take PRIMITIVES, not `&Vault` — see
+//                   @invariant 0 (the module is the intra-package leaf; Move forbids the cycle).
 // @events     EnvelopeChecked { vault_id: ID, action_notional_sats: u64, deployable_sats: u64,
 //                 projected_capacity_sats: u64, book_mid: u128 }
 // @errors     EPaused · ECooldown · EOracleDivergence · EBufferBreach · ENotionalCap · ESlippage
