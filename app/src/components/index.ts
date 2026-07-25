@@ -34,3 +34,9 @@ export type { BreakerReason, StaleBannerProps } from './StaleBanner';
 
 export { TrustModelDisclosure, TRUST_MODEL_LINE } from './TrustModelDisclosure';
 export type { TrustModelDisclosureProps } from './TrustModelDisclosure';
+
+export { WalletBar } from './WalletBar';
+export type { WalletBarProps } from './WalletBar';
+
+export { ZkLoginButton, EnokiSetupPanel, SponsorshipNote } from './ZkLoginButton';
+export type { ZkLoginButtonProps, EnokiSetupPanelProps } from './ZkLoginButton';

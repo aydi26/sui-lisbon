@@ -54,6 +54,8 @@ import { bridgeFixture, decisionFixtures, demoFixtures, strategyFixture } from '
 import { useAphoticSession } from '../../session/useSession';
 import { DecisionLogViewer } from './DecisionLogViewer';
 import { EncryptedStrategyPanel } from './EncryptedStrategyPanel';
+import { LiveVaultPanel, useChainSnapshot } from './LiveVaultPanel';
+import { describeBlobId } from './chainRead';
 import { formatAge, hostOf } from './display';
 import { describeVerifyFailure, equivalentCli } from './verifyClient';
 import './transparency.css';
@@ -78,6 +80,22 @@ export function TransparencyScreen() {
   const session = useAphoticSession();
   const mock = isMock();
   const missing = missingLiveConfig();
+
+  // One click, three public reads. Nothing fires on mount (invariant 4).
+  const snapshot = useChainSnapshot();
+
+  // The strategy panel shows the LIVE blob id and ciphertext size once the vault
+  // has been read; before that it shows the pre-staged sample and says so.
+  const strategy = useMemo(() => {
+    if (snapshot.vault === null) return strategyFixture;
+    const blob = describeBlobId(snapshot.vault.strategyBlobId);
+    return {
+      blobId: blob.display,
+      versionEpoch: snapshot.vault.versionEpoch,
+      ciphertextPreview: snapshot.vault.strategyCiphertextPreviewHex,
+      sizeBytes: snapshot.vault.strategyCiphertextBytes,
+    };
+  }, [snapshot.vault]);
 
   // Stable per mount: the screen does not poll, so it must not pretend to.
   const renderedAtMs = useMemo(() => Date.now(), []);
@@ -105,7 +123,7 @@ export function TransparencyScreen() {
   };
 
   return (
-    <div className="tx-screen">
+    <div className="ap-page tx-screen">
       <header>
         <p className="tx-eyebrow">Transparency</p>
         <h1 className="tx-title">Verify us. Don&rsquo;t trust us.</h1>
@@ -132,10 +150,19 @@ export function TransparencyScreen() {
 
       <div className="tx-strip">
         <StripItem
-          label="Data source"
-          value={mock ? 'fixtures · zero network' : 'live adapters'}
+          label="Vault state"
+          value={
+            snapshot.vault !== null
+              ? 'read from chain'
+              : snapshot.vaultError !== null
+                ? 'unreadable'
+                : 'not read yet'
+          }
         />
-        <StripItem label="Records" value={`${decisionFixtures.length} decisions`} />
+        <StripItem
+          label="Decision log"
+          value={`${decisionFixtures.length} pre-staged records`}
+        />
         <StripItem
           label="Newest record"
           value={newestRecordMs === 0 ? '—' : `${formatAge(dataAgeMs)} old`}
@@ -143,10 +170,13 @@ export function TransparencyScreen() {
         <StripItem label="Verifier" value={hostOf(config.keeper.verifyUrl)} />
         <StripItem label="Walrus" value={hostOf(config.walrus.aggregatorUrl)} />
         <StripItem
-          label="Vault"
+          label="Vault object"
           value={config.aphotic.vaultId === '' ? 'not published' : 'published'}
         />
       </div>
+
+      {/* The one panel on this page that is chain, not staging. */}
+      <LiveVaultPanel snapshot={snapshot} />
 
       {missing.length > 0 ? (
         <div className="tx-callout tx-callout--warn">
@@ -180,11 +210,22 @@ export function TransparencyScreen() {
 
       <div className="tx-columns">
         <div className="tx-col">
-          <EncryptedStrategyPanel strategy={strategyFixture} />
+          <EncryptedStrategyPanel strategy={strategy} />
+          <p className="tx-note">
+            {snapshot.vault === null
+              ? 'Pre-staged sample. Press “Read the vault from chain” above and this panel switches to the blob id, version epoch and ciphertext bytes actually held in the Vault object.'
+              : 'Read from the Vault object above — blob id, version epoch and the first bytes of the ciphertext that is really on chain.'}
+          </p>
         </div>
 
         <div className="tx-col">
           <DecisionLogViewer records={decisionFixtures} />
+          <p className="tx-note">
+            These records are <strong>pre-staged</strong>, not read from chain: the keeper has not
+            traded, because the hBTC/DBUSDC book is empty on both sides and we can mint neither
+            asset on testnet. The journal panel above shows the real, currently empty, on-chain
+            ledger. We would rather label this than let it pass as live.
+          </p>
         </div>
 
         <div className="tx-col tx-col--bridge">

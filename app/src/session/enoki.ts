@@ -38,6 +38,8 @@
 //             export function findGoogleWallet(wallets): WalletLike | null
 //             export function readZkLoginSession(wallet): Promise<ZkLoginSession | null>
 //             export function walletProvider(wallet): string | null
+//             export function isEnokiBackedWallet(wallet): boolean
+//             export function walletLabel(wallet): string
 // @forbidden  '@mysten/enoki/react' — every export there is deprecated
 // @forbidden  constructing a Sui client here — use ../lib/suiClient.ts (one factory)
 // @forbidden  a canonical id or endpoint literal here — G7
@@ -168,6 +170,25 @@ export function walletProvider(wallet: WalletLike | null): string | null {
   if (wallet === null) return null;
   const metadata = getWalletMetadata(wallet as never);
   return metadata === null ? null : metadata.provider;
+}
+
+/**
+ * True for an Enoki-registered (zkLogin) wallet, false for a browser extension.
+ *
+ * Implemented via `getWalletMetadata` rather than `isEnokiWallet` on purpose:
+ * metadata is present exactly for wallets Enoki registered, and it keeps this
+ * module's `@mysten/enoki` surface to the four functions above.
+ */
+export function isEnokiBackedWallet(wallet: WalletLike | null): boolean {
+  return walletProvider(wallet) !== null;
+}
+
+/** Human label for the wallet bar: `Google · zkLogin` or the extension's own name. */
+export function walletLabel(wallet: WalletLike | null): string {
+  if (wallet === null) return 'Not connected';
+  const provider = walletProvider(wallet);
+  if (provider === null) return wallet.name;
+  return `${provider.charAt(0).toUpperCase()}${provider.slice(1)} · zkLogin`;
 }
 
 /**

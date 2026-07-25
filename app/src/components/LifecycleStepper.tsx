@@ -19,6 +19,8 @@
 // @verify     cd app && npm run build
 // └── END CONTRACT ───────────────────────────────────────────────────────────
 
+import type { ReactNode } from 'react';
+
 import type { LifecycleStage, TimeClass } from '../fixtures';
 
 export interface LifecycleStepperProps {
@@ -27,6 +29,12 @@ export interface LifecycleStepperProps {
   current: number;
   /** Optional per-stage detail, e.g. "3 / 6 confirmations". */
   detail?: Partial<Record<number, string>>;
+  /**
+   * Optional per-stage control rendered inside the step — the affordance that
+   * actually advances it (e.g. the UTXO registration, the permissionless crank).
+   * A stage nobody can advance is a stage the user is stranded on (RECON R14).
+   */
+  action?: Partial<Record<number, ReactNode>>;
 }
 
 const TIME_CLASS_COLOR: Record<TimeClass, string> = {
@@ -41,7 +49,7 @@ const TIME_CLASS_LABEL: Record<TimeClass, string> = {
   sui: 'Sui — instant',
 };
 
-export function LifecycleStepper({ stages, current, detail }: LifecycleStepperProps) {
+export function LifecycleStepper({ stages, current, detail, action }: LifecycleStepperProps) {
   return (
     <ol style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: 'var(--space-3)' }}>
       {stages.map((stage) => {
@@ -82,6 +90,7 @@ export function LifecycleStepper({ stages, current, detail }: LifecycleStepperPr
               {stage.expected}
               {detail?.[stage.index] ? ` · ${detail[stage.index]}` : ''}
             </span>
+            {action?.[stage.index] ?? null}
           </li>
         );
       })}

@@ -26,7 +26,7 @@
 // @verify     cd app && npm run build
 // └── END CONTRACT ───────────────────────────────────────────────────────────
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 
 import { AddressPill } from '../../components/AddressPill';
 import CallPreview from './CallPreview';
@@ -39,8 +39,10 @@ export interface RegisterExitAddressProps {
   readonly busy: boolean;
   /** Non-null ⇒ the action is unavailable and this is the honest reason. */
   readonly blockedReason: string | null;
-  /** Rendered under the button after a submit attempt. */
-  readonly result: string | null;
+  /** Rendered under the button after a SUCCESSFUL submit. */
+  readonly result: ReactNode | null;
+  /** Rendered under the button after a FAILED submit. Never styled as success. */
+  readonly errorText?: ReactNode | null;
 }
 
 export function RegisterExitAddress({
@@ -48,6 +50,7 @@ export function RegisterExitAddress({
   busy,
   blockedReason,
   result,
+  errorText = null,
 }: RegisterExitAddressProps) {
   const [raw, setRaw] = useState('');
   const [acknowledged, setAcknowledged] = useState(false);
@@ -132,6 +135,18 @@ export function RegisterExitAddress({
           type="button"
           className="xt-btn xt-btn--primary"
           disabled={value === null || !acknowledged || busy || blockedReason !== null}
+          // The reason is also rendered on the page; the title carries it onto the
+          // control itself so a disabled button is never silent on hover either.
+          title={
+            busy
+              ? 'Waiting for your wallet to sign'
+              : (blockedReason ??
+                (value === null
+                  ? 'Enter a signet address first — it must parse as a 20-byte P2WPKH or 32-byte P2TR witness program'
+                  : !acknowledged
+                    ? 'Tick the acknowledgement: this address is written once and can never be changed'
+                    : 'Writes this witness program into the Vault, permanently'))
+          }
           onClick={() => {
             if (value !== null) onRegister(value.program);
           }}
@@ -141,6 +156,7 @@ export function RegisterExitAddress({
       </div>
 
       {result === null ? null : <p className="xt-msg xt-msg--ok">{result}</p>}
+      {errorText === null ? null : <p className="xt-msg xt-msg--bad">{errorText}</p>}
     </section>
   );
 }

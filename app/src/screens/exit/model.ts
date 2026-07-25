@@ -16,42 +16,48 @@
 // @facts        (vault::burn_shares_for_btc → mul_div). The inverse used here rounds
 // @facts        UP so the depositor never receives less than they asked for.
 // @facts      vault::nav_sats excludes the pooled earmark: free = idle - pooled.
-// @facts      ⚠ MOCK VAULT NUMBERS. src/fixtures has no vault fixture (its shapes are
-// @facts        frozen by T0.4 and owned elsewhere), so the demo vault state lives
-// @facts        here, chosen to be arithmetically consistent with fixtures/exit.ts:
-// @facts        idle 2_762_500 - pooled 12_500 = nav 2_750_000 sats over 2_500_000
-// @facts        shares ⇒ 1.1 sats/share. Replace with a shared fixture when one exists.
-// @facts      ⚠ MOCK book_mid = 1_180_000_000 (DeepBook FLOAT_SCALING 1e9 ≈ 118k
-// @facts        DBUSDC per hBTC). LIVE has NO mid: the hBTC/DBUSDC book is empty on
-// @facts        both sides (E-A7/E-M7, blocker B2), which is a defined empty state
-// @facts        here, never an error.
+// @facts      navSatsMirror() is a LINE-FOR-LINE mirror of vault::nav_sats v3:
+// @facts        if quote == 0            → free                    (no price needed)
+// @facts        else if book_mid == 0    → the Move call would abort EZeroNav
+// @facts        else free + quote * 1e9 / book_mid
+// @facts        Reporting "unpriced" is the honest answer; reporting 0 would be a lie
+// @facts        about someone's money, and pretending a price would be worse (G9).
+// @facts      ⚠ There is NO mock vault state in this module and there must not be:
+// @facts        every number on this screen is read from chain (vaultRead.ts) or
+// @facts        joined from the on-chain event stream (history.ts).
 // @implements export interface ExitRecord · export interface VaultView
-//             export function seedMockExits(nowMs): ExitRecord[]
-//             export const MOCK_POOLED_SATS · export function mockVaultView(): VaultView
+//             export type NavReading · export function navSatsMirror(...)
 //             export function reclaimState(rec, nowMs, cooldownMs): ReclaimState
 //             export function sharesForSats(...) · export function satsForShares(...)
 //             export function formatDuration(ms: number): string
 // @forbidden  `number` for any sats/shares quantity — bigint only (G10)
 // @forbidden  a field expressing queue POSITION or purchasable priority — G3
-// @forbidden  fabricating a Sui digest or a signet txid for a simulated action — a
-//             dead explorer link is worse than an honest "nothing was signed" (G6)
+// @forbidden  fabricating a Sui digest or a signet txid — a dead explorer link is
+//             worse than an honest "nothing is on chain" (G6)
+// @forbidden  a fixture/mock vault view here — this screen is live-only
 // @invariant  1. Every sats/shares value is bigint.
-// @invariant  2. reclaimState mirrors the three upstream asserts and adds none.
-// @invariant  3. A simulated (mock) exit record carries no digest and no txid.
+// @invariant  2. reclaimState mirrors the three upstream asserts and adds none,
+//                plus one LOCAL state ('unresolved') for a record whose bridge
+//                request_id we could not read — we refuse to build a PTB we cannot
+//                address correctly.
+// @invariant  3. navSatsMirror never invents a price.
 // @ac         docs/APP.md §7 A5 A6
 // @verify     cd app && npx tsc --noEmit
 // └── END CONTRACT ───────────────────────────────────────────────────────────
 
 import { config } from '../../config';
-import { exitFixtures } from '../../fixtures';
 import type { ExitPhase } from '../../fixtures';
-import { classifyExitAmount } from '../../lib/format';
-
-const MINUTE_MS = 60_000;
 
 /** One exit as this screen tracks it. Mirrors docs/APP.md §3.4. */
 export interface ExitRecord {
+  /** Stable list key. The bridge request_id when we have it, else the Sui digest. */
   readonly requestId: string;
+  /**
+   * The bridge's `WithdrawalRequest` id — the ONLY value `reclaim_stalled_exit`
+   * may be given. Null when the bridge event could not be read, in which case no
+   * reclaim PTB is offered at all (a Sui digest is not an address).
+   */
+  readonly bridgeRequestId: string | null;
   readonly amountSats: bigint;
   readonly phase: ExitPhase;
   /** Sui digest of the burn + composed request_withdrawal PTB. Null when simulated. */
@@ -62,7 +68,7 @@ export interface ExitRecord {
   readonly requestedAtMs: number;
   /** True once WithdrawalPickedForProcessing fired — past the point a cancel can work. */
   readonly picked: boolean;
-  /** True ⇒ produced locally in mock mode; nothing was signed and nothing is on-chain. */
+  /** Always false on this screen — kept so a rendered record can never claim to be live. */
   readonly simulated: boolean;
 }
 
@@ -79,54 +85,41 @@ export interface VaultView {
   readonly paused: boolean;
 }
 
-// ── mock staging (docs/APP.md §5) ───────────────────────────────────────────
+// ── NAV — a line-for-line mirror of vault::nav_sats (v3) ────────────────────
 
-function isPooled(amountSats: bigint): boolean {
-  return (
-    classifyExitAmount(amountSats, config.hashi.withdrawalMinSats, config.constants.dustFloorSats) ===
-    'pooled'
-  );
-}
+/** DeepBook v3 FLOAT_SCALING, as `vault::DEEPBOOK_PRICE_SCALING`. */
+export const DEEPBOOK_PRICE_SCALING = 1_000_000_000n;
 
-/** Σ of every fixture exit that lands below the bridge minimum. */
-export const MOCK_POOLED_SATS: bigint = exitFixtures
-  .filter((f) => isPooled(f.amountSats))
-  .reduce((acc, f) => acc + f.amountSats, 0n);
+export type NavReading =
+  | { readonly status: 'ok'; readonly sats: bigint }
+  | { readonly status: 'unpriced'; readonly reason: string };
 
 /**
- * The demo's exit history, derived from `fixtures/exit.ts`.
+ * What `vault::nav_sats(vault, book_mid)` would return, computed from the two
+ * balances the package exposes as public getters.
  *
- * Ages are chosen so the jury sees BOTH reclaim states without any fake toggle:
- *   • the confirmed exit is 6 h old and already broadcast — nothing to reclaim;
- *   • the in-flight exit is 67 min old and still pre-commit — the 1 h cooldown has
- *     elapsed, so the depositor-signed reclaim path is live on screen.
- * A NEW exit requested during the demo starts its own countdown from zero.
+ * A base-only vault has an EXACT sats NAV and needs no price at all — that is the
+ * v3 change, and it is why this screen works while the hBTC/DBUSDC book is empty
+ * on both sides. The moment the vault holds a quote leg the price becomes
+ * load-bearing, and if there is none we say so rather than render a zero NAV that
+ * would misstate what a share is worth (G9).
  */
-export function seedMockExits(nowMs: number): ExitRecord[] {
-  const ages = [6 * 60 * MINUTE_MS, 67 * MINUTE_MS];
-  return exitFixtures
-    .filter((f) => !isPooled(f.amountSats))
-    .map((f, i) => ({
-      requestId: f.requestId,
-      amountSats: f.amountSats,
-      phase: f.phase,
-      burnDigest: f.burnDigest,
-      signetTxid: f.signetTxid ?? null,
-      requestedAtMs: nowMs - (ages[i] ?? (30 + i) * MINUTE_MS),
-      picked: f.phase !== 'A',
-      simulated: false,
-    }));
-}
-
-/** Deterministic vault state for `DEMO_MODE=mock`. See the @facts note above. */
-export function mockVaultView(): VaultView {
+export function navSatsMirror(
+  freeBtcSats: bigint,
+  quoteValue: bigint,
+  bookMid: bigint | null,
+): NavReading {
+  if (quoteValue === 0n) return { status: 'ok', sats: freeBtcSats };
+  if (bookMid === null || bookMid === 0n) {
+    return {
+      status: 'unpriced',
+      reason:
+        'The vault now holds DBUSDC as well as hBTC, and there is no mid to value it at — vault::nav_sats would abort EZeroNav. Your funds are untouched; this is a pricing gap, not a loss.',
+    };
+  }
   return {
-    totalShares: 2_500_000n,
-    navSats: 2_750_000n,
-    myShares: 600_000n,
-    pendingExitSats: MOCK_POOLED_SATS,
-    bookMid: 1_180_000_000n,
-    paused: false,
+    status: 'ok',
+    sats: freeBtcSats + (quoteValue * DEEPBOOK_PRICE_SCALING) / bookMid,
   };
 }
 
@@ -157,12 +150,16 @@ export type ReclaimState =
   | { readonly kind: 'cooldown'; readonly remainingMs: number }
   | { readonly kind: 'processing' }
   | { readonly kind: 'settled' }
+  | { readonly kind: 'unresolved' }
   | { readonly kind: 'simulated' };
 
 /**
  * Mirrors `hashi::withdraw::cancel_withdrawal`'s asserts (RECON R7). The sender
  * assert is not modelled here because it is structural: the button is wired to
  * the depositor's own session and to nothing else (E-A3).
+ *
+ * `unresolved` is ours, not Hashi's: without the bridge request_id there is no
+ * correct PTB to build, and we will not build an incorrect one.
  */
 export function reclaimState(
   record: ExitRecord,
@@ -172,6 +169,7 @@ export function reclaimState(
   if (record.simulated) return { kind: 'simulated' };
   if (record.phase === 'done' || record.signetTxid !== null) return { kind: 'settled' };
   if (record.picked) return { kind: 'processing' };
+  if (record.bridgeRequestId === null) return { kind: 'unresolved' };
   const elapsed = nowMs - record.requestedAtMs;
   if (elapsed < cooldownMs) return { kind: 'cooldown', remainingMs: cooldownMs - elapsed };
   return { kind: 'eligible' };

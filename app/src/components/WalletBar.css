@@ -1,0 +1,240 @@
+/* ┌── APHOTIC CONTRACT ────────────────────────────────────────────────────────
+   @task       T3.4
+   @phase      3  [CUT-LINE CRITICAL]
+   @status     DONE
+   @spec       docs/APP.md §2.1 (session affordance), §7 A1
+   @rules      G7 G8
+   @depends    ../theme.css (T0.4) — every colour here MUST be a token
+   @facts      Sober by intent: generous spacing, one hairline, no dashboard chrome.
+   @facts        --accent = the Sui/instant colour, --btc = Bitcoin, --amber = a
+   @facts        degraded-but-honest state, --red = a hard stop.
+   @implements the .wb-* style scope for ./WalletBar.tsx
+   @forbidden  a hardcoded hex colour — theme.css owns the palette
+   @invariant  1. Every colour resolves to a var(--…) declared in theme.css.
+   @ac         renders in all four session states at 320px and at 1440px
+   @verify     cd app && npm run build
+   └── END CONTRACT ─────────────────────────────────────────────────────────── */
+
+.wb {
+  display: grid;
+  gap: var(--space-2);
+  justify-items: end;
+  position: relative;
+}
+
+.wb-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+/* ── buttons ────────────────────────────────────────────────────────────────── */
+
+.wb-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: var(--font-body);
+  font-size: var(--text-xs);
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  cursor: pointer;
+  transition:
+    color var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    background var(--dur-fast) var(--ease);
+}
+
+.wb-btn:hover:not(:disabled) {
+  color: var(--text-primary);
+  border-color: var(--border);
+}
+
+.wb-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.wb-btn-primary {
+  border-color: var(--btc);
+  color: var(--btc);
+  background: var(--btc-dim);
+}
+
+.wb-btn-primary:hover:not(:disabled) {
+  background: var(--btc);
+  color: var(--bg-primary);
+  border-color: var(--btc);
+}
+
+/* ── connected identity ─────────────────────────────────────────────────────── */
+
+.wb-id {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3) var(--space-2) var(--space-4);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-pill);
+  background: var(--bg-elevated);
+  min-width: 0;
+}
+
+.wb-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  flex: 0 0 auto;
+}
+
+.wb-dot-warn {
+  background: var(--amber);
+}
+
+.wb-provider {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.wb-addr {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  cursor: copy;
+}
+
+.wb-addr:hover {
+  color: var(--accent);
+}
+
+.wb-balance {
+  color: var(--btc);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
+.wb-balance-muted {
+  color: var(--text-muted);
+}
+
+.wb-link {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  text-decoration: none;
+}
+
+.wb-link:hover {
+  color: var(--accent);
+}
+
+/* ── wallet chooser ─────────────────────────────────────────────────────────── */
+
+.wb-menu {
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  right: 0;
+  z-index: 40;
+  display: grid;
+  gap: var(--space-1);
+  min-width: 230px;
+  padding: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-md);
+}
+
+.wb-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.wb-menu-item:hover {
+  background: var(--accent-dim);
+}
+
+.wb-menu-icon {
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius-sm);
+  flex: 0 0 auto;
+}
+
+.wb-menu-empty {
+  padding: var(--space-2) var(--space-3);
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+}
+
+/* ── one-line reasons, never a silent disable ───────────────────────────────── */
+
+.wb-reason {
+  margin: 0;
+  max-width: 46ch;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+  text-align: right;
+}
+
+.wb-reason-warn {
+  color: var(--amber);
+}
+
+.wb-reason-error {
+  color: var(--red);
+}
+
+.wb-details {
+  max-width: 52ch;
+  text-align: left;
+}
+
+.wb-details > summary {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  cursor: pointer;
+  list-style: none;
+  text-align: right;
+}
+
+.wb-details > summary:hover {
+  color: var(--text-secondary);
+}
+
+.wb-problems {
+  margin: var(--space-2) 0 0;
+  padding-left: 1.15rem;
+  display: grid;
+  gap: var(--space-1);
+  color: var(--amber);
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+}

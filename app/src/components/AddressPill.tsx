@@ -65,7 +65,7 @@ export function AddressPill({ value, label, truncate = true, immutable = false }
             ⛓
           </span>
         ) : null}
-        <span className="aphotic-mono" title={value}>
+        <span className="aphotic-mono" title={value} style={{ userSelect: 'all' }}>
           {truncate ? truncateMiddle(value, 12) : value}
         </span>
         <button

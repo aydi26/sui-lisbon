@@ -27,10 +27,7 @@
   /* Landing-CTA gradient shoulder: the BTC orange dropped into the page black.
      Declared as a token so no component below carries a hex literal. */
   --xt-btc-deep: color-mix(in srgb, var(--btc) 52%, var(--bg-primary));
-  width: 100%;
-  max-width: 1180px;
-  margin: 0 auto;
-  padding: var(--space-7) var(--space-5) var(--space-8);
+  /* Page frame comes from theme.css .ap-page (one width for all three screens). */
   display: grid;
   gap: var(--space-6);
 }

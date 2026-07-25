@@ -20,6 +20,12 @@
 // @external   client.stateService.getCoinInfo({ coinType })
 //               -> { response: { metadata, treasury?: { totalSupply?: bigint } } }
 // @implements export async function readAggregateStats(): Promise<AggregateStats>
+// @facts      T5.2 (2026-07-26): the two counters are now REAL reads —
+// @facts        sats under management = the Vault's own nav_sats mirror (its free
+// @facts        sats exactly, while the vault holds no quote leg), decisions
+// @facts        logged = the length of the on-chain journal blob-id stream. Both
+// @facts        are 0 today because nothing has been deposited and the keeper has
+// @facts        not traded; 0 read from chain is a fact, not a placeholder.
 // @forbidden  throwing — the hero must render at the venue with the network down
 // @forbidden  `number` for sats — sats are bigint until the last Number() cast
 // @forbidden  a canonical id literal here — G7
@@ -33,6 +39,7 @@
 
 import { config } from '../config';
 import { getSuiClient } from '../lib/suiClient';
+import { readJournal, readVaultOnChain } from '../screens/transparency/chainRead';
 
 /** Hard ceiling on the landing-page read. The hero never waits on the network. */
 const READ_TIMEOUT_MS = 4000;
@@ -77,12 +84,22 @@ export async function readAggregateStats() {
 
     const hbtcSupplySats = BigInt(response?.treasury?.totalSupply ?? 0);
 
-    // TODO(T5.2): replace the placeholder with the real reads once the package is
-    // published — sats under management = aphotic::vault::Vault.total_sats, and
-    // decisions logged = the length of the on-chain journal blob-id stream.
-    // Both stay 0 while VITE_VAULT_ID / VITE_APHOTIC_PACKAGE_ID are unset.
-    const vaultSats = 0n;
-    const decisionsLogged = 0;
+    // The two counters, for real (T5.2). Sats under management = the vault's own
+    // NAV, which for a base-only vault is exactly its free sats and needs no
+    // price at all; decisions logged = the length of the on-chain journal stream.
+    // Both are OURS, never the bridge's supply (G8). Either may fail on its own
+    // without taking the hero down — settled, never awaited-and-thrown.
+    const [vaultSettled, journalSettled] = await Promise.allSettled([
+      readVaultOnChain(controller.signal),
+      readJournal(controller.signal),
+    ]);
+
+    const vaultSats =
+      vaultSettled.status === 'fulfilled'
+        ? (vaultSettled.value.navSats ?? vaultSettled.value.freeBtcSats)
+        : 0n;
+    const decisionsLogged =
+      journalSettled.status === 'fulfilled' ? journalSettled.value.length : 0;
 
     return {
       deposits: Number(vaultSats),

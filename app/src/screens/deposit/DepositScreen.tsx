@@ -63,6 +63,8 @@ import { useAphoticSession } from '../../session/useSession';
 
 import { bip21 } from '../../hashi/depositAddress';
 import { useDepositAddress } from './useDepositAddress';
+import { DepositHbtcPanel } from './DepositHbtcPanel';
+import { SignetArrivals } from './SignetArrivals';
 
 import './deposit.css';
 
@@ -197,6 +199,9 @@ function DepositAddressCard() {
 
       <div className="dep-address">
         {body}
+
+        {/* A public read of a public chain — where the BTC actually is, on demand. */}
+        <SignetArrivals address={address} />
 
         <div className="dep-minimum">
           <span className="dep-minimum-value">{formatSats(minimum)}</span>
@@ -344,7 +349,7 @@ export function DepositScreen() {
   const staged = warmDeposit;
 
   return (
-    <div className="aphotic-container dep">
+    <div className="ap-page dep">
       <header>
         <span className="dep-eyebrow">Screen 1 · Deposit</span>
         <h1 className="dep-title">Deposit native BTC</h1>
@@ -361,11 +366,12 @@ export function DepositScreen() {
         <div className="dep-col">
           <SignInCard />
           <DepositAddressCard />
+          <DepositHbtcPanel />
         </div>
 
         <div className="dep-col">
           <section className="aphotic-card dep-step">
-            <StepHead num="03" title="What happens next" note="6 stages" />
+            <StepHead num="04" title="What happens next" note="6 stages" />
             <div className="dep-aside-note">
               <span className="dep-tag dep-tag-btc">
                 Pre-staged demo deposit · stage {staged.stage} of {config.constants.depositStages} ·{' '}

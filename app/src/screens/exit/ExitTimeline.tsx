@@ -31,6 +31,8 @@
 // @verify     cd app && npm run build
 // └── END CONTRACT ───────────────────────────────────────────────────────────
 
+import type { ReactNode } from 'react';
+
 import { LifecycleStepper } from '../../components/LifecycleStepper';
 import { EXIT_PHASES } from '../../fixtures';
 import { formatBtc, formatSats, truncateMiddle } from '../../lib/format';
@@ -56,7 +58,12 @@ export interface ExitTimelineProps {
   readonly reclaimingId: string | null;
   /** Non-null ⇒ reclaim cannot be submitted, and this is the honest reason. */
   readonly blockedReason: string | null;
-  readonly reclaimResult: string | null;
+  /** Rendered after a SUCCESSFUL reclaim. */
+  readonly reclaimResult: ReactNode | null;
+  /** Rendered after a FAILED reclaim. Never styled as success. */
+  readonly reclaimError?: ReactNode | null;
+  /** Rendered above the list when the history itself could not be read. */
+  readonly historyNote?: ReactNode | null;
 }
 
 function phaseIndex(record: ExitRecord): number {
@@ -71,6 +78,8 @@ export function ExitTimeline({
   reclaimingId,
   blockedReason,
   reclaimResult,
+  reclaimError = null,
+  historyNote = null,
 }: ExitTimelineProps) {
   const active = records.find((r) => r.phase !== 'done') ?? records[0];
 
@@ -98,6 +107,8 @@ export function ExitTimeline({
       )}
 
       <hr className="xt-rule" />
+
+      {historyNote === null ? null : <p className="xt-msg xt-msg--warn">{historyNote}</p>}
 
       <ul className="xt-list">
         {records.map((record) => {
@@ -178,9 +189,11 @@ export function ExitTimeline({
                         ? `cooldown · ${formatDuration(reclaim.remainingMs)} left`
                         : reclaim.kind === 'processing'
                           ? 'past the point of no return'
-                          : reclaim.kind === 'simulated'
-                            ? 'nothing on chain to cancel'
-                            : 'already broadcast'}
+                          : reclaim.kind === 'unresolved'
+                            ? 'request id unread'
+                            : reclaim.kind === 'simulated'
+                              ? 'nothing on chain to cancel'
+                              : 'already broadcast'}
                     </span>
                   )}
                 </div>
@@ -192,9 +205,11 @@ export function ExitTimeline({
                       ? 'Hashi enforces a 1-hour cooldown before a request can be cancelled (ECooldownNotElapsed).'
                       : reclaim.kind === 'processing'
                         ? 'The batch is already being processed — cancel_withdrawal aborts ECannotCancelProcessingWithdrawal. We surface that instead of retrying behind your back.'
-                        : reclaim.kind === 'simulated'
-                          ? 'This exit was simulated locally, so there is no bridge request to cancel.'
-                          : 'Already broadcast to Bitcoin. Nothing to reclaim.'}
+                        : reclaim.kind === 'unresolved'
+                          ? 'We could not read this exit’s bridge request_id from the event stream, and reclaim_stalled_exit takes exactly that id. Rather than build a transaction addressed to something else, we offer no button. Re-read from chain — the event may simply not have been indexed yet.'
+                          : reclaim.kind === 'simulated'
+                            ? 'This exit was simulated locally, so there is no bridge request to cancel.'
+                            : 'Already broadcast to Bitcoin. Nothing to reclaim.'}
                 </span>
 
                 <p className="xt-copy">
@@ -205,11 +220,11 @@ export function ExitTimeline({
                   submit it — which is exactly why a compromised keeper cannot strand your exit.
                 </p>
 
-                {reclaim.kind === 'eligible' ? (
+                {reclaim.kind === 'eligible' && record.bridgeRequestId !== null ? (
                   <>
                     <CallPreview
                       call={describeReclaimCall({
-                        requestId: record.requestId,
+                        requestId: record.bridgeRequestId,
                         bookMid: bookMid ?? 0n,
                       })}
                       caption="The transaction your session signs"
@@ -231,6 +246,9 @@ export function ExitTimeline({
                     </div>
                     {reclaimResult === null ? null : (
                       <p className="xt-msg xt-msg--ok">{reclaimResult}</p>
+                    )}
+                    {reclaimError === null ? null : (
+                      <p className="xt-msg xt-msg--bad">{reclaimError}</p>
                     )}
                   </>
                 ) : null}

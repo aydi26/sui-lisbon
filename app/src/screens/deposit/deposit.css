@@ -25,16 +25,16 @@
    └── END CONTRACT ─────────────────────────────────────────────────────────── */
 
 .dep {
+  /* Page frame comes from theme.css .ap-page (one width for all three screens). */
   display: grid;
   gap: var(--space-6);
-  padding-bottom: var(--space-8);
 }
 
 /* ── header ─────────────────────────────────────────────────────────────────── */
 
 .dep-eyebrow {
   display: block;
-  color: var(--text-muted);
+  color: var(--accent);
   font-size: var(--text-xs);
   letter-spacing: var(--tracking-wide);
   text-transform: uppercase;
@@ -42,13 +42,15 @@
 }
 
 .dep-title {
-  font-size: var(--text-2xl);
+  /* Same display scale as .xt-title / .tx-title — one product, one headline size. */
+  font-size: clamp(2rem, 5vw, 3.25rem);
   margin-bottom: var(--space-3);
 }
 
 .dep-lede {
-  max-width: 62ch;
+  max-width: 64ch;
   color: var(--text-secondary);
+  font-size: var(--text-md);
   margin: 0;
 }
 
@@ -357,4 +359,99 @@
   display: grid;
   gap: var(--space-1);
   min-width: 0;
+}
+
+/* ── live figures (DepositHbtcPanel — every value read from chain) ──────────── */
+
+.dep-figures {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--space-4);
+  padding: var(--space-4) 0;
+  border-top: 1px solid var(--border-soft);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.dep-figure {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.dep-figure-k {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+}
+
+.dep-figure-v {
+  color: var(--text-primary);
+  font-size: var(--text-md);
+}
+
+.dep-figure-n {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+}
+
+/* ── the deposit form ───────────────────────────────────────────────────────── */
+
+.dep-form {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.dep-label {
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+}
+
+.dep-input {
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-md);
+}
+
+.dep-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* ── signet arrivals ────────────────────────────────────────────────────────── */
+
+.dep-arrivals {
+  display: grid;
+  gap: var(--space-3);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border-soft);
+  width: 100%;
+  text-align: left;
+}
+
+.dep-arrival-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-4);
+}
+
+.dep-arrival {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.dep-arrival-amount {
+  color: var(--btc);
+  font-size: var(--text-md);
 }

@@ -20,6 +20,9 @@
 // @facts        who PAYS; the SENDER is always the user's own zkLogin address.
 // @facts        That is exactly why a sponsored reclaim still satisfies Hashi's
 // @facts        `request.sender == ctx.sender()` assert. (ERRATA E-A3)
+// @facts      A disabled CTA ALWAYS carries `zkLoginDisabledReason` beside it, and
+// @facts        when the wallet is on the wrong network the connected block states
+// @facts        that instead of letting a later transaction fail confusingly.
 // @implements export function ZkLoginButton(props: ZkLoginButtonProps): JSX.Element
 //             export function EnokiSetupPanel(props: EnokiSetupPanelProps): JSX.Element
 //             export function SponsorshipNote(): JSX.Element
@@ -61,7 +64,17 @@ export function ZkLoginButton({
   label = 'Continue with Google',
   hint,
 }: ZkLoginButtonProps) {
-  const { status, address, problems, signIn, signOut } = useAphoticSession();
+  const {
+    status,
+    address,
+    problems,
+    providerLabel,
+    networkProblem,
+    zkLoginDisabledReason,
+    extensionWallets,
+    signIn,
+    signOut,
+  } = useAphoticSession();
   const [error, setError] = useState<string | null>(null);
 
   // MUST stay a click handler — Enoki opens a popup and browsers block popups
@@ -79,21 +92,30 @@ export function ZkLoginButton({
 
   if (status === 'connected' && address !== null) {
     return (
-      <div className="zk-signedin">
-        <div className="zk-signedin-id">
-          <span className="zk-eyebrow">Signed in · zkLogin</span>
-          <span className="aphotic-mono" title={address}>
-            {truncateMiddle(address, 10)}
-          </span>
+      <div className="zk-signin">
+        <div className="zk-signedin">
+          <div className="zk-signedin-id">
+            <span className="zk-eyebrow">Signed in · {providerLabel}</span>
+            <span className="aphotic-mono" title={address}>
+              {truncateMiddle(address, 10)}
+            </span>
+          </div>
+          <button type="button" className="zk-ghost" onClick={signOut}>
+            Sign out
+          </button>
         </div>
-        <button type="button" className="zk-ghost" onClick={signOut}>
-          Sign out
-        </button>
+        {networkProblem !== null ? (
+          <p className="zk-error" role="alert">
+            {networkProblem}
+          </p>
+        ) : null}
       </div>
     );
   }
 
   const connecting = status === 'connecting';
+  // A disabled CTA always carries its reason — never a silent grey button.
+  const blocked = connecting ? null : zkLoginDisabledReason;
 
   return (
     <div className="zk-signin">
@@ -101,11 +123,20 @@ export function ZkLoginButton({
         type="button"
         className="zk-cta"
         onClick={onSignIn}
-        disabled={connecting}
+        disabled={connecting || blocked !== null}
         aria-busy={connecting}
+        title={blocked ?? undefined}
       >
         {connecting ? 'Opening Google…' : label}
       </button>
+      {blocked !== null ? (
+        <p className="zk-error">
+          {blocked}
+          {extensionWallets.length > 0
+            ? ' Use “Connect wallet” in the header to sign in with your browser wallet instead.'
+            : ''}
+        </p>
+      ) : null}
       {hint ? <p className="zk-hint">{hint}</p> : null}
       {error !== null ? (
         <p className="zk-error" role="alert">

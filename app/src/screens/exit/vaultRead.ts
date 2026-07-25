@@ -18,15 +18,17 @@
 // @facts        shares_of<B,Q>(&Vault, address): u64
 // @facts        pending_exit_sats<B,Q>(&Vault, address): u64
 // @facts        btc_exit_address<B,Q>(&Vault, address): vector<u8>
-// @facts      ⚠ shares_of / pending_exit_sats / btc_exit_address all abort
-// @facts        EUnregisteredDepositor when the Table has no record, which would fail
-// @facts        the WHOLE simulation. They therefore run in a SECOND simulation,
-// @facts        gated on has_depositor.
-// @facts      ⚠ vault::nav_sats(vault, book_mid) needs a DeepBook mid and the
-// @facts        hBTC/DBUSDC book is empty on both sides (E-A7, blocker B2). When the
-// @facts        vault holds zero quote, nav_sats returns free_btc_sats unchanged —
-// @facts        that early return is mirrored here, and any other case is reported as
-// @facts        an honest "no book yet", never guessed and never taken from Pyth (G9).
+// @facts      ⚠ vault::btc_exit_address ABORTS EUnregisteredDepositor when the Table
+// @facts        has no record, which would fail the WHOLE simulation. (shares_of and
+// @facts        pending_exit_sats return 0 for an unknown address — only the address
+// @facts        getter aborts.) The per-depositor reads therefore run in a SECOND
+// @facts        simulation, gated on has_depositor.
+// @facts      ⚠ NAV is NOT read here. vault::nav_sats(vault, book_mid) would abort
+// @facts        EZeroNav for a vault holding quote with no price, and one aborting
+// @facts        command fails the whole simulation. Instead this returns the two
+// @facts        balances nav_sats is computed FROM (free_btc_sats, quote_value) and
+// @facts        model.ts::navSatsMirror reproduces the Move arithmetic line for line.
+// @facts        A missing price is then a rendered state, never a fabricated zero (G9).
 // @external   client.core.simulateTransaction({ transaction, include: { commandResults: true } })
 //               → { $kind, commandResults: [{ returnValues: [{ bcs: Uint8Array }] }] }
 // @implements export type VaultSnapshot
@@ -34,7 +36,8 @@
 // @forbidden  constructing a Sui client here — lib/suiClient.ts is the ONE factory
 // @forbidden  a canonical on-chain id literal — everything comes from config (G7)
 // @forbidden  throwing at the caller: every failure becomes a rendered state
-// @invariant  1. This module is never called in DEMO_MODE=mock (A11: zero network).
+// @forbidden  returning a NAV the chain did not imply — see the nav_sats note above
+// @invariant  1. Every number returned came out of the package's own getters.
 // @invariant  2. Any RPC/decode failure resolves to { status: 'unavailable' } with a
 //                human reason — the screen degrades, it never crashes.
 // @invariant  3. It performs reads only. No transaction is ever executed here.
@@ -53,7 +56,12 @@ export type VaultSnapshot =
   | { readonly status: 'unconfigured'; readonly missing: readonly string[] }
   | {
       readonly status: 'ok';
+      /** `navSats` here is the base-only figure; price the quote leg with navSatsMirror. */
       readonly view: VaultView;
+      /** vault::free_btc_sats — idle base minus the pooled earmark. */
+      readonly freeBtcSats: bigint;
+      /** vault::quote_value — idle DBUSDC. Zero today; the book has no mid (E-A7). */
+      readonly quoteValue: bigint;
       readonly hasRecord: boolean;
       /** The write-once witness program, or null when nothing is pinned yet (G2). */
       readonly pinnedProgram: Uint8Array | null;
@@ -158,14 +166,12 @@ export async function readVaultSnapshot(who: string): Promise<VaultSnapshot> {
     }
   }
 
-  // vault::nav_sats returns free_btc_sats verbatim when the vault holds no quote,
-  // so no DeepBook mid is required in that case. Otherwise NAV needs a book that
-  // does not exist yet (E-A7) — report it rather than invent a price (G9).
-  const navSats = quoteValue === 0n ? freeBtcSats : 0n;
-
+  // The unpriced, base-only figure — exactly what vault::nav_sats returns while
+  // `quote == 0`, which is the vault's state today. The caller re-prices with
+  // model.ts::navSatsMirror once a quote leg and a mid both exist.
   const view: VaultView = {
     totalShares,
-    navSats,
+    navSats: freeBtcSats,
     myShares,
     pendingExitSats,
     // The hBTC/DBUSDC book is empty on both sides; there is no mid to read (E-A7).
@@ -173,5 +179,5 @@ export async function readVaultSnapshot(who: string): Promise<VaultSnapshot> {
     paused,
   };
 
-  return { status: 'ok', view, hasRecord, pinnedProgram };
+  return { status: 'ok', view, freeBtcSats, quoteValue, hasRecord, pinnedProgram };
 }
