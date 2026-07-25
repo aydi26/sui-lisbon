@@ -324,21 +324,40 @@ fun nav_uses_book_mid_not_oracle() {
 }
 
 #[test]
-#[expected_failure(abort_code = vault::EZeroNav)]
-fun zero_book_mid_aborts() {
+fun a_base_only_vault_is_valuable_with_no_price_at_all() {
+    // The mid converts the QUOTE leg and nothing else, so a vault holding only hBTC has an
+    // EXACT sats NAV with no price input. That is the normal state of a pool nobody else
+    // makes a market on (our own hBTC/DBUSDC book has no bid side at all), so it must value
+    // cleanly rather than abort.
     let mut scenario = ts::begin(OWNER);
     let vault_id = create(&mut scenario, OWNER, KEEPER);
-    deposit(&mut scenario, vault_id, ALICE, 1_000_000, 0);
+
+    let minted = deposit(&mut scenario, vault_id, ALICE, 1_000_000, 0);
+    assert!(minted == 1_000_000, 0); // 1 share = 1 sat bootstrap, no price consulted
+
+    scenario.next_tx(ALICE);
+    let v = borrow(&scenario, vault_id);
+    assert!(vault::nav_sats(&v, 0) == 1_000_000, 1);
+    // …and it is genuinely mid-independent while the quote leg is empty.
+    assert!(vault::nav_sats(&v, BOOK_MID) == 1_000_000, 2);
+    assert!(vault::nav_sats(&v, BOOK_MID_2X) == 1_000_000, 3);
+    ts::return_shared(v);
+
     scenario.end();
 }
 
 #[test]
 #[expected_failure(abort_code = vault::EZeroNav)]
-fun nav_sats_with_zero_book_mid_aborts() {
+fun nav_sats_still_rejects_a_zero_mid_once_the_quote_leg_is_non_empty() {
+    // The guard is not gone, it is correctly placed: the moment there IS a quote balance to
+    // convert, a zero mid would divide by zero and must abort.
     let mut scenario = ts::begin(OWNER);
     let vault_id = create(&mut scenario, OWNER, KEEPER);
 
-    scenario.next_tx(OWNER);
+    deposit(&mut scenario, vault_id, ALICE, 1_000_000, BOOK_MID);
+    credit_quote(&mut scenario, vault_id, 1_000_000_000);
+
+    scenario.next_tx(ALICE);
     let v = borrow(&scenario, vault_id);
     vault::nav_sats(&v, 0);
     ts::return_shared(v);

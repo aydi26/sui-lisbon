@@ -354,10 +354,17 @@ public fun free_btc_sats<B, Q>(vault: &Vault<B, Q>): u64 {
 /// small-exit earmark is EXCLUDED: those shares were burned when the exit was pooled, so
 /// counting the sats again would silently revalue every remaining share upward.
 public fun nav_sats<B, Q>(vault: &Vault<B, Q>, book_mid: u128): u64 {
-    assert!(book_mid != 0, EZeroNav);
     let free = free_btc_sats(vault);
     let quote = vault.dbusdc.value();
+
+    // A base-only vault has an EXACT sats NAV and needs no price at all: `book_mid`
+    // converts the quote leg and nothing else. Asserting on it before this check
+    // made a 100%-hBTC vault unvaluable whenever the book had no mid to quote —
+    // which is the normal state of a pool nobody else makes a market on. The guard
+    // still fires, but only where the value is actually load-bearing.
     if (quote == 0) return free;
+
+    assert!(book_mid != 0, EZeroNav);
     let quote_in_sats = ((quote as u128) * DEEPBOOK_PRICE_SCALING) / book_mid;
     let total = (free as u128) + quote_in_sats;
     assert!(total <= MAX_U64_U128, EOverflow);

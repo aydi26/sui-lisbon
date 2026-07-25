@@ -40,9 +40,21 @@
 // @facts      Alignment: bidPx/askPx tick-aligned (1_000_000), bidSz/askSz lot-aligned (1_000) and
 // @facts        >= min_size (100_000) — cfg values arrive via RulesetContext, never literals (G7).
 // @facts        Bids round DOWN to tick, asks round UP: quoting rounds INTO the spread, never through it.
+// @facts      ★ SLICING (T2.7 addition): a large notional is worked in slices. THE SLICE INDEX IS
+// @facts        DERIVED FROM THE ON-CHAIN SNAPSHOT, never from a wall clock — `sliceCursor` reads
+// @facts        `oracle.pythSeq` (the Pyth price-feed sequence number, monotone and journaled),
+// @facts        falling back to `limiter.atSecs` (the seconds base of the TRUSTLESS limiter replay,
+// @facts        G5) when no Pyth reading is present. Both fields are in DecisionRecord, so
+// @facts        `verify/` re-derives the identical index with no extra journal schema.
+// @facts        The index is then handed to routing/route.ts through `RouteContext.slice` — the
+// @facts        slicing ARITHMETIC lives there; nothing about it is a clock read (gates.ps1 purity).
+// @facts      ⚠ deriveSliceIndex is NOT part of `rulesetHash`: it does not participate in producing
+// @facts        the Decision, so the published ruleset id is unchanged by this addition.
 // @implements export interface StrategyInputs / RulesetContext
 // @implements export function evaluate(params: StrategyParams, inputs: StrategyInputs, ctx: RulesetContext): Decision
 // @implements export function rulesetHash(): string
+// @implements export function sliceCursor(inputs: StrategyInputs): bigint
+// @implements export function deriveSliceIndex(inputs: StrategyInputs, sliceCount: number): number
 // @forbidden  any wall-clock or entropy source (`Date.now`, `Math.random`) — G5, gates.ps1 purity
 // @forbidden  any I/O, network call, or adapter read inside evaluate — inputs arrive as arguments
 // @forbidden  reading the limiter from the SDK hint instead of the replay (G5)
@@ -296,6 +308,40 @@ export function evaluate(
     cancels: resting,
     jitterSeed: seed,
   };
+}
+
+// ── deterministic slicing cursor (T2.7 addition) ─────────────────────────────
+
+/**
+ * The monotone, ON-CHAIN cursor the slicer advances on. PURE.
+ *
+ * ★ This is the whole trick that keeps time slicing replayable (G5): the schedule advances with a
+ * value that is already IN the journaled snapshot, so `verify/` re-derives the same slice index
+ * without a clock and without a new journal field. `oracle.pythSeq` is the Pyth feed's sequence
+ * number (it advances on every price update, i.e. faster than our tick); when no Pyth reading is
+ * present we fall back to `limiter.atSecs`, the seconds base of the trustless limiter replay.
+ *
+ * Returns 0n when neither is available — a degenerate but honest "always slice 0".
+ */
+export function sliceCursor(inputs: StrategyInputs): bigint {
+  const seq = inputs.oracle.pythSeq;
+  if (typeof seq === 'bigint' && seq > 0n) return seq;
+  const secs = inputs.limiter.atSecs;
+  if (typeof secs === 'bigint' && secs > 0n) return secs;
+  return 0n;
+}
+
+/**
+ * Which slice of the worked notional this tick executes: `sliceCursor(inputs) mod sliceCount`.
+ * PURE — the caller passes the result to `routing/route.ts` as `RouteContext.slice.index`.
+ *
+ * ⚠ NEVER derive this from a wall clock (`Date.now`): route() is replayed bit-for-bit by verify/, and a
+ * wall-clock slice would make every replay a mismatch (gates.ps1 purity enforces the absence).
+ */
+export function deriveSliceIndex(inputs: StrategyInputs, sliceCount: number): number {
+  if (!Number.isInteger(sliceCount) || sliceCount <= 1) return 0;
+  const n = BigInt(sliceCount);
+  return Number(((sliceCursor(inputs) % n) + n) % n);
 }
 
 /**

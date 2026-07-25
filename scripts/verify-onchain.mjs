@@ -75,7 +75,12 @@ const DEFAULTS = {
   // ── OUR OWN deployment (docs/DEPLOYED.md, published 2026-07-25) ────────────
   // Everything above is someone else's; everything here is ours. Overridable
   // from keeper/.env so a redeploy needs no code change.
-  APHOTIC_PACKAGE_ID: '0xbe433a2726fc61391d180ce55cdb8177f9647760b23a7704d42e3b5b9bb72d66',
+  // TARGET of every moveCall = the CURRENT published-at.
+  APHOTIC_PACKAGE_ID: '0xbf55eecc6c840c576c88e05c469f9753ab5ad9212e04c6cf56564f88929875bf',
+  // TYPE ORIGIN. `Vault<...>`'s type string keeps this forever, across every
+  // upgrade — the same two-id split DeepBook has (R4). Checking the vault's type
+  // against the target id instead would fail the moment we upgraded.
+  APHOTIC_ORIGINAL_PACKAGE_ID: '0xbe433a2726fc61391d180ce55cdb8177f9647760b23a7704d42e3b5b9bb72d66',
   APHOTIC_VAULT_ID: '0xf03832c92d4bf745ac720c52fe9198fc928028ce51991059bfe59c0e4ef374e8',
   APHOTIC_VAULT_ISV: 947353676,
   DEEPBOOK_BALANCE_MANAGER_ID: '0x5766ed0b5e3fd310da9ccd723912198450872d9e2c83a473ed59cd5ab51990e2',
@@ -362,7 +367,10 @@ async function checkP1() {
   if (!CFG.APHOTIC_PACKAGE_ID) {
     row('P1', 'aphotic package', 'WARN', 'APHOTIC_PACKAGE_ID unset — not published yet');
   } else {
-    await checkObject('aphotic package', CFG.APHOTIC_PACKAGE_ID, { package: true });
+    await checkObject('aphotic pkg (callable)', CFG.APHOTIC_PACKAGE_ID, { package: true });
+    if (CFG.APHOTIC_ORIGINAL_PACKAGE_ID && CFG.APHOTIC_ORIGINAL_PACKAGE_ID !== CFG.APHOTIC_PACKAGE_ID) {
+      await checkObject('aphotic pkg (original)', CFG.APHOTIC_ORIGINAL_PACKAGE_ID, { package: true });
+    }
   }
   if (!CFG.APHOTIC_VAULT_ID) {
     row('P1', 'Vault<hBTC,DBUSDC>', 'WARN', 'APHOTIC_VAULT_ID unset — no vault created yet');
@@ -372,7 +380,7 @@ async function checkP1() {
     await checkObject('Vault<hBTC,DBUSDC>', CFG.APHOTIC_VAULT_ID, {
       shared: true,
       isv: CFG.APHOTIC_VAULT_ISV,
-      typeStartsWith: `${CFG.APHOTIC_PACKAGE_ID}::vault::Vault<`,
+      typeStartsWith: `${CFG.APHOTIC_ORIGINAL_PACKAGE_ID || CFG.APHOTIC_PACKAGE_ID}::vault::Vault<`,
       typeContains: [CFG.HBTC_COIN_TYPE, CFG.DBUSDC_COIN_TYPE],
     });
   }

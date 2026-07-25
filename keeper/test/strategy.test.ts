@@ -11,6 +11,8 @@
 // @facts        so a 30 bps half-spread and a ±5 bps jitter both survive tick alignment.
 // @implements A4 — constant-length round-tripping serializer
 // @implements A3 — evaluate() reproduces its Decision bit-for-bit, jitter included
+// @implements T2.7 — ExecutionParams (ladder + slice) bounds, the 16-byte extension riding in the
+// @implements   frame's zero tail WITHOUT changing its length, and the PURE slice-index derivation
 // @invariant  1. No test reads a clock or unseeded entropy — every time is an argument.
 // @verify     npm run test -- strategy
 // └── END CONTRACT ───────────────────────────────────────────────────────────
@@ -19,12 +21,25 @@ import { describe, expect, it } from 'vitest';
 
 import {
   BPS_DENOMINATOR,
+  decodeExecutionExtension,
+  defaultExecutionParams,
   defaultParams,
+  embedExecutionParams,
+  encodeExecutionExtension,
+  EXECUTION_PARAM_KEYS,
+  EXECUTION_PARAMS_EXT_BYTES,
+  EXECUTION_PARAMS_EXT_OFFSET,
+  executionParamsFingerprint,
+  extractExecutionParams,
+  MAX_SLICE_COUNT,
   paramsFingerprint,
   STRATEGY_PARAM_KEYS,
+  validateExecutionParams,
   validateParams,
+  type ExecutionParams,
   type StrategyParams,
 } from '../src/strategy/params.js';
+import { MAX_LADDER_LEVELS } from '../src/routing/route.js';
 import {
   deserialize,
   serialize,
@@ -33,8 +48,10 @@ import {
   SERIALIZED_PARAMS_VERSION,
 } from '../src/strategy/serialize.js';
 import {
+  deriveSliceIndex,
   evaluate,
   rulesetHash,
+  sliceCursor,
   type RulesetContext,
   type StrategyInputs,
 } from '../src/strategy/evaluate.js';
@@ -375,5 +392,158 @@ describe('strategy/evaluate — A3: pure, deterministic, venue-legal', () => {
     const h = rulesetHash();
     expect(h).toBe(rulesetHash());
     expect(h).toMatch(/^[0-9a-f]{64}$/);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe('strategy/params — execution parameters: laddered quoting + deterministic slicing (T2.7)', () => {
+  const exec = defaultExecutionParams();
+
+  it('the defaults are a legal ladder for the near-empty book and a legal slice schedule', () => {
+    expect(exec).toEqual({
+      ladderLevels: 3,
+      ladderStepBps: 15,
+      ladderDecayBps: 3_000,
+      sliceCount: 4,
+    });
+    expect(EXECUTION_PARAM_KEYS.length).toBe(4);
+    expect(exec.ladderLevels).toBeLessThanOrEqual(MAX_LADDER_LEVELS);
+    expect(exec.sliceCount).toBeLessThanOrEqual(MAX_SLICE_COUNT);
+  });
+
+  it('rejects a level count outside [1, MAX_LADDER_LEVELS], naming the field', () => {
+    for (const ladderLevels of [0, -1, MAX_LADDER_LEVELS + 1]) {
+      try {
+        validateExecutionParams({ ...exec, ladderLevels });
+        expect.unreachable(`should have thrown for ladderLevels=${ladderLevels}`);
+      } catch (e) {
+        expect((e as ConfigError).missing).toContain('ladderLevels');
+      }
+    }
+  });
+
+  it('rejects rungs that are not distinct prices, and a ladder whose deepest bid rung is not a price', () => {
+    // levels > 1 with a zero step collapses every rung onto one tick.
+    try {
+      validateExecutionParams({ ...exec, ladderStepBps: 0 });
+      expect.unreachable('should have thrown');
+    } catch (e) {
+      expect((e as ConfigError).missing).toContain('ladderStepBps');
+      expect((e as ConfigError).message).toMatch(/distinct prices/);
+    }
+    // (levels-1) * step >= 10_000 ⇒ the deepest bid rung would sit at or below zero.
+    expect(() => validateExecutionParams({ ...exec, ladderLevels: 8, ladderStepBps: 1_500 })).toThrowError(
+      ConfigError,
+    );
+    // …and a single-level "ladder" may legitimately carry a zero step.
+    expect(validateExecutionParams({ ...exec, ladderLevels: 1, ladderStepBps: 0 }).ladderLevels).toBe(1);
+  });
+
+  it('rejects an out-of-range decay or slice count, and any non-integer field', () => {
+    expect(() => validateExecutionParams({ ...exec, ladderDecayBps: 10_001 })).toThrowError(ConfigError);
+    expect(() => validateExecutionParams({ ...exec, ladderDecayBps: -1 })).toThrowError(ConfigError);
+    expect(() => validateExecutionParams({ ...exec, sliceCount: 0 })).toThrowError(ConfigError);
+    expect(() => validateExecutionParams({ ...exec, sliceCount: MAX_SLICE_COUNT + 1 })).toThrowError(ConfigError);
+    expect(() => validateExecutionParams({ ...exec, ladderLevels: 2.5 })).toThrowError(ConfigError);
+    const partial = { ladderLevels: 3 } as unknown as ExecutionParams;
+    try {
+      validateExecutionParams(partial);
+      expect.unreachable('should have thrown');
+    } catch (e) {
+      expect([...(e as ConfigError).missing].sort()).toEqual(
+        EXECUTION_PARAM_KEYS.filter((k) => k !== 'ladderLevels').slice().sort(),
+      );
+    }
+    // Decay may sit at either end of its range — 0 is a flat ladder, 10_000 a front-loaded one.
+    expect(validateExecutionParams({ ...exec, ladderDecayBps: 0 }).ladderDecayBps).toBe(0);
+    expect(validateExecutionParams({ ...exec, ladderDecayBps: 10_000 }).ladderDecayBps).toBe(10_000);
+  });
+
+  it('the extension block is 16 deterministic bytes, zero-padded, and round-trips exactly', () => {
+    const block = encodeExecutionExtension(exec);
+    expect(block.length).toBe(EXECUTION_PARAMS_EXT_BYTES);
+    expect(Array.from(block)).toEqual(Array.from(encodeExecutionExtension(exec)));
+    expect(block[0]).toBe(1); // version
+    expect(Array.from(block.subarray(9)).every((byte) => byte === 0)).toBe(true);
+    expect(decodeExecutionExtension(block)).toEqual(exec);
+
+    const other: ExecutionParams = { ladderLevels: 5, ladderStepBps: 8, ladderDecayBps: 0, sliceCount: 1 };
+    expect(decodeExecutionExtension(encodeExecutionExtension(other))).toEqual(other);
+  });
+
+  it('A4 HOLDS: embedding the ladder does NOT change the sealed frame length or the strategy fields', () => {
+    const plain = serialize(params);
+    const embedded = embedExecutionParams(plain, exec);
+
+    expect(embedded.length).toBe(SERIALIZED_PARAMS_BYTES); // invariant 5 — no size oracle
+    expect(deserialize(embedded)).toEqual(params); // the strategy fields are untouched
+    expect(Array.from(embedded.subarray(0, EXECUTION_PARAMS_EXT_OFFSET))).toEqual(
+      Array.from(plain.subarray(0, EXECUTION_PARAMS_EXT_OFFSET)),
+    );
+    expect(EXECUTION_PARAMS_EXT_OFFSET).toBe(SERIALIZED_PARAMS_PADDING_OFFSET);
+    expect(extractExecutionParams(embedded)).toEqual(exec);
+    // embed does not mutate its input frame.
+    expect(Array.from(plain)).toEqual(Array.from(serialize(params)));
+  });
+
+  it('a plain frame reports the ABSENCE of an extension rather than guessing a ladder', () => {
+    expect(extractExecutionParams(serialize(params))).toBeUndefined(); // invariant 6
+    expect(() => extractExecutionParams(new Uint8Array(SERIALIZED_PARAMS_BYTES - 1))).toThrowError(
+      ConfigError,
+    );
+  });
+
+  it('a PRESENT but malformed extension throws — a corrupt frame never becomes a live ladder', () => {
+    const embedded = embedExecutionParams(serialize(params), exec);
+    embedded[EXECUTION_PARAMS_EXT_OFFSET] = 9; // unknown version
+    expect(() => extractExecutionParams(embedded)).toThrowError(/unknown execution extension version 9/);
+
+    const bad = embedExecutionParams(serialize(params), exec);
+    bad[EXECUTION_PARAMS_EXT_OFFSET + 2] = 99; // ladderLevels = 99 — beyond the cap
+    expect(() => extractExecutionParams(bad)).toThrowError(ConfigError);
+  });
+
+  it('executionParamsFingerprint is stable, 32 bytes, and changes with the geometry (G8)', () => {
+    const a = executionParamsFingerprint(exec);
+    expect(a).toBe(executionParamsFingerprint(exec));
+    expect(a).toMatch(/^[0-9a-f]{64}$/);
+    expect(executionParamsFingerprint({ ...exec, ladderStepBps: 16 })).not.toBe(a);
+    expect(a).not.toContain(exec.ladderDecayBps.toString(16));
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe('strategy/evaluate — the slice index is derived from the SNAPSHOT, never from a clock (G5)', () => {
+  it('sliceCursor reads the on-chain Pyth sequence number out of the journaled snapshot', () => {
+    expect(sliceCursor(inputs())).toBe(42n);
+    expect(deriveSliceIndex(inputs(), 4)).toBe(2); // 42 mod 4
+    expect(deriveSliceIndex(inputs(), 4)).toBe(deriveSliceIndex(inputs(), 4)); // pure
+  });
+
+  it('an advancing cursor walks the schedule — consecutive sequences give consecutive slices', () => {
+    const indices = [42n, 43n, 44n, 45n].map((pythSeq) =>
+      deriveSliceIndex(inputs({ oracle: { ...inputs().oracle, pythSeq } }), 4),
+    );
+    expect(indices).toEqual([2, 3, 0, 1]);
+  });
+
+  it('falls back to the limiter replay seconds when there is no Pyth reading (G5, never an SDK read)', () => {
+    const noPyth = inputs({ oracle: { ...inputs().oracle, pythSeq: 0n } });
+    expect(sliceCursor(noPyth)).toBe(BigInt(TICK_MS / 1000));
+    // 1_800_000_000 mod 7 = 1, while the Pyth cursor 42 mod 7 = 0 — the fallback really is in play.
+    expect(deriveSliceIndex(noPyth, 7)).toBe(1);
+    expect(deriveSliceIndex(inputs(), 7)).toBe(0);
+  });
+
+  it('degrades to slice 0 when there is no cursor at all, or nothing to slice', () => {
+    const blind = inputs({
+      oracle: { ...inputs().oracle, pythSeq: 0n },
+      limiter: { atMs: TICK_MS, atSecs: 0n, tokens: 0n, queueDepth: 0n },
+    });
+    expect(sliceCursor(blind)).toBe(0n);
+    expect(deriveSliceIndex(blind, 4)).toBe(0);
+    expect(deriveSliceIndex(inputs(), 1)).toBe(0);
+    expect(deriveSliceIndex(inputs(), 0)).toBe(0);
+    expect(deriveSliceIndex(inputs(), 2.5)).toBe(0);
   });
 });

@@ -6,6 +6,34 @@
 > stays resolvable.
 > Read after: `docs/RECON.md` (which records the ids we depend on but did not deploy).
 
+## v2 — 2026-07-25 (upgrade)
+
+| What | Id |
+|---|---|
+| **`aphotic` published-at (call this)** | `0xbf55eecc6c840c576c88e05c469f9753ab5ad9212e04c6cf56564f88929875bf` |
+| **`aphotic` original-id (type origin)** | `0xbe433a2726fc61391d180ce55cdb8177f9647760b23a7704d42e3b5b9bb72d66` |
+| upgrade digest | `56Us71eqUH82AnhXzxibuTts6y4P7eViA3Le5qFpAGBC` |
+
+Every other object below is **unchanged** — the shared `Vault`, the `BalanceManager`, the caps and their ids all survive the upgrade. `Vault<hBTC,DBUSDC>`'s type string still names the **original** id and always will, exactly like DeepBook's two-id split (`docs/RECON.md` R4). So:
+
+- `moveCall` targets → **published-at** (`0xbf55eecc…`)
+- type arguments, type-string checks, and events emitted by v1 → **original-id** (`0xbe433a27…`)
+
+Checking the vault's type against the published-at instead would have started failing the moment we upgraded. `scripts/verify-onchain.mjs` asserts both ids and uses the original for the type check.
+
+**What changed in the code.** One misplaced assertion in `vault::nav_sats`:
+
+```move
+// before — a 100%-hBTC vault could not be valued at all without a price
+assert!(book_mid != 0, EZeroNav);
+let quote = vault.dbusdc.value();
+if (quote == 0) return free;
+```
+
+`book_mid` converts the **quote** leg and nothing else, so a base-only vault has an exact sats NAV with no price input. The guard fired one line too early, which made the vault unvaluable exactly when the book has no mid — the normal state of a pool nobody else makes a market on, and permanently our state given there are ~16 DBUSDC in existence across the whole testnet. The assertion now sits inside the `quote != 0` branch, where the value is genuinely load-bearing.
+
+Covered by two tests that encode the new semantics precisely: `a_base_only_vault_is_valuable_with_no_price_at_all` and `nav_sats_still_rejects_a_zero_mid_once_the_quote_leg_is_non_empty`.
+
 ## v1 — 2026-07-25
 
 | What | Id | Notes |

@@ -20,12 +20,37 @@
 // @facts      Tick/lot alignment is a VENUE constant, not a parameter: tick 1_000_000 · lot 1_000 ·
 // @facts        min_size 100_000 (cfg.deepbook.*) — quoting must round INTO the spread, never through it.
 // @facts      BPS_DENOMINATOR = 10_000 (a unit, not an id — safe outside config.ts).
+// @facts      ★ EXECUTION PARAMETERS (T2.7 addition — laddered quoting + deterministic slicing):
+// @facts        ladderLevels · ladderStepBps · ladderDecayBps · sliceCount. They are STRATEGY, so
+// @facts        they are SECRET and ride in the SAME Seal frame as the rest — they are written into
+// @facts        the zero tail of the 128-byte frame (`serialize.ts` pads bytes 37..127), so the
+// @facts        sealed payload LENGTH is unchanged (A4: no size oracle) and an old frame still
+// @facts        deserializes exactly as before. `embedExecutionParams` / `extractExecutionParams`
+// @facts        own that tail; `serialize()`/`deserialize()` are untouched.
+// @facts        EXECUTION_PARAMS_EXT_OFFSET = SERIALIZED_PARAMS_PADDING_OFFSET (37), length 16:
+// @facts          0:1 version(=1) · 1:2 ladderLevels · 3:2 ladderStepBps · 5:2 ladderDecayBps ·
+// @facts          7:2 sliceCount · 9:7 zero padding.
+// @facts        An ALL-ZERO tail means "no extension present" ⇒ extract returns undefined and the
+// @facts        caller falls back to defaultExecutionParams() — never a silent wrong ladder.
+// @facts      Bounds: 1 <= ladderLevels <= MAX_LADDER_LEVELS (8, routing/route.ts — the venue-shaped
+// @facts        cap on orders per side per tick); (levels−1)·stepBps < 10_000 so the deepest BID rung
+// @facts        stays a positive price; levels > 1 requires stepBps >= 1 (rungs must be distinct);
+// @facts        0 <= decayBps <= 10_000; 1 <= sliceCount <= MAX_SLICE_COUNT (64).
 // @implements export const BPS_DENOMINATOR: 10_000
-// @implements export interface StrategyParams
+// @implements export interface StrategyParams / ExecutionParams
 // @implements export const STRATEGY_PARAM_KEYS: readonly (keyof StrategyParams)[]
+// @implements export const EXECUTION_PARAM_KEYS: readonly (keyof ExecutionParams)[]
+// @implements export const EXECUTION_PARAMS_EXT_BYTES: 16 · EXECUTION_PARAMS_EXT_OFFSET · MAX_SLICE_COUNT: 64
 // @implements export function defaultParams(cfg: Config): StrategyParams
 // @implements export function validateParams(params: StrategyParams, cfg: Config): StrategyParams
 // @implements export function paramsFingerprint(params: StrategyParams): string
+// @implements export function defaultExecutionParams(): ExecutionParams
+// @implements export function validateExecutionParams(x: ExecutionParams): ExecutionParams
+// @implements export function encodeExecutionExtension(x: ExecutionParams): Uint8Array
+// @implements export function decodeExecutionExtension(bytes: Uint8Array): ExecutionParams | undefined
+// @implements export function embedExecutionParams(frame: Uint8Array, x: ExecutionParams): Uint8Array
+// @implements export function extractExecutionParams(frame: Uint8Array): ExecutionParams | undefined
+// @implements export function executionParamsFingerprint(x: ExecutionParams): string
 // @forbidden  logging, journaling, or serializing these values in plaintext anywhere (G8)
 // @forbidden  `number` for any satoshi amount — bps/ms only
 // @forbidden  a venue/DEX parameter — the venue is fixed by G4
@@ -33,6 +58,11 @@
 // @invariant  2. Bounds: 0 < spreadBps <= 10_000; |skewBps| <= spreadBps; jitterBps <= spreadBps/2.
 // @invariant  3. `paramsFingerprint` is a HASH — it must never be invertible back to the values.
 // @invariant  4. The struct is FLAT and fixed-arity so serialize.ts can pad it to a constant length.
+// @invariant  5. `embedExecutionParams` NEVER changes the frame length (128) and never touches a
+//                byte below EXECUTION_PARAMS_EXT_OFFSET — `deserialize()` of an embedded frame
+//                returns exactly the same StrategyParams as before the embed.
+// @invariant  6. `extractExecutionParams(serialize(p))` is `undefined` — a plain frame carries no
+//                extension, and absence is reported, never guessed.
 // @ac         docs/KEEPER.md §13 A4 — constant-length serialization across strategy families
 // @verify     npm run test -- strategy
 // └── END CONTRACT ───────────────────────────────────────────────────────────
@@ -40,10 +70,11 @@
 import { createHash } from 'node:crypto';
 
 import type { Config } from '../config.js';
+import { MAX_LADDER_LEVELS } from '../routing/route.js';
 import type { Bps, Millis, Sats } from '../types.js';
 import { ConfigError } from '../util/errors.js';
 
-import { serialize } from './serialize.js';
+import { serialize, SERIALIZED_PARAMS_BYTES, SERIALIZED_PARAMS_PADDING_OFFSET } from './serialize.js';
 
 /** 100 % in basis points. A UNIT, not a tunable — never a strategy parameter. */
 export const BPS_DENOMINATOR = 10_000 as const;
@@ -204,4 +235,212 @@ export function validateParams(params: StrategyParams, cfg: Config): StrategyPar
  */
 export function paramsFingerprint(params: StrategyParams): string {
   return createHash('sha256').update(serialize(params)).digest('hex');
+}
+
+// ── EXECUTION PARAMETERS — laddered quoting + deterministic slicing (T2.7) ────
+
+/**
+ * How the decided size is WORKED on the book. Secret, like the rest of the parameter set: the
+ * ladder geometry is only revealed once the rungs are actually resting.
+ *
+ * FLAT and fixed-arity for the same reason `StrategyParams` is — it rides in the constant-length
+ * Seal frame (see the @facts layout), so adding it changes no ciphertext length.
+ */
+export interface ExecutionParams {
+  /** Maker rungs per side, 1..MAX_LADDER_LEVELS. 1 ⇒ the classic single level. */
+  readonly ladderLevels: number;
+  /** Spacing between rungs, bps of the decided price, stepping AWAY from the mid. */
+  readonly ladderStepBps: Bps;
+  /** Geometric size decay per rung, bps: sz_k ∝ (1 − decay/10_000)^k. */
+  readonly ladderDecayBps: Bps;
+  /** Slices a large notional is worked in. 1 ⇒ send the whole decided size this tick. */
+  readonly sliceCount: number;
+}
+
+/** Canonical field order. The extension frame layout depends on it. */
+export const EXECUTION_PARAM_KEYS = [
+  'ladderLevels',
+  'ladderStepBps',
+  'ladderDecayBps',
+  'sliceCount',
+] as const satisfies readonly (keyof ExecutionParams)[];
+
+/** Upper bound on slices — beyond this a slice is smaller than the venue min_size in practice. */
+export const MAX_SLICE_COUNT = 64 as const;
+
+/** Length of the extension block written into the strategy frame's zero tail. */
+export const EXECUTION_PARAMS_EXT_BYTES = 16 as const;
+
+/** Where the block starts inside the 128-byte frame — the first byte of `serialize.ts`'s padding. */
+export const EXECUTION_PARAMS_EXT_OFFSET = SERIALIZED_PARAMS_PADDING_OFFSET;
+
+/** Extension format version, byte 0 of the block. A ZERO here means "no extension present". */
+export const EXECUTION_PARAMS_EXT_VERSION = 1 as const;
+
+const EXT_OFF_VERSION = 0;
+const EXT_OFF_LADDER_LEVELS = 1;
+const EXT_OFF_LADDER_STEP_BPS = 3;
+const EXT_OFF_LADDER_DECAY_BPS = 5;
+const EXT_OFF_SLICE_COUNT = 7;
+
+/**
+ * Non-secret defaults (G7 — the mock/e2e path must run with no Seal round trip).
+ *
+ * Three rungs 15 bps apart with a 30 % decay: on the near-EMPTY hBTC/DBUSDC book (docs/RECON.md
+ * R10) a single level is one point of no-fill, while three rungs hold a ~30 bps price range for
+ * the same inventory. Four slices keep any single tick's footprint a quarter of the notional.
+ */
+export function defaultExecutionParams(): ExecutionParams {
+  return validateExecutionParams({
+    ladderLevels: 3,
+    ladderStepBps: 15,
+    ladderDecayBps: 3_000,
+    sliceCount: 4,
+  });
+}
+
+/** Enforce the bounds in the @facts block. Returns the same object when valid. */
+export function validateExecutionParams(x: ExecutionParams): ExecutionParams {
+  const bad: string[] = [];
+  const why: string[] = [];
+  const fail = (key: string, reason: string): void => {
+    bad.push(key);
+    why.push(`  - ${key}: ${reason}`);
+  };
+
+  const raw: unknown = x;
+  if (typeof raw !== 'object' || raw === null) {
+    throw new ConfigError('execution parameters must be an object', [...EXECUTION_PARAM_KEYS]);
+  }
+
+  for (const key of EXECUTION_PARAM_KEYS) {
+    const value: unknown = x[key];
+    if (value === undefined || value === null) {
+      fail(key, 'missing');
+      continue;
+    }
+    if (typeof value !== 'number' || !Number.isFinite(value) || !Number.isInteger(value)) {
+      fail(key, `must be a finite integer, got ${String(value)}`);
+    }
+  }
+  if (bad.length > 0) {
+    throw new ConfigError(`invalid execution parameters:\n${why.join('\n')}`, bad);
+  }
+
+  if (x.ladderLevels < 1 || x.ladderLevels > MAX_LADDER_LEVELS) {
+    fail('ladderLevels', `must be in [1, ${MAX_LADDER_LEVELS}], got ${x.ladderLevels}`);
+  }
+  if (x.ladderStepBps < 0 || x.ladderStepBps > BPS_DENOMINATOR) {
+    fail('ladderStepBps', `must be in [0, ${BPS_DENOMINATOR}], got ${x.ladderStepBps}`);
+  }
+  if (x.ladderLevels > 1 && x.ladderStepBps < 1) {
+    // Rungs must be distinct prices; a zero step collapses the whole ladder onto one tick.
+    fail('ladderStepBps', 'must be >= 1 when ladderLevels > 1 — rungs must be distinct prices');
+  }
+  if ((x.ladderLevels - 1) * x.ladderStepBps >= BPS_DENOMINATOR) {
+    // The deepest BID rung is basePx·(1 − (levels−1)·step/10_000); at/over 100 % it is not a price.
+    fail(
+      'ladderStepBps',
+      `(ladderLevels-1)*ladderStepBps must be < ${BPS_DENOMINATOR}, got ${(x.ladderLevels - 1) * x.ladderStepBps}`,
+    );
+  }
+  if (x.ladderDecayBps < 0 || x.ladderDecayBps > BPS_DENOMINATOR) {
+    fail('ladderDecayBps', `must be in [0, ${BPS_DENOMINATOR}], got ${x.ladderDecayBps}`);
+  }
+  if (x.sliceCount < 1 || x.sliceCount > MAX_SLICE_COUNT) {
+    fail('sliceCount', `must be in [1, ${MAX_SLICE_COUNT}], got ${x.sliceCount}`);
+  }
+
+  if (bad.length > 0) {
+    throw new ConfigError(`invalid execution parameters:\n${why.join('\n')}`, bad);
+  }
+  return x;
+}
+
+/** Encode the 16-byte extension block. Big-endian, zero-padded, deterministic (never random). */
+export function encodeExecutionExtension(x: ExecutionParams): Uint8Array {
+  validateExecutionParams(x);
+  const buf = new ArrayBuffer(EXECUTION_PARAMS_EXT_BYTES);
+  const view = new DataView(buf);
+  view.setUint8(EXT_OFF_VERSION, EXECUTION_PARAMS_EXT_VERSION);
+  view.setUint16(EXT_OFF_LADDER_LEVELS, x.ladderLevels, false);
+  view.setUint16(EXT_OFF_LADDER_STEP_BPS, x.ladderStepBps, false);
+  view.setUint16(EXT_OFF_LADDER_DECAY_BPS, x.ladderDecayBps, false);
+  view.setUint16(EXT_OFF_SLICE_COUNT, x.sliceCount, false);
+  // Bytes [9, 16) stay ZERO — reproducibility, exactly as in serialize.ts (G5).
+  return new Uint8Array(buf);
+}
+
+/**
+ * Inverse of {@link encodeExecutionExtension}. Returns `undefined` when the block is absent
+ * (version byte 0 — a plain frame), and THROWS on a block that is present but malformed:
+ * guessing a ladder from a corrupt frame is how a keeper quotes a strategy nobody chose.
+ */
+export function decodeExecutionExtension(bytes: Uint8Array): ExecutionParams | undefined {
+  if (!(bytes instanceof Uint8Array)) {
+    throw new ConfigError('execution extension must be a Uint8Array', [...EXECUTION_PARAM_KEYS]);
+  }
+  if (bytes.length < EXECUTION_PARAMS_EXT_BYTES) {
+    throw new ConfigError(
+      `execution extension must be at least ${EXECUTION_PARAMS_EXT_BYTES} bytes — got ${bytes.length}`,
+      [...EXECUTION_PARAM_KEYS],
+    );
+  }
+
+  const view = new DataView(bytes.buffer, bytes.byteOffset, EXECUTION_PARAMS_EXT_BYTES);
+  const version = view.getUint8(EXT_OFF_VERSION);
+  if (version === 0) return undefined; // no extension present (invariant 6)
+  if (version !== EXECUTION_PARAMS_EXT_VERSION) {
+    throw new ConfigError(
+      `unknown execution extension version ${version} (this build reads ${EXECUTION_PARAMS_EXT_VERSION})`,
+      [...EXECUTION_PARAM_KEYS],
+    );
+  }
+
+  return validateExecutionParams({
+    ladderLevels: view.getUint16(EXT_OFF_LADDER_LEVELS, false),
+    ladderStepBps: view.getUint16(EXT_OFF_LADDER_STEP_BPS, false),
+    ladderDecayBps: view.getUint16(EXT_OFF_LADDER_DECAY_BPS, false),
+    sliceCount: view.getUint16(EXT_OFF_SLICE_COUNT, false),
+  });
+}
+
+/**
+ * Write the execution parameters into the strategy frame's zero tail, returning a NEW frame.
+ *
+ * The length never changes (invariant 5) — that is the whole point: the Seal payload stays 128
+ * bytes, so ciphertext size still leaks nothing about which strategy family is deployed (A4), and
+ * `deserialize()` reads the identical StrategyParams it read before.
+ */
+export function embedExecutionParams(frame: Uint8Array, x: ExecutionParams): Uint8Array {
+  if (frame.length !== SERIALIZED_PARAMS_BYTES) {
+    throw new ConfigError(
+      `strategy frame must be exactly ${SERIALIZED_PARAMS_BYTES} bytes — got ${frame.length}`,
+      [...EXECUTION_PARAM_KEYS],
+    );
+  }
+  const out = Uint8Array.from(frame);
+  out.set(encodeExecutionExtension(x), EXECUTION_PARAMS_EXT_OFFSET);
+  return out;
+}
+
+/** Read the execution parameters back out of a 128-byte strategy frame. */
+export function extractExecutionParams(frame: Uint8Array): ExecutionParams | undefined {
+  if (frame.length !== SERIALIZED_PARAMS_BYTES) {
+    throw new ConfigError(
+      `strategy frame must be exactly ${SERIALIZED_PARAMS_BYTES} bytes — got ${frame.length}`,
+      [...EXECUTION_PARAM_KEYS],
+    );
+  }
+  return decodeExecutionExtension(
+    frame.subarray(EXECUTION_PARAMS_EXT_OFFSET, EXECUTION_PARAMS_EXT_OFFSET + EXECUTION_PARAMS_EXT_BYTES),
+  );
+}
+
+/**
+ * Stable, NON-INVERTIBLE fingerprint of the execution parameters — publishable in the journal so
+ * a verifier can prove which ladder/slice schedule was in force without learning it (G8).
+ */
+export function executionParamsFingerprint(x: ExecutionParams): string {
+  return createHash('sha256').update(encodeExecutionExtension(x)).digest('hex');
 }

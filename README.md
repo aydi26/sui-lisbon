@@ -21,32 +21,50 @@ Anyone can check all four. That is the whole point.
 
 ## Repo map
 
-| Path | What |
-|---|---|
-| `move/` | Move 2024 package **`aphotic`** — `vault` (shares, NAV, `seal_approve`), `gateway` (**the only** Hashi boundary), `envelope` (redemption buffer + limiter replay), `router` (DeepBook maker/IOC), `journal`. Tests in `move/tests/`. |
-| `keeper/` | TypeScript ESM keeper — `hashi/` (adapter + deterministic mock + real), `strategy/`, `routing/`, `execution/`, `oracle/`, `storage/`, `journal/`, `verify/`, `privacy/`, `sui/`, `util/`. |
-| `app/` | React 19 + Vite — `/` landing, `/deposit`, `/exit`, `/transparency`. |
-| `scripts/` | `gates.ps1` / `gates.sh` (invariant gates), `verify-all.ps1` (master gate), `verify-onchain.mjs` (live testnet assertions). |
-| `docs/` | All specifications. See the read order below. |
+| Path | What | State |
+|---|---|---|
+| `move/` | Move 2024 package **`aphotic`** — `vault` (shares, NAV, `seal_approve`), `gateway` (**the only** Hashi boundary), `envelope` (redemption buffer + limiter replay), `router` (DeepBook maker/IOC), `journal`. Tests in `move/tests/`. | **DONE** — 139 tests, zero warnings, **published on testnet** |
+| `keeper/` | TypeScript ESM keeper — `hashi/` (adapter + deterministic mock + real), `strategy/`, `routing/`, `execution/`, `oracle/`, `storage/`, `journal/`, `verify/`, `privacy/`, `sui/`, `util/`, and a seven-command CLI. | **DONE** — 481 tests across 19 files (16:36 snapshot) |
+| `app/` | React 19 + Vite — `/` landing, `/deposit`, `/exit`, `/transparency`, plus its own offline vitest suite. | **DONE** — 84 tests; except the exit-amount form (T3.2) and the landing stats (T5.2) |
+| `scripts/` | `gates.ps1` / `gates.sh` (8 invariant gates), `verify-all.ps1` (master gate), `verify-onchain.mjs` (28 live testnet assertions), `register-deposit.ps1` (txid-reversing UTXO registrar), `seed-book.mjs` (dry-run-by-default book seeder), `check-enoki.mjs`. | **DONE** — ⚠ `register-deposit.ps1` currently trips the `ids` gate |
+| `docs/` | All specifications. See the read order below. | — |
+
+State legend: **DONE** = implemented and covered by a test or gate that was run and observed green · **PARTIAL** = some bodies real, `TODO(Tx.y)` markers remain · **STUB** = compiles, bodies throw. Per-task detail, with the run log, in **`docs/STATUS.md`**.
 
 **Canonical on-chain IDs may appear in exactly four places** (G7): `keeper/src/config.ts`, `app/src/config.ts`, the `.env.example` files, `move/Move.toml`. Everywhere else they arrive as config.
+
+## Deployed on Sui testnet
+
+| What | Id |
+|---|---|
+| `aphotic` package | `0xbe433a2726fc61391d180ce55cdb8177f9647760b23a7704d42e3b5b9bb72d66` |
+| `Vault<hBTC, DBUSDC>` (shared) | `0xf03832c92d4bf745ac720c52fe9198fc928028ce51991059bfe59c0e4ef374e8` |
+| DeepBook `BalanceManager` (shared) | `0x5766ed0b5e3fd310da9ccd723912198450872d9e2c83a473ed59cd5ab51990e2` |
+
+Full receipts, digests, envelope parameters and what is known-incomplete: **`docs/DEPLOYED.md`**.
 
 ---
 
 ## Quickstart
 
-Prereqs: `sui` **1.76.0** (`sui client active-env` = `testnet`, gas-funded), Node **≥ 18** (tested on 24.13.0).
+Prereqs: `sui` **1.76.0** (`sui client active-env` = `testnet`, gas-funded), Node **≥ 18** (tested on 24.13.0 / npm 11.6.2).
+
+⚠ `sui` is not reliably on `PATH`. On Windows: `$env:PATH = "$env:LOCALAPPDATA\sui;$env:PATH"`.
+⚠ The Move test filter is **positional** — `sui move test gateway`. `--filter` is not a flag in 1.76.0.
 
 ```bash
 # Move package
-cd move && sui move build && sui move test
+cd move && sui move build && sui move test      # 139 tests, zero warnings
+cd move && sui move test gateway                # per module: vault | gateway | envelope | router | journal
 
 # Keeper (ESM, "type": "module")
-cd keeper && npm install && npm run build && npm test
+cd keeper && npm install && npm run typecheck && npm run build && npm test   # 481 tests, 19 files
+cd keeper && node dist/index.js --help          # the seven CLI commands
 
 # App
-cd app && npm install && npm run build
-cd app && npm run dev            # http://localhost:5173
+cd app && npm install && npm run build          # tsc --noEmit && vite build
+cd app && npm test                              # 84 tests, 6 files, fully offline
+cd app && npm run dev                           # http://localhost:5173
 ```
 
 Copy `keeper/.env.example` → `keeper/.env` and `app/.env.example` → `app/.env`. `keeper/.env` is gitignored and is the **only** file that may ever hold a private key (`sui keytool export --key-identity <alias>`).
@@ -61,33 +79,44 @@ Copy `keeper/.env.example` → `keeper/.env` and `app/.env.example` → `app/.en
 powershell -NoProfile -File scripts/verify-all.ps1      # the master gate — runs all 8 steps
 ```
 
-| Command | Green means |
-|---|---|
-| `cd move && sui move build` | Package `aphotic` compiles, edition `2024.beta`, **zero warnings** |
-| `cd move && sui move test` | All `move/tests/*_tests.move` pass |
-| `cd keeper && npm run typecheck` | `tsc --noEmit` under `strict` + `noUncheckedIndexedAccess` + `verbatimModuleSyntax` |
-| `cd keeper && npm run build` | Emits runnable ESM to `dist/` with `.d.ts` + sourcemaps |
-| `cd keeper && npm test` | Full vitest suite |
-| `cd app && npm run build` | `tsc --noEmit && vite build` |
-| `powershell -File scripts/gates.ps1` (or `bash scripts/gates.sh`) | 8 invariant gates: `g7` `g4` `g2` `ids` `sdk` `purity` `transport` `todo` |
-| `node scripts/verify-onchain.mjs` | Every canonical id, config scalar, event stream and the Pyth Beta feed match FACTS **live on testnet** (needs network) |
+| Command | Green means | Observed 2026-07-25 |
+|---|---|---|
+| `cd move && sui move build` | Package `aphotic` compiles, edition `2024.beta`, **zero warnings** | exit 0 |
+| `cd move && sui move test` | All `move/tests/*_tests.move` pass | `Total tests: 139; passed: 139; failed: 0` |
+| `cd keeper && npm run typecheck` | `tsc --noEmit` under `strict` + `noUncheckedIndexedAccess` + `verbatimModuleSyntax` | exit 0 |
+| `cd keeper && npm run build` | Emits runnable ESM to `dist/` with `.d.ts` + sourcemaps | exit 0 |
+| `cd keeper && npm test` | Full vitest suite | `19 files · 481 tests passed` |
+| `cd keeper && npm run test -- limiter.cross` | The **G5** acceptance: the TS limiter replay matches its Move twin | 5 passed |
+| `cd keeper && npm run test -- e2e.mock` | The cut-line acceptance: the loop reads no wall clock and opens no socket | 13 passed |
+| `cd app && npm run build` | `tsc --noEmit && vite build` | exit 0 |
+| `cd app && npm test` | The app's own offline suite (every `VITE_*` pinned) ⚠ not yet a step in `verify-all.ps1` | `6 files · 84 tests passed` |
+| `powershell -File scripts/gates.ps1` (or `bash scripts/gates.sh`) | 8 invariant gates: `g7` `g4` `g2` `ids` `sdk` `purity` `transport` `todo` | ⚠ `6 PASS · 1 FAIL` |
+| `node scripts/verify-onchain.mjs` | Every canonical id, our own deployment, config scalars, event streams and the Pyth Beta feed match FACTS **live on testnet** (needs network) | `28 PASS · 0 FAIL · 0 WARN` |
 
 The gates are the interesting part: `g7` proves `hashi::` appears in exactly one Move file, `g2` proves no exit function takes a Bitcoin address, `ids` proves no canonical id is hardcoded in logic, `purity` proves the strategy is deterministic, `transport` proves the Sui client is constructed in exactly one place per package.
 
-**Current state:** the repo is scaffolded and all 8 steps pass, but Phases 1–5 are **stubs** — 322 `TODO(Tx.y)` markers across 24 task ids. A green build is not coverage. See **`docs/STATUS.md`** for the honest per-task ledger.
+**Current state, honestly.** The Move package is complete and published; the keeper is complete, CLI included; the app builds, ships three real screens and has its own test suite. **704 tests across the three layers** (snapshot — the suites were still growing during this pass). Three things are open:
+
+- the **exit-amount form** on `/exit` is a placeholder (T3.2), and the landing-page stats are still hardcoded (T5.2) — 4 `TODO(Tx.y)` markers in two files, the whole remaining backlog;
+- the **`ids` gate fails** on two hardcoded Hashi ids in `scripts/register-deposit.ps1`, so `verify-all.ps1` is `7 PASS · 1 FAIL`;
+- the **`hBTC/DBUSDC` book is empty on both sides** and we can mint neither hBTC (`treasury::mint` is `public(package)`) nor DBUSDC (its `TreasuryCap` is address-owned) — an inventory blocker, handled everywhere as a *defined* state rather than a crash.
+
+See **`docs/STATUS.md`** for the per-task ledger and the verbatim run log, and **`docs/DEMO.md`** for what that means on stage.
 
 ---
 
 ## Doc read order
 
-1. **`docs/RECON.md`** — verified ground truth from live probes. **Never re-derive anything in it.**
+1. **`docs/RECON.md`** — verified ground truth from live probes, R1–**R14**. **Never re-derive anything in it.** R14 is the newest and the most dangerous to get wrong: Hashi has **no deposit relayer**, `utxo_id` takes the txid **byte-reversed** from what explorers display, and a mempool txid can be RBF-replaced out from under you — all three fail *silently*.
 2. **`docs/GOLDEN-RULES.md`** — G1–G10 with RULE / WHY / **NEVER**. Read before any Hashi/DeepBook/oracle claim or line of code.
 3. **`docs/CONVENTIONS.md`** — the contract banner every source file carries.
 4. **`docs/FACTS.md`** — canonical IDs, coin types, signatures, latencies, events. Cite by anchor.
-5. **The layer spec for your task** — `docs/MOVE-PACKAGE.md` · `docs/KEEPER.md` · `docs/APP.md`. **Read each one's `ERRATA (2026-07-25)` section first — it wins over the body above it.**
-6. **`docs/STATUS.md`** — per-task ledger, environment, known blockers.
-7. **`docs/ULTRACODE-BRIEF.md`** — the entry document for the implementation run: work-remaining census, full VERIFY matrix, the complete errata digest, and the prohibitions.
-8. `docs/BUILD-PLAN.md` (execution order + the CUT LINE) · `docs/ARCHITECTURE.md` · `docs/DAY-ONE.md` / `docs/DAY-ONE-RESULTS.md`.
+5. **`docs/DEPLOYED.md`** — what we actually published on testnet, with digests and envelope parameters. The ids the `.env` files are wired to.
+6. **The layer spec for your task** — `docs/MOVE-PACKAGE.md` · `docs/KEEPER.md` · `docs/APP.md`. **Read each one's `ERRATA (2026-07-25)` section first — it wins over the body above it.**
+7. **`docs/STATUS.md`** — per-task ledger, environment, known blockers, verbatim run log.
+8. **`docs/ULTRACODE-BRIEF.md`** — the entry document for an implementation run: work-remaining census, full VERIFY matrix, the complete errata digest, and the prohibitions.
+9. **`docs/DEMO.md`** — the runbook: minute-by-minute script, what is live vs pre-staged, the fallback, and the things we must never say.
+10. `docs/BUILD-PLAN.md` (execution order + the CUT LINE) · `docs/DEPLOY.md` (shipping `app/` to Vercel) · `docs/ARCHITECTURE.md` · `docs/DAY-ONE.md` / `docs/DAY-ONE-RESULTS.md`.
 
 Design rationale, not build specs: `HASHI_INTEGRATION.md` (authoritative deltas) and `README (8).md` (base product design).
 **`BTC_FIXED_INCOME.md` is a shelved alternative ("Meridian" bond) — do not implement it.**

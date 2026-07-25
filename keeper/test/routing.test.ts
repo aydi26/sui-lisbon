@@ -12,6 +12,10 @@
 // @facts        fixture, and the only randomness is the seeded SplitMix64 in ../src/util/rng.ts.
 // @implements empty book · one-sided book · crossed book · maker/IOC split arithmetic ·
 // @implements granularity rounding · L2 decode · deterministic seeder · router PTB shape
+// @implements LADDER: rung count/spacing/decay · granularity rejection · non-crossing on a
+// @implements   one-sided and a CROSSED book · empty book · duplicate-tick merge · level cap
+// @implements SLICE: partition arithmetic · route() footprint reduction · derisk is never sliced
+// @implements DETERMINISM: two identical runs produce a BYTE-identical serialized plan
 // @forbidden  a test that opens a socket or reads the wall clock — vitest runs offline
 // @invariant  1. Every assertion checks a value, never just "did not throw".
 // @verify     npm run test -- routing
@@ -39,14 +43,19 @@ import {
   depthWithinBps,
   isAligned,
   isCrossed,
+  ladderRungs,
+  ladderSpec,
+  MAX_LADDER_LEVELS,
   nonCrossingMakerPrice,
   rerouteAsIoc,
   route,
   residualAfterMaker,
+  sliceOf,
   stepsDue,
   stepToPlan,
   topOfBook,
   venueParams,
+  type LadderSpec,
   type RouteContext,
   type TakerScriptOptions,
 } from '../src/routing/index.js';
@@ -356,6 +365,231 @@ describe('routing/route — rerouteAsIoc (the makerTimeoutMs path, G4: same book
     const next = rerouteAsIoc(plan, [maker], TWO_SIDED, CTX);
     expect(next.cancels).toEqual([]);
     expect(next.iocOrders.some((o) => o.side === 'ask' && o.sz === 450_000n)).toBe(true);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe('routing/route — LADDERED quoting (the right shape for a near-empty book, R10)', () => {
+  /** 3 rungs · 15 bps apart · 30 % size decay outward. */
+  const L3: LadderSpec = { levels: 3, stepBps: 15, decayBps: 3_000 };
+  const LADDER_CTX: RouteContext = { ...CTX, ladder: L3 };
+
+  it('emits N rungs stepping AWAY from the decided price with geometrically decaying size', () => {
+    // w_k = 0.7^k over a 10_000-denominated integer weight ⇒ Σw = 2.19; sizes floor to the lot.
+    expect(ladderRungs(99_700_000_500n, 1_234_567n, 'bid', TWO_SIDED, CTX, L3)).toEqual([
+      { side: 'bid', px: 99_700_000_000n, sz: 563_000n, expireTs: CTX.expireTs, postOnly: true },
+      { side: 'bid', px: 99_550_000_000n, sz: 394_000n, expireTs: CTX.expireTs, postOnly: true },
+      { side: 'bid', px: 99_400_000_000n, sz: 276_000n, expireTs: CTX.expireTs, postOnly: true },
+    ]);
+    expect(ladderRungs(100_300_000_500n, 450_000n, 'ask', TWO_SIDED, CTX, L3)).toEqual([
+      { side: 'ask', px: 100_301_000_000n, sz: 205_000n, expireTs: CTX.expireTs, postOnly: true },
+      { side: 'ask', px: 100_451_000_000n, sz: 143_000n, expireTs: CTX.expireTs, postOnly: true },
+      { side: 'ask', px: 100_601_000_000n, sz: 100_000n, expireTs: CTX.expireTs, postOnly: true },
+    ]);
+  });
+
+  it('rung SPACING is exactly stepBps of the base price, and the ladder never over-posts the size', () => {
+    // A tick-clean base so the spacing assertion is exact: 15 bps of 100e9 = 150_000_000.
+    const rungs = ladderRungs(100_000_000_000n, 3_000_000n, 'bid', EMPTY, CTX, L3);
+    expect(rungs.map((r) => r.px)).toEqual([
+      100_000_000_000n,
+      99_850_000_000n,
+      99_700_000_000n,
+    ]);
+    for (let i = 1; i < rungs.length; i++) {
+      expect(rungs[i - 1]!.px - rungs[i]!.px).toBe(150_000_000n);
+      expect(rungs[i]!.sz).toBeLessThan(rungs[i - 1]!.sz); // decays outward
+    }
+    const posted = rungs.reduce((sum, r) => sum + r.sz, 0n);
+    expect(posted).toBeLessThanOrEqual(3_000_000n);
+    expect(posted).toBeGreaterThan(2_990_000n); // only lot-flooring is lost
+  });
+
+  it('decayBps = 0 is a FLAT ladder; decayBps = 10_000 puts everything on rung 0', () => {
+    const flat = ladderRungs(100_000_000_000n, 3_000_000n, 'bid', EMPTY, CTX, {
+      levels: 3,
+      stepBps: 15,
+      decayBps: 0,
+    });
+    expect(flat.map((r) => r.sz)).toEqual([1_000_000n, 1_000_000n, 1_000_000n]);
+
+    const front = ladderRungs(100_000_000_000n, 3_000_000n, 'bid', EMPTY, CTX, {
+      levels: 3,
+      stepBps: 15,
+      decayBps: 10_000,
+    });
+    expect(front).toHaveLength(1);
+    expect(front[0]!.sz).toBe(3_000_000n);
+  });
+
+  it('GRANULARITY: a rung that cannot clear min_size is NOT emitted (never an illegal order)', () => {
+    // 300_000 sats over 3 decaying rungs ⇒ 136_986 / 95_890 / 67_123 — only the first is legal.
+    const rungs = ladderRungs(99_700_000_500n, 300_000n, 'bid', TWO_SIDED, CTX, L3);
+    expect(rungs).toEqual([
+      { side: 'bid', px: 99_700_000_000n, sz: 136_000n, expireTs: CTX.expireTs, postOnly: true },
+    ]);
+    for (const r of rungs) expect(isAligned(r.px, r.sz, VENUE)).toBe(true);
+    // Below min_size on EVERY rung ⇒ nothing at all, rather than a rejected transaction.
+    expect(ladderRungs(99_700_000_500n, 99_999n, 'bid', TWO_SIDED, CTX, L3)).toEqual([]);
+  });
+
+  it('every rung of a full route() plan is tick/lot/min_size legal (invariant 3)', () => {
+    const plan = route(decision(), TWO_SIDED, LADDER_CTX);
+    expect(plan.makerOrders).toHaveLength(6);
+    for (const o of [...plan.makerOrders, ...plan.iocOrders]) {
+      expect(isAligned(o.px, o.sz, VENUE)).toBe(true);
+    }
+    // The IOC split is unchanged by laddering — it is a function of the decided size, not the shape.
+    expect(plan.iocOrders).toEqual([{ side: 'bid', px: 100_200_000_000n, sz: 734_000n, ioc: true }]);
+  });
+
+  it('NON-CROSSING on a ONE-SIDED book: asks are empty, so no bid rung can be clamped', () => {
+    const plan = route(decision(), ONE_SIDED, LADDER_CTX);
+    const { bestBid } = topOfBook(ONE_SIDED);
+    for (const o of plan.makerOrders) {
+      if (o.side === 'ask') expect(o.px).toBeGreaterThan(bestBid!); // never crosses the resting bid
+    }
+    expect(plan.makerOrders.filter((o) => o.side === 'bid')).toHaveLength(3);
+    expect(plan.makerOrders.filter((o) => o.side === 'ask')).toHaveLength(3);
+  });
+
+  it('NON-CROSSING on a CROSSED book: every rung is clamped, and the clamped duplicates MERGE', () => {
+    // Bid base 103e9 is above the best ask 99e9 ⇒ all three rungs clamp onto the same legal tick,
+    // and they are merged into ONE order rather than three competing orders at one price.
+    const rungs = ladderRungs(103_000_000_000n, 1_234_567n, 'bid', CROSSED, CTX, L3);
+    expect(rungs).toEqual([
+      { side: 'bid', px: 98_999_000_000n, sz: 1_233_000n, expireTs: CTX.expireTs, postOnly: true },
+    ]);
+    expect(rungs[0]!.px).toBeLessThan(99_000_000_000n); // strictly below the best ask
+
+    const asks = ladderRungs(98_000_000_000n, 1_234_567n, 'ask', CROSSED, CTX, L3);
+    for (const o of asks) expect(o.px).toBeGreaterThan(102_000_000_000n); // above the best bid
+  });
+
+  it('an EMPTY book ladders freely — nothing rests, so nothing clamps', () => {
+    const plan = route(decision(), EMPTY, { ...CTX, ladder: L3 });
+    expect(plan.iocOrders).toEqual([]);
+    expect(plan.makerOrders.filter((o) => o.side === 'bid').map((o) => o.px)).toEqual([
+      99_700_000_000n,
+      99_550_000_000n,
+      99_400_000_000n,
+    ]);
+    expect(plan.makerOrders.filter((o) => o.side === 'ask').map((o) => o.px)).toEqual([
+      100_301_000_000n,
+      100_451_000_000n,
+      100_601_000_000n,
+    ]);
+  });
+
+  it('levels = 1 reproduces the classic single maker level EXACTLY (backward compatibility)', () => {
+    const single = route(decision(), TWO_SIDED, { ...CTX, ladder: { levels: 1, stepBps: 15, decayBps: 3_000 } });
+    expect(single).toEqual(route(decision(), TWO_SIDED, CTX));
+  });
+
+  it('clamps a nonsense level count to MAX_LADDER_LEVELS instead of building an unbounded PTB', () => {
+    const rungs = ladderRungs(100_000_000_000n, 80_000_000n, 'bid', EMPTY, CTX, {
+      levels: 99,
+      stepBps: 15,
+      decayBps: 0,
+    });
+    expect(MAX_LADDER_LEVELS).toBe(8);
+    expect(rungs).toHaveLength(8);
+    expect(rungs.every((r) => r.sz === 10_000_000n)).toBe(true);
+    for (let i = 1; i < rungs.length; i++) expect(rungs[i]!.px).toBeLessThan(rungs[i - 1]!.px);
+  });
+
+  it('ladderSpec lifts the geometry out of the encrypted parameter set, clamping as it goes', () => {
+    expect(ladderSpec({ ladderLevels: 3, ladderStepBps: 15, ladderDecayBps: 3_000 })).toEqual(L3);
+    expect(ladderSpec({ ladderLevels: 0, ladderStepBps: -5, ladderDecayBps: 99_999 })).toEqual({
+      levels: 1,
+      stepBps: 0,
+      decayBps: 10_000,
+    });
+  });
+
+  it('a zero/absent base price or size ladders nothing — total, never a throw (invariant 1)', () => {
+    expect(ladderRungs(0n, 1_000_000n, 'bid', TWO_SIDED, CTX, L3)).toEqual([]);
+    expect(ladderRungs(99_700_000_500n, 0n, 'bid', TWO_SIDED, CTX, L3)).toEqual([]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe('routing/route — DETERMINISTIC time slicing (the index is an INPUT, never a clock)', () => {
+  const L3: LadderSpec = { levels: 3, stepBps: 15, decayBps: 3_000 };
+
+  it('sliceOf partitions the total: Σ slices <= total, every slice lot-aligned', () => {
+    const slices = [0, 1, 2, 3].map((index) => sliceOf(1_234_567n, { index, count: 4 }, VENUE));
+    expect(slices).toEqual([308_000n, 308_000n, 308_000n, 308_000n]);
+    const sum = slices.reduce((a, b) => a + b, 0n);
+    expect(sum).toBeLessThanOrEqual(1_234_567n);
+    expect(sum).toBeGreaterThan(1_234_567n - 4n * LOT);
+  });
+
+  it('count = 1 is the identity, and a slice below min_size is dropped rather than sent illegal', () => {
+    expect(sliceOf(1_234_567n, { index: 0, count: 1 }, VENUE)).toBe(1_234_000n);
+    expect(sliceOf(0n, { index: 0, count: 4 }, VENUE)).toBe(0n);
+    // 300_000 / 4 = 75_000 < min_size 100_000 ⇒ nothing legal to send this slice.
+    expect(sliceOf(300_000n, { index: 2, count: 4 }, VENUE)).toBe(0n);
+  });
+
+  it('a raw cursor index wraps into [0, count) — a caller may pass a sequence number directly', () => {
+    expect(sliceOf(1_234_567n, { index: 9, count: 4 }, VENUE)).toBe(
+      sliceOf(1_234_567n, { index: 1, count: 4 }, VENUE),
+    );
+    expect(sliceOf(1_234_567n, { index: -1, count: 4 }, VENUE)).toBe(
+      sliceOf(1_234_567n, { index: 3, count: 4 }, VENUE),
+    );
+    // A nonsense count degrades to "do not slice" rather than dividing by zero.
+    expect(sliceOf(1_234_567n, { index: 0, count: 0 }, VENUE)).toBe(1_234_000n);
+  });
+
+  it('route() works only THIS slice, shrinking the footprint below the passive queue', () => {
+    const plan = route(decision(), TWO_SIDED, { ...CTX, slice: { index: 1, count: 4 } });
+    expect(plan.makerOrders).toEqual([
+      { side: 'bid', px: 99_700_000_000n, sz: 308_000n, expireTs: CTX.expireTs, postOnly: true },
+      { side: 'ask', px: 100_301_000_000n, sz: 112_000n, expireTs: CTX.expireTs, postOnly: true },
+    ]);
+    // A quarter of the size now fits behind the resting queue ⇒ nothing has to cross.
+    expect(plan.iocOrders).toEqual([]);
+  });
+
+  it('slicing composes with the ladder: this slice is what gets laddered', () => {
+    const plan = route(decision(), EMPTY, { ...CTX, ladder: L3, slice: { index: 0, count: 4 } });
+    // Slice 0 of 1_234_567 is 308_000 sats; laddered 100/70/49 that is 140_639 / 98_447 / 68_913,
+    // and only the first rung clears min_size — the other two are dropped, not shrunk into legality.
+    const bids = plan.makerOrders.filter((o) => o.side === 'bid');
+    expect(bids.map((o) => o.sz)).toEqual([140_000n]);
+    expect(bids.reduce((a, o) => a + o.sz, 0n)).toBeLessThanOrEqual(308_000n);
+    // The ask slice (112_000) cannot support ANY legal rung at a 30 % decay ⇒ nothing is posted.
+    expect(plan.makerOrders.filter((o) => o.side === 'ask')).toEqual([]);
+    for (const o of plan.makerOrders) expect(isAligned(o.px, o.sz, VENUE)).toBe(true);
+  });
+
+  it('derisk is NEVER sliced — getting flat is not something you work in slices', () => {
+    const sliced = route(decision({ action: 'derisk' }), TWO_SIDED, {
+      ...CTX,
+      slice: { index: 0, count: 4 },
+    });
+    expect(sliced).toEqual(route(decision({ action: 'derisk' }), TWO_SIDED, CTX));
+  });
+
+  it('a plan is BYTE-identical across two identical runs — ladder and slice included (G5)', () => {
+    const ctx: RouteContext = { ...CTX, ladder: L3, slice: { index: 2, count: 4 } };
+    const encode = (p: ReturnType<typeof route>): string =>
+      JSON.stringify(p, (_k, v: unknown) => (typeof v === 'bigint' ? `${v}n` : v));
+
+    const a = encode(route(decision(), TWO_SIDED, ctx));
+    const b = encode(route(decision(), TWO_SIDED, ctx));
+    expect(a).toBe(b);
+    expect(a).toBe(encode(route(decision(), TWO_SIDED, { ...ctx })));
+    // …and a DIFFERENT slice really is a different plan (the schedule is not decorative).
+    expect(encode(route(decision(), TWO_SIDED, { ...ctx, slice: { index: 0, count: 2 } }))).not.toBe(a);
+  });
+
+  it('omitting ladder + slice leaves route() exactly as it was before T2.7 (no silent behaviour change)', () => {
+    expect(route(decision(), TWO_SIDED, { ...CTX, ladder: undefined, slice: undefined })).toEqual(
+      route(decision(), TWO_SIDED, CTX),
+    );
   });
 });
 
