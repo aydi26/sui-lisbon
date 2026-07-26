@@ -63,15 +63,23 @@ use sui::hash;
 // @facts        tie-break the LOWEST p. Candidates are scanned ASCENDING and the update is a
 // @facts        STRICT improvement, so "lowest p" needs no extra branch. Integer only; there is
 // @facts        no float anywhere in this module.
-// @facts      ALLOCATION: orders strictly inside the cross fill first, in canonical order, until
-// @facts        `matched` is exhausted; orders at EXACTLY p* share the residual pro-rata,
-// @facts        floor(residual × qty_i / Σqty), and the remainder is distributed ONE SAT AT A
-// @facts        TIME by largest fractional remainder, tie-broken by canonical position.
+// @facts      ALLOCATION (D2, fixed 2026-07-26 — docs/DESIGN-V2.md §5bis(a) / §5ter): walk PRICE
+// @facts        LEVELS in canonical (price-priority) order. A level whose whole weight still fits
+// @facts        in what is left of `matched` fills FULLY. The FIRST level that does not fit — the
+// @facts        MARGINAL level — is pro-rated floor(residual × qty_i / Σqty over that level), and
+// @facts        the remainder is distributed ONE SAT AT A TIME by largest fractional remainder,
+// @facts        tie-broken by canonical position. Every LATER level gets zero.
+// @facts        ⚠ THIS REPLACED A GREEDY RULE, and the replacement is the product claim, not a
+// @facts        rounding detail. Two bids of 60 at the same price against one ask of 50 used to
+// @facts        fill 50/0 — first submitter takes everything — and now fill 25/25. "Uniform-price
+// @facts        clearing makes front-running meaningless because there is no 'first' in a batch"
+// @facts        is only TRUE under pro-rata; greedy allocation reintroduces a first at exactly
+// @facts        the contested level.
 // @facts        ⚠ "strictly inside fills fully" is the normal case, NOT a theorem: with
 // @facts        bid 100×10 against ask 90×3 the volume-maximising price is 90 and the single
-// @facts        strictly-inside bid cannot fill fully. Canonical-order priority is the
-// @facts        deterministic rule that covers it, and it degenerates to "fills fully" whenever
-// @facts        the residual suffices.
+// @facts        strictly-inside bid cannot fill fully. The level walk covers it — that bid is
+// @facts        alone on the marginal level and pro-rates to the whole residual — and it
+// @facts        degenerates to "fills fully" whenever the residual suffices.
 // @facts      QUOTE CONVERSION rounds TOWARD THE VAULT — bids pay `ceil`, asks receive `floor` —
 // @facts        so the dust residual can never be negative. PRICE_SCALE = 100_000_000, i.e. a
 // @facts        limit price is quote-sats per 1e8 base-sats (per whole hBTC), matching hBTC's
@@ -81,13 +89,24 @@ use sui::hash;
 // @facts        fee = (Σ bid ceil-quote − Σ ask net-quote) = per-ask fee + rounding dust.
 // @facts      SOLVENCY WITHOUT LEAKING SIZE: there is no margin field on a sealed order — a
 // @facts        margin would publish order size at submit time and defeat the whole design.
-// @facts        Instead each order's quantity is TRUNCATED AT LOAD TIME to what the submitter's
-// @facts        persistent internal balance can actually fund, at the order's OWN limit price
-// @facts        (the worst case for a bid, since p* ≤ limit). A per-submitter running budget
-// @facts        makes several orders from one account jointly funded. Escrow withdrawals are
-// @facts        locked for the duration of a clearing (`vault::begin_clearing_lock`), so the
-// @facts        snapshot cannot go stale underneath the computation; top-ups stay allowed
-// @facts        because they can only make a fill MORE coverable.
+// @facts        Instead a fill is TRUNCATED to what the submitter's persistent internal balance
+// @facts        can fund. A per-submitter running budget, drawn down in canonical order, makes
+// @facts        several orders from one account jointly funded. Escrow withdrawals are locked for
+// @facts        the duration of a clearing (`vault::begin_clearing_lock`), so the snapshot cannot
+// @facts        go stale underneath the computation; top-ups stay allowed because they can only
+// @facts        make a fill MORE coverable.
+// @facts      ⚠ WHEN truncation happens is the whole of D4 (fixed 2026-07-26). It used to happen
+// @facts        at LOAD, before price discovery — so a single account submitting an order it
+// @facts        could not fund MOVED THE UNIFORM PRICE FOR EVERYONE. That is a manipulation
+// @facts        lever at near-zero cost, not a rounding question. Truncation now runs in
+// @facts        STAGE_TRUNCATE, AFTER the price is discovered from the SUBMITTED order set, and
+// @facts        it is a pure function of the frozen funding snapshot so the off-chain twins
+// @facts        reproduce it. p* is a function of the submitted book alone.
+// @facts      THE COST OF MOVING IT: truncation shortens one side, so the allocation is RE-RUN
+// @facts        (STAGE_REALLOC_*) over the surviving quantities against M' = min(Σbid', Σask') —
+// @facts        "the counterparty recomputed symmetrically" — by the SAME price-priority +
+// @facts        largest-remainder rule. Reduction only, so no re-rationed fill can breach an
+// @facts        affordability cap, and Σ base debited == Σ base credited still holds exactly.
 // @facts      PUSH, NOT CLAIM (deviation of record, DESIGN-V2 §5 / GOVERNANCE D-G3). Spec §7.2
 // @facts        step 5 has participants CLAIM fills. `settle_step` credits them directly and
 // @facts        `verify_fill` is the transparency surface. A pull model leaves an unbounded
@@ -110,6 +129,8 @@ use sui::hash;
 //             public fun fill_leaf_hash(f: &Fill): vector<u8>
 //             public fun stage / clearing_price / matched_base_sats / fills_root / fill_count
 //                 / fill_at / total_debits / total_credits / fee_quote_sats (&Clearing -> ..)
+//             public fun stage_truncate / stage_realloc_full / stage_realloc_prorata
+//                 / stage_realloc_remainder (): u8   <- added with the D2/D4 fix
 // @events     BatchCleared (once, when the price and root are final) · BatchSettled (once, when
 //             every fill has been pushed). Both declared in aphotic::events.
 // @errors     EBadStage · EBadParam · EWrongBatch · EWrongVault · EFillOutsideLimit
@@ -149,6 +170,17 @@ const EIndexOutOfRange: u64 = 8;
 const ENotFinal: u64 = 9;
 
 // ── stages (each carries its own cursor; all are budgeted) ──────────────────
+//
+// PIPELINE ORDER — which is NOT numeric order, deliberately:
+//   LOADING → PRICING → ALLOC_FULL → ALLOC_PRORATA → ALLOC_REMAINDER
+//           → TRUNCATE → REALLOC_FULL → REALLOC_PRORATA → REALLOC_REMAINDER
+//           → ROOTING → SETTLING → DONE
+//
+// ⚠ THESE NUMBERS ARE A WIRE FORMAT. `stage()` is read by clients built against the published
+//   package, so 0–7 keep exactly the meaning v1 gave them and the four stages the D4 fix adds are
+//   APPENDED at 8–11 rather than inserted where they run. Nothing orders stages with `<` or `>=`:
+//   `step` dispatches on equality, and `verify_fill` names both terminal stages explicitly, so
+//   the numbering carries no ordering obligation and none may be introduced.
 const STAGE_LOADING: u8 = 0;
 const STAGE_PRICING: u8 = 1;
 const STAGE_ALLOC_FULL: u8 = 2;
@@ -157,6 +189,12 @@ const STAGE_ALLOC_REMAINDER: u8 = 4;
 const STAGE_ROOTING: u8 = 5;
 const STAGE_SETTLING: u8 = 6;
 const STAGE_DONE: u8 = 7;
+/// Draw the frozen funding snapshot down against the allocation — AFTER price discovery (D4).
+const STAGE_TRUNCATE: u8 = 8;
+/// …and then allocate once more over what survived, so both sides settle the same base volume.
+const STAGE_REALLOC_FULL: u8 = 9;
+const STAGE_REALLOC_PRORATA: u8 = 10;
+const STAGE_REALLOC_REMAINDER: u8 = 11;
 
 const SIDE_BID: u8 = 0;
 const SIDE_ASK: u8 = 1;
@@ -175,8 +213,12 @@ const DEFAULT_SETTLE_BUDGET: u64 = 128;
 
 // ── structs ─────────────────────────────────────────────────────────────────
 
-/// One side of one revealed order, in canonical position. `qty_sats` is already truncated to
-/// what the submitter can fund; the raw submitted quantity is never used again.
+/// One side of one revealed order, in canonical position.
+///
+/// `qty_sats` is the ALLOCATION WEIGHT, and it changes meaning exactly once: it is the SUBMITTED
+/// quantity through price discovery and the first allocation pass — that is what makes p* a
+/// function of the submitted book alone (D4) — and `finish_truncation` then overwrites it with
+/// the quantity the submitter could actually fund, which is the weight the second pass rations.
 public struct Entry has copy, drop, store {
     order_index: u64,
     submitter: address,
@@ -191,7 +233,8 @@ public struct Entry has copy, drop, store {
     bumped: bool,
 }
 
-/// A per-submitter funding snapshot, taken once and drawn down as their orders load.
+/// A per-submitter funding snapshot, taken once as their first order loads and drawn down in
+/// `STAGE_TRUNCATE` — never at load, or one under-funded account would move p* for everyone.
 public struct Funding has copy, drop, store {
     who: address,
     base_left: u64,
@@ -379,7 +422,8 @@ public fun share_clearing(c: Clearing) {
 /// after the clearing has finished (@invariant 5).
 ///
 /// A "unit" means: one order loaded · one candidate price evaluated · one order allocated ·
-/// one remainder sat awarded · one fill hashed · one fill pushed to the ledger.
+/// one order truncated against its funding · one remainder sat awarded · one fill hashed · one
+/// fill pushed to the ledger.
 public fun step<B, Q, S>(
     c: &mut Clearing,
     b: &mut Batch,
@@ -397,11 +441,19 @@ public fun step<B, Q, S>(
     } else if (c.stage == STAGE_PRICING) {
         price_step(c, budget)
     } else if (c.stage == STAGE_ALLOC_FULL) {
-        alloc_full_step(c, budget)
+        alloc_full_step(c, budget, STAGE_ALLOC_PRORATA)
     } else if (c.stage == STAGE_ALLOC_PRORATA) {
-        alloc_prorata_step(c, budget)
+        alloc_prorata_step(c, budget, STAGE_ALLOC_REMAINDER)
     } else if (c.stage == STAGE_ALLOC_REMAINDER) {
-        alloc_remainder_step(c, budget)
+        alloc_remainder_step(c, budget, STAGE_TRUNCATE)
+    } else if (c.stage == STAGE_TRUNCATE) {
+        truncate_step(c, v, budget)
+    } else if (c.stage == STAGE_REALLOC_FULL) {
+        alloc_full_step(c, budget, STAGE_REALLOC_PRORATA)
+    } else if (c.stage == STAGE_REALLOC_PRORATA) {
+        alloc_prorata_step(c, budget, STAGE_REALLOC_REMAINDER)
+    } else if (c.stage == STAGE_REALLOC_REMAINDER) {
+        alloc_remainder_step(c, budget, STAGE_ROOTING)
     } else if (c.stage == STAGE_ROOTING) {
         rooting_step(c, budget)
     } else if (c.stage == STAGE_SETTLING) {
@@ -410,23 +462,36 @@ public fun step<B, Q, S>(
     // STAGE_DONE falls through: stepping a finished clearing does nothing.
 }
 
-// ── stage 0: load, funding-truncate, and insert in canonical position ───────
+// ── stage 0: load the submitted book, and insert in canonical position ──────
 
-fun funding_row<B, Q, S>(c: &mut Clearing, v: &Vault<B, Q, S>, who: address): u64 {
+/// The row index of `who`'s funding snapshot, if one has been taken.
+fun funding_index(c: &Clearing, who: address): (bool, u64) {
     let n = c.funding.length();
     let mut i = 0;
     while (i < n) {
-        if (c.funding.borrow(i).who == who) return i;
+        if (c.funding.borrow(i).who == who) return (true, i);
         i = i + 1;
     };
+    (false, 0)
+}
+
+/// Take `who`'s escrow snapshot once. `begin_clearing_lock` froze withdrawals, so a row read at
+/// load is still the binding budget when `STAGE_TRUNCATE` spends it; top-ups after the read can
+/// only make a fill MORE coverable, never less.
+fun ensure_funding_row<B, Q, S>(c: &mut Clearing, v: &Vault<B, Q, S>, who: address) {
+    let (found, _) = funding_index(c, who);
+    if (found) return;
     c.funding.push_back(Funding {
         who,
         base_left: vault::escrow_base_of(v, who),
         quote_left: vault::escrow_quote_of(v, who),
     });
-    n
 }
 
+/// Load every revealed order AT ITS SUBMITTED QUANTITY.
+///
+/// D4: nothing is truncated here. Price discovery must see the book that was actually submitted,
+/// or one participant who cannot pay sets the price everybody else trades at.
 fun load_step<B, Q, S>(c: &mut Clearing, b: &Batch, v: &Vault<B, Q, S>, budget: u64) {
     let total = batch::order_count(b);
     let mut used = 0;
@@ -435,40 +500,18 @@ fun load_step<B, Q, S>(c: &mut Clearing, b: &Batch, v: &Vault<B, Q, S>, budget: 
         if (batch::is_revealed_at(b, i)) {
             let o = batch::revealed_at(b, i);
             let who = batch::order_submitter(&o);
-            let is_bid = batch::order_is_bid(&o);
-            let price = batch::order_limit_price(&o);
             let qty = batch::order_qty_sats(&o);
 
-            let row_i = funding_row(c, v, who);
-            let effective = {
-                let row = c.funding.borrow_mut(row_i);
-                if (is_bid) {
-                    // Worst case: the bid could clear at its own limit, never above it.
-                    let afford_u128 =
-                        ((row.quote_left as u128) * (PRICE_SCALE as u128)) / (price as u128);
-                    let afford = if (afford_u128 > MAX_U64) (MAX_U64 as u64)
-                        else (afford_u128 as u64);
-                    let e = min_u64(qty, afford);
-                    if (e > 0) {
-                        let cost = ceil_mul_div(e, price, PRICE_SCALE);
-                        row.quote_left = row.quote_left - cost;
-                    };
-                    e
-                } else {
-                    let e = min_u64(qty, row.base_left);
-                    row.base_left = row.base_left - e;
-                    e
-                }
-            };
+            ensure_funding_row(c, v, who);
 
-            if (effective > 0) {
+            if (qty > 0) {
                 let entry = Entry {
                     order_index: i,
                     submitter: who,
                     key: sui::address::to_u256(who),
-                    is_bid,
-                    limit_price: price,
-                    qty_sats: effective,
+                    is_bid: batch::order_is_bid(&o),
+                    limit_price: batch::order_limit_price(&o),
+                    qty_sats: qty,
                     fill_base: 0,
                     frac: 0,
                     bumped: false,
@@ -633,80 +676,109 @@ fun finish_pricing(c: &mut Clearing) {
     c.stage = STAGE_ALLOC_FULL;
 }
 
-// ── stage 2: fill the strictly-inside orders, in canonical order ────────────
+// ── the allocation rule, shared by both passes ──────────────────────────────
 
-fun alloc_full_step(c: &mut Clearing, budget: u64) {
+fun entry_at(c: &Clearing, is_bid: bool, i: u64): &Entry {
+    if (is_bid) c.bids.borrow(i) else c.asks.borrow(i)
+}
+
+fun entry_at_mut(c: &mut Clearing, is_bid: bool, i: u64): &mut Entry {
+    if (is_bid) c.bids.borrow_mut(i) else c.asks.borrow_mut(i)
+}
+
+/// THE MARGINAL LEVEL on one side — the D2 rule, in one place.
+///
+/// Walks price levels in canonical (price-priority) order over the eligible prefix, accumulating
+/// weights. Returns `(found, lo, hi, cum_lo, level_total)`:
+///   · every entry at an index `< lo` sits on a level that fits entirely and FILLS FULLY;
+///   · `[lo, hi)` is the first level that does NOT fit — it shares `matched_base − cum_lo`
+///     pro-rata, and being first inside it buys nothing;
+///   · every entry at an index `>= hi` gets zero.
+/// `found == false` means the whole eligible side fits, and then `lo == hi == n`.
+///
+/// PURE — a function of (entries, eligible count, `matched_base`) alone, none of which changes
+/// while a pass runs. That is what lets every budgeted step recompute it from scratch instead of
+/// carrying it in a struct field, which matters because `Clearing` is at its field ceiling.
+fun marginal_level(c: &Clearing, is_bid: bool): (bool, u64, u64, u64, u64) {
+    let n = if (is_bid) c.alloc.elig_bids else c.alloc.elig_asks;
+    let target = c.alloc.matched_base;
+    let mut cum = 0u64;
+    let mut lo = 0u64;
+    while (lo < n) {
+        let price = entry_at(c, is_bid, lo).limit_price;
+        let mut hi = lo;
+        let mut lvl = 0u64;
+        while (hi < n && entry_at(c, is_bid, hi).limit_price == price) {
+            lvl = checked_add(lvl, entry_at(c, is_bid, hi).qty_sats);
+            hi = hi + 1;
+        };
+        if (checked_add(cum, lvl) > target) return (true, lo, hi, cum, lvl);
+        cum = cum + lvl;
+        lo = hi;
+    };
+    (false, n, n, cum, 0)
+}
+
+// ── stage 2 / 9: fill every level that fits, in price priority ──────────────
+
+fun alloc_full_step(c: &mut Clearing, budget: u64, next: u8) {
     let total = c.alloc.elig_bids + c.alloc.elig_asks;
+    let nb = c.alloc.elig_bids;
+    let (_, blo, _, bcum, blvl) = marginal_level(c, true);
+    let (_, alo, _, acum, alvl) = marginal_level(c, false);
     let mut used = 0;
     while (c.cursor < total && used < budget) {
-        let p = c.alloc.clearing_price;
-        let matched = c.alloc.matched_base;
-        if (c.cursor < c.alloc.elig_bids) {
-            let i = c.cursor;
-            let remaining = matched - c.alloc.filled_bid;
-            let e = c.bids.borrow_mut(i);
-            if (e.limit_price > p) {
-                let fill = min_u64(e.qty_sats, remaining);
-                e.fill_base = fill;
-                c.alloc.filled_bid = c.alloc.filled_bid + fill;
-            } else {
-                c.alloc.pro_qty_bid = checked_add(c.alloc.pro_qty_bid, e.qty_sats);
-            };
-        } else {
-            let i = c.cursor - c.alloc.elig_bids;
-            let remaining = matched - c.alloc.filled_ask;
-            let e = c.asks.borrow_mut(i);
-            if (e.limit_price < p) {
-                let fill = min_u64(e.qty_sats, remaining);
-                e.fill_base = fill;
-                c.alloc.filled_ask = c.alloc.filled_ask + fill;
-            } else {
-                c.alloc.pro_qty_ask = checked_add(c.alloc.pro_qty_ask, e.qty_sats);
-            };
-        };
+        let is_bid = c.cursor < nb;
+        let i = if (is_bid) c.cursor else c.cursor - nb;
+        let inside = if (is_bid) i < blo else i < alo;
+        let e = entry_at_mut(c, is_bid, i);
+        e.fill_base = if (inside) e.qty_sats else 0;
         c.cursor = c.cursor + 1;
         used = used + 1;
     };
 
     if (c.cursor >= total) {
-        c.alloc.residual_bid = c.alloc.matched_base - c.alloc.filled_bid;
-        c.alloc.residual_ask = c.alloc.matched_base - c.alloc.filled_ask;
+        // `cum_lo <= matched_base` always: a level is only skipped past when it fit.
+        c.alloc.filled_bid = bcum;
+        c.alloc.filled_ask = acum;
+        c.alloc.pro_qty_bid = blvl;
+        c.alloc.pro_qty_ask = alvl;
+        c.alloc.residual_bid = c.alloc.matched_base - bcum;
+        c.alloc.residual_ask = c.alloc.matched_base - acum;
         c.cursor = 0;
-        c.stage = STAGE_ALLOC_PRORATA;
+        c.stage = next;
     };
 }
 
-// ── stage 3: pro-rate the orders sitting exactly at p* ──────────────────────
+// ── stage 3 / 10: pro-rate the marginal level ───────────────────────────────
 
-fun alloc_prorata_step(c: &mut Clearing, budget: u64) {
+fun alloc_prorata_step(c: &mut Clearing, budget: u64, next: u8) {
     let total = c.alloc.elig_bids + c.alloc.elig_asks;
+    let nb = c.alloc.elig_bids;
+    let (_, blo, bhi, bcum, blvl) = marginal_level(c, true);
+    let (_, alo, ahi, acum, alvl) = marginal_level(c, false);
+    let b_residual = c.alloc.matched_base - bcum;
+    let a_residual = c.alloc.matched_base - acum;
     let mut used = 0;
     while (c.cursor < total && used < budget) {
-        let p = c.alloc.clearing_price;
-        if (c.cursor < c.alloc.elig_bids) {
-            let i = c.cursor;
-            let residual = c.alloc.residual_bid;
-            let pool = c.alloc.pro_qty_bid;
-            let e = c.bids.borrow_mut(i);
-            if (e.limit_price == p && pool > 0) {
-                let base = floor_mul_div(residual, e.qty_sats, pool);
-                e.fill_base = base;
+        let is_bid = c.cursor < nb;
+        let i = if (is_bid) c.cursor else c.cursor - nb;
+        let (lo, hi, pool, residual) = if (is_bid) (blo, bhi, blvl, b_residual)
+            else (alo, ahi, alvl, a_residual);
+        if (i >= lo && i < hi && pool > 0) {
+            let base = {
+                let e = entry_at_mut(c, is_bid, i);
+                let b = floor_mul_div(residual, e.qty_sats, pool);
+                e.fill_base = b;
+                // The largest-remainder ranking value, integer only: `residual × qty − ⌊⌋ × Σqty`.
                 e.frac =
-                    ((residual as u128) * (e.qty_sats as u128)) - ((base as u128) * (pool as u128));
+                    ((residual as u128) * (e.qty_sats as u128)) - ((b as u128) * (pool as u128));
                 e.bumped = false;
-                c.alloc.awarded_bid = c.alloc.awarded_bid + base;
+                b
             };
-        } else {
-            let i = c.cursor - c.alloc.elig_bids;
-            let residual = c.alloc.residual_ask;
-            let pool = c.alloc.pro_qty_ask;
-            let e = c.asks.borrow_mut(i);
-            if (e.limit_price == p && pool > 0) {
-                let base = floor_mul_div(residual, e.qty_sats, pool);
-                e.fill_base = base;
-                e.frac =
-                    ((residual as u128) * (e.qty_sats as u128)) - ((base as u128) * (pool as u128));
-                e.bumped = false;
+            if (is_bid) {
+                c.alloc.awarded_bid = c.alloc.awarded_bid + base;
+            } else {
                 c.alloc.awarded_ask = c.alloc.awarded_ask + base;
             };
         };
@@ -717,64 +789,56 @@ fun alloc_prorata_step(c: &mut Clearing, budget: u64) {
     if (c.cursor >= total) {
         c.cursor = 0;
         c.alloc.remainder_side = SIDE_BID;
-        c.stage = STAGE_ALLOC_REMAINDER;
+        c.stage = next;
     };
 }
 
-// ── stage 4: the remainder, one sat at a time, largest fraction first ───────
+// ── stage 4 / 11: the remainder, one sat at a time, largest fraction first ──
 
-/// Index of the largest unbumped fraction at exactly p* on one side, canonical position
-/// breaking ties because the scan runs in canonical order and only a STRICT improvement wins.
-fun best_fraction(c: &Clearing, is_bid: bool): (bool, u64) {
-    let (n, p) = if (is_bid) (c.alloc.elig_bids, c.alloc.clearing_price) else (c.alloc.elig_asks, c.alloc.clearing_price);
+/// Index of the largest unbumped fraction inside the marginal level `[lo, hi)`. Canonical
+/// position breaks ties because the scan runs in canonical order and only a STRICT improvement
+/// wins — the same rule the off-chain twins spell as "sort by remainder desc, then index asc".
+fun best_fraction(c: &Clearing, is_bid: bool, lo: u64, hi: u64): (bool, u64) {
     let mut found = false;
     let mut best_i = 0;
     let mut best_f = 0u128;
-    let mut i = 0;
-    while (i < n) {
-        let e = if (is_bid) c.bids.borrow(i) else c.asks.borrow(i);
-        if (e.limit_price == p && !e.bumped) {
-            if (!found || e.frac > best_f) {
-                found = true;
-                best_f = e.frac;
-                best_i = i;
-            };
+    let mut i = lo;
+    while (i < hi) {
+        let e = entry_at(c, is_bid, i);
+        if (!e.bumped && (!found || e.frac > best_f)) {
+            found = true;
+            best_f = e.frac;
+            best_i = i;
         };
         i = i + 1;
     };
     (found, best_i)
 }
 
-fun alloc_remainder_step(c: &mut Clearing, budget: u64) {
+fun alloc_remainder_step(c: &mut Clearing, budget: u64, next: u8) {
+    let (_, blo, bhi, _, _) = marginal_level(c, true);
+    let (_, alo, ahi, _, _) = marginal_level(c, false);
     let mut used = 0;
     while (used < budget && c.alloc.remainder_side != SIDE_NONE) {
-        if (c.alloc.remainder_side == SIDE_BID) {
-            if (c.alloc.awarded_bid >= c.alloc.residual_bid) {
-                c.alloc.remainder_side = SIDE_ASK;
-                continue
-            };
-            let (ok, i) = best_fraction(c, true);
-            if (!ok) {
-                c.alloc.remainder_side = SIDE_ASK;
-                continue
-            };
-            let e = c.bids.borrow_mut(i);
-            e.fill_base = e.fill_base + 1;
-            e.bumped = true;
+        let is_bid = c.alloc.remainder_side == SIDE_BID;
+        let done = if (is_bid) c.alloc.awarded_bid >= c.alloc.residual_bid
+            else c.alloc.awarded_ask >= c.alloc.residual_ask;
+        if (done) {
+            c.alloc.remainder_side = if (is_bid) SIDE_ASK else SIDE_NONE;
+            continue
+        };
+        let (lo, hi) = if (is_bid) (blo, bhi) else (alo, ahi);
+        let (ok, i) = best_fraction(c, is_bid, lo, hi);
+        if (!ok) {
+            c.alloc.remainder_side = if (is_bid) SIDE_ASK else SIDE_NONE;
+            continue
+        };
+        let e = entry_at_mut(c, is_bid, i);
+        e.fill_base = e.fill_base + 1;
+        e.bumped = true;
+        if (is_bid) {
             c.alloc.awarded_bid = c.alloc.awarded_bid + 1;
         } else {
-            if (c.alloc.awarded_ask >= c.alloc.residual_ask) {
-                c.alloc.remainder_side = SIDE_NONE;
-                continue
-            };
-            let (ok, i) = best_fraction(c, false);
-            if (!ok) {
-                c.alloc.remainder_side = SIDE_NONE;
-                continue
-            };
-            let e = c.asks.borrow_mut(i);
-            e.fill_base = e.fill_base + 1;
-            e.bumped = true;
             c.alloc.awarded_ask = c.alloc.awarded_ask + 1;
         };
         used = used + 1;
@@ -782,8 +846,109 @@ fun alloc_remainder_step(c: &mut Clearing, budget: u64) {
 
     if (c.alloc.remainder_side == SIDE_NONE) {
         c.cursor = 0;
-        c.stage = STAGE_ROOTING;
+        c.stage = next;
     };
+}
+
+// ── stage 8: truncate against the frozen funding snapshot — AFTER pricing ───
+
+/// D4. The price is already fixed; this only decides who can pay for the fill they were
+/// allocated. A per-account budget is drawn down in canonical order, so several orders from one
+/// account are jointly funded and the outcome does not depend on which one is looked at first.
+fun truncate_step<B, Q, S>(c: &mut Clearing, v: &Vault<B, Q, S>, budget: u64) {
+    let total = c.alloc.elig_bids + c.alloc.elig_asks;
+    let nb = c.alloc.elig_bids;
+    let p = c.alloc.clearing_price;
+    let mut used = 0;
+    while (c.cursor < total && used < budget) {
+        let is_bid = c.cursor < nb;
+        let i = if (is_bid) c.cursor else c.cursor - nb;
+        let (who, want) = {
+            let e = entry_at(c, is_bid, i);
+            (e.submitter, e.fill_base)
+        };
+        if (want > 0) {
+            ensure_funding_row(c, v, who);
+            let (_, row_i) = funding_index(c, who);
+            let granted = {
+                let row = c.funding.borrow_mut(row_i);
+                if (is_bid) {
+                    // The largest quantity this budget covers at p*, remembering the buyer
+                    // rounds UP. `p > 0` because a clearing price of 0 never reaches this stage.
+                    let afford_u128 =
+                        ((row.quote_left as u128) * (PRICE_SCALE as u128)) / (p as u128);
+                    let afford = if (afford_u128 > MAX_U64) (MAX_U64 as u64)
+                        else (afford_u128 as u64);
+                    let g = min_u64(want, afford);
+                    row.quote_left = row.quote_left - ceil_mul_div(g, p, PRICE_SCALE);
+                    g
+                } else {
+                    let g = min_u64(want, row.base_left);
+                    row.base_left = row.base_left - g;
+                    g
+                }
+            };
+            if (granted < want) entry_at_mut(c, is_bid, i).fill_base = granted;
+        };
+        c.cursor = c.cursor + 1;
+        used = used + 1;
+    };
+
+    if (c.cursor >= total) finish_truncation(c);
+}
+
+/// Truncation shortens one side, so both sides are re-rationed to `M' = min(Σbid', Σask')` —
+/// "the counterparty recomputed symmetrically". The surviving quantities become the weights of a
+/// second allocation pass, which is REDUCTION ONLY and therefore cannot breach an affordability
+/// cap the first pass respected.
+fun finish_truncation(c: &mut Clearing) {
+    let nb = c.alloc.elig_bids;
+    let na = c.alloc.elig_asks;
+
+    let mut bid_total = 0u64;
+    let mut i = 0;
+    while (i < nb) {
+        bid_total = checked_add(bid_total, c.bids.borrow(i).fill_base);
+        i = i + 1;
+    };
+    let mut ask_total = 0u64;
+    let mut j = 0;
+    while (j < na) {
+        ask_total = checked_add(ask_total, c.asks.borrow(j).fill_base);
+        j = j + 1;
+    };
+    c.alloc.matched_base = min_u64(bid_total, ask_total);
+
+    let mut k = 0;
+    while (k < nb) {
+        let e = c.bids.borrow_mut(k);
+        e.qty_sats = e.fill_base;
+        e.fill_base = 0;
+        e.frac = 0;
+        e.bumped = false;
+        k = k + 1;
+    };
+    let mut m = 0;
+    while (m < na) {
+        let e = c.asks.borrow_mut(m);
+        e.qty_sats = e.fill_base;
+        e.fill_base = 0;
+        e.frac = 0;
+        e.bumped = false;
+        m = m + 1;
+    };
+
+    c.alloc.filled_bid = 0;
+    c.alloc.filled_ask = 0;
+    c.alloc.pro_qty_bid = 0;
+    c.alloc.pro_qty_ask = 0;
+    c.alloc.residual_bid = 0;
+    c.alloc.residual_ask = 0;
+    c.alloc.awarded_bid = 0;
+    c.alloc.awarded_ask = 0;
+    c.alloc.remainder_side = SIDE_BID;
+    c.cursor = 0;
+    c.stage = STAGE_REALLOC_FULL;
 }
 
 // ── stage 5: publish the fills and their Merkle root ────────────────────────
@@ -910,7 +1075,9 @@ public fun verify_fill(
     index: u64,
     siblings: &vector<vector<u8>>,
 ): bool {
-    assert!(c.stage >= STAGE_SETTLING, ENotFinal);
+    // The two stages in which the root is final, NAMED — never `stage >= STAGE_SETTLING`. The
+    // stage ids are a wire format with appended values, so ordering them would be a bug.
+    assert!(c.stage == STAGE_SETTLING || c.stage == STAGE_DONE, ENotFinal);
     let mut current = fill_leaf_hash(f);
     let mut idx = index;
     let mut i = 0;
@@ -1052,6 +1219,14 @@ public fun stage_loading(): u8 { STAGE_LOADING }
 public fun stage_pricing(): u8 { STAGE_PRICING }
 
 public fun stage_rooting(): u8 { STAGE_ROOTING }
+
+public fun stage_truncate(): u8 { STAGE_TRUNCATE }
+
+public fun stage_realloc_full(): u8 { STAGE_REALLOC_FULL }
+
+public fun stage_realloc_prorata(): u8 { STAGE_REALLOC_PRORATA }
+
+public fun stage_realloc_remainder(): u8 { STAGE_REALLOC_REMAINDER }
 
 public fun stage_settling(): u8 { STAGE_SETTLING }
 

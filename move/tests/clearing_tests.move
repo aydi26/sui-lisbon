@@ -37,6 +37,11 @@ use std::unit_test::destroy;
 //             #[test] fun settle_reverts_on_a_value_leak()
 //             #[test] fun the_fee_is_an_explicit_credit_term()
 //             #[test] fun pro_rata_uses_largest_remainder_not_canonical_position()
+//             #[test] fun an_overfull_level_is_prorated_not_taken_by_the_first_submitter()
+//             #[test] fun price_priority_fills_the_better_level_and_prorates_the_marginal_one()
+//             #[test] fun an_underfunded_bid_cannot_move_the_clearing_price()
+//             #[test] fun truncation_rations_the_counterparty_symmetrically()
+//             #[test] fun truncation_and_reallocation_survive_a_budget_of_one()
 //             #[test] fun a_strictly_inside_order_is_rationed_when_matched_is_short()
 //             #[test] fun the_lower_price_wins_a_volume_tie()
 //             #[test] fun an_underfunded_account_is_truncated_not_failed()
@@ -644,6 +649,270 @@ fun pro_rata_uses_largest_remainder_not_canonical_position() {
     sc.end();
 }
 
+/// D2 — THE COUNTEREXAMPLE, BY HAND. Two bids of 60 at the same price against one ask of 50.
+///
+/// This test replaces the behaviour the module used to have. Greedy allocation filled the FIRST
+/// bid in canonical order for the whole 50 and left the second with nothing, which is precisely
+/// the "first" that uniform-price clearing is sold as not having. 25/25 is the claim being true.
+#[test]
+fun an_overfull_level_is_prorated_not_taken_by_the_first_submitter() {
+    let mut sc = ts::begin(ADMIN);
+    let (mut v, mut br) = new_world(&mut sc);
+    let mut clock = clock::create_for_testing(sc.ctx());
+
+    fund(&mut sc, &mut v, BOB, 0, 1_000);
+    fund(&mut sc, &mut v, ALICE, 0, 1_000);
+    fund(&mut sc, &mut v, CAROL, 1_000, 0);
+
+    // Canonical order is by address-as-u256, so BOB (0xB0B) is FIRST and would have been the
+    // sole winner under the old rule. Both bids sit at par; the ask sits at 0.50, which is the
+    // volume-maximising price, so BOTH bids are strictly inside the cross and share one level.
+    let orders = vector[
+        an_order(BOB, true, PAR, 60, 1),
+        an_order(ALICE, true, PAR, 60, 2),
+        an_order(CAROL, false, 50_000_000, 50, 3),
+    ];
+    let mut b = stage_batch(&mut sc, &mut br, &mut clock, &orders, 3);
+    let mut c = clearing::begin(&br, &mut b, &mut v, &clock, sc.ctx());
+    drive(&mut c, &mut b, &mut br, &mut v, 64);
+
+    assert!(clearing::clearing_price(&c) == 50_000_000, 0);
+    assert!(clearing::matched_base_sats(&c) == 50, 1);
+
+    // floor(50 × 60 / 120) = 25 each, and the fractions are both exactly 0, so no remainder sat
+    // is awarded and position never enters the arithmetic at all.
+    assert!(vault::escrow_base_of(&v, BOB) == 25, 2);
+    assert!(vault::escrow_base_of(&v, ALICE) == 25, 3);
+    // The old greedy rule produced 50 / 0. Assert that it is gone, not merely different.
+    assert!(vault::escrow_base_of(&v, BOB) != 50, 4);
+    assert!(vault::escrow_base_of(&v, ALICE) != 0, 5);
+
+    // Each bid pays ceil(25 × 0.50) = 13; the ask receives floor(50 × 0.50) = 25 and the 10 bps
+    // fee floors to 0, so the whole 1-sat surplus is the rounding dust the vault retains.
+    assert!(clearing::quote_paid_sats(&c) == 26, 6);
+    assert!(clearing::quote_recv_sats(&c) == 25, 7);
+    assert!(clearing::fee_quote_sats(&c) == 1, 8);
+    assert!(vault::escrow_base_of(&v, CAROL) == 950, 9);
+    assert!(clearing::total_debits(&c) == clearing::total_credits(&c), 10);
+
+    clearing::destroy_for_testing(c);
+    batch::destroy_batch_for_testing(b);
+    batch::destroy_registry_for_testing(br);
+    destroy(v);
+    clock::destroy_for_testing(clock);
+    sc.end();
+}
+
+/// D2, the general rule: price priority still decides WHICH level fills — only the level that
+/// does not fit is shared, and it is shared by size, not by arrival.
+#[test]
+fun price_priority_fills_the_better_level_and_prorates_the_marginal_one() {
+    let mut sc = ts::begin(ADMIN);
+    let (mut v, mut br) = new_world(&mut sc);
+    let mut clock = clock::create_for_testing(sc.ctx());
+
+    fund(&mut sc, &mut v, ALICE, 0, 1_000);
+    fund(&mut sc, &mut v, BOB, 0, 1_000);
+    fund(&mut sc, &mut v, DAVE, 0, 1_000);
+    fund(&mut sc, &mut v, CAROL, 1_000, 0);
+
+    // ALICE bids 1.10 for 10; BOB and DAVE bid par for 10 each; CAROL asks 0.90 for 15.
+    // p* = 0.90, matched = 15. ALICE's level (10) fits and fills FULLY. The par level totals 20
+    // against a residual of 5, so it is the marginal one: floor(5 × 10 / 20) = 2 each, fractions
+    // 10 and 10, one sat left over, tie broken by canonical position → BOB.
+    let orders = vector[
+        an_order(ALICE, true, 110_000_000, 10, 1),
+        an_order(BOB, true, PAR, 10, 2),
+        an_order(DAVE, true, PAR, 10, 3),
+        an_order(CAROL, false, 90_000_000, 15, 4),
+    ];
+    let mut b = stage_batch(&mut sc, &mut br, &mut clock, &orders, 4);
+    let mut c = clearing::begin(&br, &mut b, &mut v, &clock, sc.ctx());
+    drive(&mut c, &mut b, &mut br, &mut v, 64);
+
+    assert!(clearing::clearing_price(&c) == 90_000_000, 0);
+    assert!(clearing::matched_base_sats(&c) == 15, 1);
+    assert!(vault::escrow_base_of(&v, ALICE) == 10, 2);
+    assert!(vault::escrow_base_of(&v, BOB) == 3, 3);
+    assert!(vault::escrow_base_of(&v, DAVE) == 2, 4);
+    // Under the old greedy rule BOB took 5 and DAVE took 0, for no reason but being second.
+    assert!(vault::escrow_base_of(&v, DAVE) > 0, 5);
+    assert!(vault::escrow_base_of(&v, CAROL) == 985, 6);
+    assert!(clearing::total_debits(&c) == clearing::total_credits(&c), 7);
+
+    clearing::destroy_for_testing(c);
+    batch::destroy_batch_for_testing(b);
+    batch::destroy_registry_for_testing(br);
+    destroy(v);
+    clock::destroy_for_testing(clock);
+    sc.end();
+}
+
+// ── truncation timing (D4) ──────────────────────────────────────────────────
+
+/// The order set of the D4 counterexample: one bid nobody can fund at the price that maximises
+/// volume, and two asks. `funded` decides only how much quote the bidder holds.
+fun d4_orders(): vector<Order> {
+    vector[
+        an_order(ALICE, true, 120_000_000, 10, 1),
+        an_order(BOB, false, PAR, 5, 2),
+        an_order(CAROL, false, 120_000_000, 5, 3),
+    ]
+}
+
+/// D4 — THE COUNTEREXAMPLE, BY HAND. Truncating before price discovery let one account that
+/// could not pay set the price for everybody else, at a cost of two satoshis.
+///
+/// Submitted, the book crosses 10 against 10 at 1.20 with zero imbalance, so p* = 1.20. Truncate
+/// ALICE at LOAD — she holds 2 quote sats, enough for exactly 1 base sat at 1.20 — and demand
+/// collapses to 1: 1.00 then wins on the imbalance tie-break and BOB sells at 1.00 instead of
+/// 1.20. Discovering the price from the SUBMITTED set removes the lever entirely.
+#[test]
+fun an_underfunded_bid_cannot_move_the_clearing_price() {
+    let mut sc = ts::begin(ADMIN);
+    let orders = d4_orders();
+
+    // Run 1 — ALICE cannot fund what she bid for.
+    let mut clock1 = clock::create_for_testing(sc.ctx());
+    let (mut v1, mut br1) = new_world(&mut sc);
+    fund(&mut sc, &mut v1, ALICE, 0, 2);
+    fund(&mut sc, &mut v1, BOB, 100, 0);
+    fund(&mut sc, &mut v1, CAROL, 100, 0);
+    let mut b1 = stage_batch(&mut sc, &mut br1, &mut clock1, &orders, 3);
+    let mut c1 = clearing::begin(&br1, &mut b1, &mut v1, &clock1, sc.ctx());
+    drive(&mut c1, &mut b1, &mut br1, &mut v1, 64);
+
+    // Run 2 — the identical book, ALICE fully funded.
+    let mut clock2 = clock::create_for_testing(sc.ctx());
+    let (mut v2, mut br2) = new_world(&mut sc);
+    fund(&mut sc, &mut v2, ALICE, 0, 1_000);
+    fund(&mut sc, &mut v2, BOB, 100, 0);
+    fund(&mut sc, &mut v2, CAROL, 100, 0);
+    let mut b2 = stage_batch(&mut sc, &mut br2, &mut clock2, &orders, 3);
+    let mut c2 = clearing::begin(&br2, &mut b2, &mut v2, &clock2, sc.ctx());
+    drive(&mut c2, &mut b2, &mut br2, &mut v2, 64);
+
+    // THE POINT: the price is a function of the submitted book alone.
+    assert!(clearing::clearing_price(&c1) == clearing::clearing_price(&c2), 0);
+    assert!(clearing::clearing_price(&c1) == 120_000_000, 1);
+    // …and 1.00 is what the old load-time truncation produced from this very book.
+    assert!(clearing::clearing_price(&c1) != PAR, 2);
+
+    // Funding still decides SIZE, which is the part that should depend on it.
+    assert!(clearing::matched_base_sats(&c1) == 1, 3);
+    assert!(clearing::matched_base_sats(&c2) == 10, 4);
+
+    clearing::destroy_for_testing(c1);
+    clearing::destroy_for_testing(c2);
+    batch::destroy_batch_for_testing(b1);
+    batch::destroy_batch_for_testing(b2);
+    batch::destroy_registry_for_testing(br1);
+    batch::destroy_registry_for_testing(br2);
+    destroy(v1);
+    destroy(v2);
+    clock::destroy_for_testing(clock1);
+    clock::destroy_for_testing(clock2);
+    sc.end();
+}
+
+/// Truncation shortens one side, so the other has to come down with it or the batch would print
+/// base out of nothing. The counterparty is re-rationed by the SAME price-priority rule: BOB is
+/// the better ask and keeps the single sat; CAROL, one level behind, gets nothing.
+#[test]
+fun truncation_rations_the_counterparty_symmetrically() {
+    let mut sc = ts::begin(ADMIN);
+    let (mut v, mut br) = new_world(&mut sc);
+    let mut clock = clock::create_for_testing(sc.ctx());
+
+    fund(&mut sc, &mut v, ALICE, 0, 2);
+    fund(&mut sc, &mut v, BOB, 100, 0);
+    fund(&mut sc, &mut v, CAROL, 100, 0);
+
+    let orders = d4_orders();
+    let mut b = stage_batch(&mut sc, &mut br, &mut clock, &orders, 3);
+    let mut c = clearing::begin(&br, &mut b, &mut v, &clock, sc.ctx());
+    drive(&mut c, &mut b, &mut br, &mut v, 64);
+
+    assert!(clearing::clearing_price(&c) == 120_000_000, 0);
+    assert!(clearing::matched_base_sats(&c) == 1, 1);
+    assert!(clearing::fill_count(&c) == 2, 2);
+
+    // ALICE spent all 2 of her quote sats on the 1 base sat she could cover: ceil(1 × 1.20) = 2.
+    assert!(vault::escrow_quote_of(&v, ALICE) == 0, 3);
+    assert!(vault::escrow_base_of(&v, ALICE) == 1, 4);
+    // BOB, the better ask, sold exactly that 1 sat and received floor(1 × 1.20) = 1.
+    assert!(vault::escrow_base_of(&v, BOB) == 99, 5);
+    assert!(vault::escrow_quote_of(&v, BOB) == 1, 6);
+    // CAROL sits one level behind the marginal one and is untouched — not partially filled, not
+    // cancelled by position, simply outside the re-rationed volume.
+    assert!(vault::escrow_base_of(&v, CAROL) == 100, 7);
+    assert!(vault::escrow_quote_of(&v, CAROL) == 0, 8);
+
+    // Nothing was created or destroyed by the second allocation pass.
+    assert!(clearing::total_debits(&c) == clearing::total_credits(&c), 9);
+    assert!(clearing::total_debits(&c) == 3, 10);
+    assert!(vault::escrow_quote_of(&v, FEES) == 1, 11);
+
+    clearing::destroy_for_testing(c);
+    batch::destroy_batch_for_testing(b);
+    batch::destroy_registry_for_testing(br);
+    destroy(v);
+    clock::destroy_for_testing(clock);
+    sc.end();
+}
+
+/// The four stages the D4 fix added carry cursors like every other stage, so a clearing that is
+/// cut into single units of work has to reach the same root. The fully funded book never enters
+/// the truncation path at all, so this asserts it on the book that does.
+#[test]
+fun truncation_and_reallocation_survive_a_budget_of_one() {
+    let mut sc = ts::begin(ADMIN);
+    let orders = d4_orders();
+
+    let mut clock1 = clock::create_for_testing(sc.ctx());
+    let (mut v1, mut br1) = new_world(&mut sc);
+    fund(&mut sc, &mut v1, ALICE, 0, 2);
+    fund(&mut sc, &mut v1, BOB, 100, 0);
+    fund(&mut sc, &mut v1, CAROL, 100, 0);
+    let mut b1 = stage_batch(&mut sc, &mut br1, &mut clock1, &orders, 3);
+    let mut c1 = clearing::begin(&br1, &mut b1, &mut v1, &clock1, sc.ctx());
+    // Stop on the way through and confirm the truncation stage is actually visited — otherwise
+    // this test could pass while silently exercising nothing new.
+    drive_until_stage(&mut c1, &mut b1, &mut br1, &mut v1, clearing::stage_truncate());
+    // Pre-truncation, ALICE is allocated the whole 10 she asked for: the price came first.
+    let (_, who, _, _, allocated) = clearing::bid_entry_at(&c1, 0);
+    assert!(who == ALICE, 0);
+    assert!(allocated == 10, 1);
+    drive(&mut c1, &mut b1, &mut br1, &mut v1, 1);
+
+    let mut clock2 = clock::create_for_testing(sc.ctx());
+    let (mut v2, mut br2) = new_world(&mut sc);
+    fund(&mut sc, &mut v2, ALICE, 0, 2);
+    fund(&mut sc, &mut v2, BOB, 100, 0);
+    fund(&mut sc, &mut v2, CAROL, 100, 0);
+    let mut b2 = stage_batch(&mut sc, &mut br2, &mut clock2, &orders, 3);
+    let mut c2 = clearing::begin(&br2, &mut b2, &mut v2, &clock2, sc.ctx());
+    drive(&mut c2, &mut b2, &mut br2, &mut v2, 1_000);
+
+    assert!(clearing::clearing_price(&c1) == clearing::clearing_price(&c2), 2);
+    assert!(clearing::matched_base_sats(&c1) == clearing::matched_base_sats(&c2), 3);
+    assert!(clearing::fills_root(&c1) == clearing::fills_root(&c2), 4);
+    assert!(vault::escrow_base_of(&v1, ALICE) == vault::escrow_base_of(&v2, ALICE), 5);
+    assert!(vault::escrow_quote_of(&v1, BOB) == vault::escrow_quote_of(&v2, BOB), 6);
+
+    clearing::destroy_for_testing(c1);
+    clearing::destroy_for_testing(c2);
+    batch::destroy_batch_for_testing(b1);
+    batch::destroy_batch_for_testing(b2);
+    batch::destroy_registry_for_testing(br1);
+    batch::destroy_registry_for_testing(br2);
+    destroy(v1);
+    destroy(v2);
+    clock::destroy_for_testing(clock1);
+    clock::destroy_for_testing(clock2);
+    sc.end();
+}
+
 #[test]
 fun a_strictly_inside_order_is_rationed_when_matched_is_short() {
     let mut sc = ts::begin(ADMIN);
@@ -715,8 +984,9 @@ fun an_underfunded_account_is_truncated_not_failed() {
     let mut clock = clock::create_for_testing(sc.ctx());
 
     // ALICE bids for 1_000_000 sats at par but holds only 500_000 quote sats. There is no
-    // margin field on a sealed order — a margin would publish size at submit time — so the
-    // quantity is truncated deterministically at LOAD time instead.
+    // margin field on a sealed order — a margin would publish size at submit time — so the FILL
+    // is truncated deterministically instead, in STAGE_TRUNCATE, once the price is already
+    // fixed. The batch settles; only the under-funded fill is smaller.
     fund(&mut sc, &mut v, ALICE, 0, 500_000);
     fund(&mut sc, &mut v, BOB, 1_000_000, 0);
 

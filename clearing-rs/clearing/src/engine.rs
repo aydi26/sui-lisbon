@@ -2,8 +2,13 @@
 // @task       X.clearing-rs
 // @phase      3  [CUT-LINE CRITICAL]
 // @status     DONE
-// @spec       move/sources/clearing.move — THE WHOLE FILE. This is a line-for-line twin of the
-//             seven-stage state machine (L293-L953). Read that file before editing this one.
+// @spec       move/sources/clearing.move — ⚠ THIS IS NOW THE TWIN OF PACKAGE v1, NOT OF
+//             THE DEPLOYED CODE. The v2 upgrade fixed D2 (greedy -> pro-rata at the
+//             marginal level) and D4 (truncation moved from load time to AFTER price
+//             discovery, so an under-funded account can no longer move the uniform
+//             price). Move now matches `spec.rs` on both; this file matches neither
+//             side fully and is kept as the v1 reference the divergence census was
+//             measured against. `spec.rs` is the engine to compare Move to.
 // @spec       aphotic.md#9 (L432) <- "must produce bit-identical output to the Move one.
 //             Property-test them against each other; a divergence is a release blocker."
 // @spec       aphotic.md#7.2-the-batch · aphotic.md#10-invariants (Settlement)

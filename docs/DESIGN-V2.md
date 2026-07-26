@@ -545,3 +545,30 @@ right is the same human decision §5ter describes.
 a spec written ahead of the code and the code as shipped**. Do not present cross-implementation
 parity as a property of this system. Present it as what it currently is — a check we built,
 ran, and failed, three times over, which is precisely why it was worth building.
+
+---
+
+## 5ter — RESOLVED, in part. Package v2, 2026-07-26
+
+**D2 and D4 are closed, in the spec's favour, by upgrading Move.**
+`published-at` `0x653a8128…` · `original-id` `0xfa214c43…` · upgrade tx
+`GVMNWL56qNMR4WRSafnwfBaAFS3aSYvTjXuySFQowx6i` · 283 tests green.
+
+- **D2** — allocation at an overfull strictly-inside level is now **pro-rata**, not greedy.
+  Two bids of 60 at par against an ask of 50 now fill **25/25**, not 50/0. This was not a
+  rounding preference: greedy allocation put a *first* inside a batch that the whole pitch
+  says has none, so it made the product's central claim false. Pro-rata is what makes
+  *"uniform-price clearing does not make front-running hard, it makes it meaningless"* true.
+- **D4** — truncation moved from load time to **after** price discovery. An under-funded
+  account can no longer move the uniform clearing price for everyone; it can only reduce its
+  own fill, with the counterparty re-rationed symmetrically by the same rule. It was a
+  manipulation lever at near-zero cost — submit an order you cannot fund, move everyone's
+  price.
+
+**D1, D3 and D5 remain open**, and they are conventions rather than behaviours: the fill-leaf
+layout (73 vs 81 bytes), whether rounding dust folds into the fee, and u64 vs u128 price
+width. The clients follow Move on all three.
+
+⚠ **The parity claim still must not be made.** D1 alone means the Merkle roots can never
+match for a non-empty fill set. What changed is that the two divergences which *weakened the
+product* are gone; the three that remain are bookkeeping differences to align at leisure.

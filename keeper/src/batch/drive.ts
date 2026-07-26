@@ -70,7 +70,20 @@ import {
 
 import { readBatch } from './read.js';
 
-/** `clearing.move` stage ids, in the order `step` walks them. */
+/**
+ * `clearing.move` stage ids, INDEXED BY THE ON-CHAIN NUMBER — not by pipeline order.
+ *
+ * ⚠ 8–11 are appended, not inserted, and that is deliberate on the Move side: ids
+ * 0–7 keep exactly the meaning package v1 published, so an id is a wire format
+ * rather than a position. Renumbering to read prettily here would silently
+ * relabel every historical `ClearingStepped` event.
+ *
+ * The four tail stages exist because D4 was fixed: truncation moved from load
+ * time to AFTER price discovery, so a run now prices the submitted book, then
+ * truncates against the frozen funding snapshot, then re-runs the SAME
+ * allocation rule against the reduced matched volume. Hence a second
+ * FULL/PRORATA/REMAINDER trio.
+ */
 export const CLEARING_STAGES = [
   'LOADING',
   'PRICING',
@@ -80,6 +93,10 @@ export const CLEARING_STAGES = [
   'ROOTING',
   'SETTLING',
   'DONE',
+  'TRUNCATE',
+  'REALLOC_FULL',
+  'REALLOC_PRORATA',
+  'REALLOC_REMAINDER',
 ] as const;
 
 /** Units of work per transaction. Conservative; raise it when a batch is measured, not before. */
