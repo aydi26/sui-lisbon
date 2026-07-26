@@ -277,6 +277,10 @@ public fun share(registry: AdapterRegistry) {
 }
 
 /// One-call bootstrap: share the registry, hand the cap to the caller (the admin multisig).
+///
+/// The self-transfer is the point, not an accident: the publisher IS the admin multisig at
+/// genesis, and the cap has to land somewhere it can be spent from in the next transaction.
+#[allow(lint(self_transfer))]
 public fun create(ctx: &mut TxContext) {
     let (registry, cap) = new(ctx);
     share(registry);
@@ -428,6 +432,11 @@ public fun set_paused(cap: &AdapterAdminCap, registry: &mut AdapterRegistry, pau
 
 /// Open a deployment leg. The returned hot potato must be closed by `finish_deposit` in the same
 /// transaction, after the adapter's own `deposit` has actually returned share units.
+///
+/// `&mut` is deliberate even though this half of the leg only reads: it takes the registry
+/// EXCLUSIVELY for the duration of the hot potato, so no second leg can open against the same
+/// venue before `finish_deposit` closes this one. Weakening it to `&` would legalise that.
+#[allow(unused_mut_parameter)]
 public(package) fun begin_deposit<A>(
     registry: &mut AdapterRegistry,
     venue: ID,
@@ -484,6 +493,9 @@ public(package) fun finish_deposit(
 
 /// Open a recall leg. Deliberately NOT gated on `paused` or `enabled` (@invariant 2).
 /// `min_sats_out` is the value-preservation floor the closing call is held to.
+///
+/// `&mut` is deliberate — same exclusivity argument as `begin_deposit`.
+#[allow(unused_mut_parameter)]
 public(package) fun begin_withdraw<A>(
     registry: &mut AdapterRegistry,
     venue: ID,

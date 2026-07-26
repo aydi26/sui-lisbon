@@ -79,6 +79,16 @@ export function requireWired(entries: readonly (readonly [string, string])[]): v
   if (missing.length > 0) throw new NotWiredError(missing);
 }
 
+/**
+ * The non-throwing twin of {@link requireWired}, for rendering: one line naming
+ * what this build shipped without, or null when everything needed is present.
+ */
+export function wiringGap(entries: readonly (readonly [string, string])[]): string | null {
+  const missing = entries.filter(([, value]) => value.length === 0).map(([key]) => key);
+  if (missing.length === 0) return null;
+  return `${missing.join(' and ')} ${missing.length === 1 ? 'is' : 'are'} empty in this build, so there is nothing on chain to read.`;
+}
+
 /** `<package>::<module>::<fn>`. Throws rather than build a call against `''`. */
 export function aphoticTarget(moduleName: string, fn: string): string {
   requireWired([['VITE_APHOTIC_PACKAGE_ID', config.aphotic.packageId]]);

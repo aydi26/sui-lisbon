@@ -54,10 +54,12 @@ import {
   KeeperCapabilityBadge,
   LifecycleStepper,
   LimitationsPanel,
-  PendingCall,
   type LifecycleStage,
 } from '../../components';
 import { config } from '../../config';
+import AllocationPanel from './AllocationPanel';
+import NavPanel from './NavPanel';
+import PositionPanel from './PositionPanel';
 
 /**
  * The asynchronous deposit lifecycle, ERC-7540-shaped and adapted to Move. It is
@@ -176,32 +178,10 @@ export function VaultScreen() {
       <div className="ap-grid ap-grid--2">
         <EpochClock />
 
-        {/* TODO(F2): read the shared Vault — total assets, committed supply, the
-            last epoch price, and the connected address's shares and pending
-            receipts. Blocked on the v2 vault.move field layout. */}
-        <PendingCall
-          title="Your position"
-          targets={[
-            'vault::request_deposit',
-            'vault::claim_deposit',
-            'vault::request_redeem',
-            'vault::claim_redeem',
-          ]}
-          reason="The v2 vault is not published yet, so there is no object to read a share balance from. When it is, this panel shows your shares, your pending receipts and the epoch price they will settle at — and nothing before then."
-        >
-          <p style={{ color: 'var(--text-secondary)', fontSize: 'var(--text-sm)', margin: 0 }}>
-            Deposits and redemptions are asynchronous: you request, the epoch prices, then you
-            claim. Because the per-receipt conversion rounds down and round-down is subadditive, the
-            sum of the individual claims can never exceed the epoch total — the dust stays with the
-            vault, never with a claimant.
-          </p>
-          <p className="ap-reason" style={{ marginBottom: 0 }}>
-            A paused vault still lets holders leave: <code>request_redeem</code> and{' '}
-            <code>claim_redeem</code> do not check the pause flag. Pausing stops new risk, not the
-            exit.
-          </p>
-        </PendingCall>
+        <PositionPanel />
       </div>
+
+      <NavPanel />
 
       <section className="aphotic-card">
         <h3 style={{ fontSize: 'var(--text-md)', margin: 0 }}>How a deposit becomes shares</h3>
@@ -219,19 +199,7 @@ export function VaultScreen() {
       <div className="ap-grid ap-grid--2">
         <KeeperCapabilityBadge />
 
-        {/* TODO(F2): read the AdapterAllowlist object and render the pinned
-            destinations with their cap_bps. Blocked on allocate.move. */}
-        <PendingCall
-          title="Where idle capital may go"
-          targets={['allocate::allocate', 'allocate::deallocate']}
-          reason="The allowlist object id is not configured in this build, so there is nothing to enumerate. It is a list of pinned destinations with per-destination caps — not a list we can invent for a screenshot."
-        >
-          <p style={{ color: 'var(--text-secondary)', fontSize: 'var(--text-sm)', margin: 0 }}>
-            The keeper can move idle capital only to destinations on this allowlist, and only within
-            each destination&rsquo;s cap. The functions take no address parameter at all, so the
-            allowlist is not a filter applied to an argument — there is no argument.
-          </p>
-        </PendingCall>
+        <AllocationPanel />
       </div>
 
       <LimitationsPanel

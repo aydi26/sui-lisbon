@@ -129,10 +129,22 @@ function GoogleMark() {
   );
 }
 
+/**
+ * The two Sui browser wallets worth naming when NOTHING is detected. They are
+ * rendered as install links wearing a "not detected" pill — never as connect
+ * rows, and never as "installed". An empty list is a dead end; a list that lies
+ * is worse.
+ */
+const INSTALLABLE: readonly { readonly name: string; readonly url: string }[] = [
+  { name: 'Slush', url: 'https://slush.app' },
+  { name: 'Phantom', url: 'https://phantom.com/download' },
+];
+
 export function WalletGate({ children, purpose }: WalletGateProps) {
   const session = useAphoticSession();
   const [busy, setBusy] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
+  const [helpOpen, setHelpOpen] = useState(false);
 
   if (session.status === 'connected') return <>{children}</>;
 
@@ -154,46 +166,108 @@ export function WalletGate({ children, purpose }: WalletGateProps) {
 
   return (
     <div className="ap-gate">
-      <section className="ap-card ap-gate-card">
-        <header className="ap-gate-head">
-          <h1 className="ap-gate-title">Connect a wallet</h1>
+      <section className="ap-panel ap-gate-card" role="dialog" aria-labelledby="ap-gate-title">
+        <header className="ap-panel-head ap-gate-head">
+          <button
+            type="button"
+            className="ap-gate-icon"
+            aria-expanded={helpOpen}
+            title="What connecting does, and what it does not do"
+            onClick={() => setHelpOpen((open) => !open)}
+          >
+            <HelpMark />
+          </button>
+          <h1 className="ap-panel-title ap-gate-title" id="ap-gate-title">
+            Connect Wallet
+          </h1>
+          <a
+            className="ap-gate-icon"
+            href="/"
+            aria-label="Leave this screen"
+            title="Leave. /vault and /batch build transactions you sign, so they need an address; /verify needs none."
+          >
+            <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden focusable="false">
+              <path
+                d="m4.5 4.5 7 7m0-7-7 7"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+              />
+            </svg>
+          </a>
+        </header>
+
+        {helpOpen ? (
+          <p className="ap-gate-help">
+            A wallet here is an <strong>identity</strong>, not a permission. Aphotic never holds a
+            key, and no key held by this page or by the keeper can move another depositor&rsquo;s
+            funds. Redemption exits are composed in Move to an address pinned on chain, so even a
+            fully compromised keeper cannot redirect them.
+          </p>
+        ) : null}
+
+        <div className="ap-gate-body">
           <p className="ap-gate-sub">
             {purpose ?? 'Aphotic needs an address before it can build a transaction for you.'}
           </p>
-        </header>
 
-        <div className="ap-gate-body">
           <div className="ap-gate-section">
             <span className="ap-label">Browser wallet</span>
             {session.extensionWallets.length === 0 ? (
-              <p className="ap-gate-empty">
-                No wallet extension detected in this browser. Install{' '}
-                <a href="https://slush.app" target="_blank" rel="noreferrer">
-                  Slush
-                </a>{' '}
-                or{' '}
-                <a href="https://phantom.com/download" target="_blank" rel="noreferrer">
-                  Phantom
-                </a>
-                , then reload — this list is whatever your browser actually exposes, so a wallet
-                only appears once it is installed.
-              </p>
+              <>
+                <ul className="ap-rows ap-gate-rows">
+                  {INSTALLABLE.map((wallet) => (
+                    <li key={wallet.name}>
+                      <a
+                        className="ap-rowline"
+                        href={wallet.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        title={`${wallet.name} is not detected in this browser. This opens its download page; reload afterwards and it appears here.`}
+                      >
+                        <span className="ap-wallet-icon ap-wallet-icon--mono" aria-hidden>
+                          {wallet.name.slice(0, 1)}
+                        </span>
+                        <span className="ap-wallet-name">{wallet.name}</span>
+                        <span className="ap-badge">not detected</span>
+                        <Chevron />
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+                <p className="ap-gate-empty">
+                  This list is whatever your browser actually exposes through wallet-standard, so a
+                  wallet appears only once it is installed. Nothing above is labelled installed,
+                  because nothing above is.
+                </p>
+              </>
             ) : (
-              <ul className="ap-wallet-list">
+              <ul className="ap-rows ap-gate-rows">
                 {session.extensionWallets.map((wallet) => (
                   <li key={wallet.name}>
                     <button
                       type="button"
-                      className="ap-wallet-row"
+                      className="ap-rowline"
                       disabled={connecting}
-                      title={connecting ? 'A connection is already in progress' : `Connect ${wallet.name}`}
+                      title={
+                        connecting ? 'A connection is already in progress' : `Connect ${wallet.name}`
+                      }
                       onClick={() => void run(wallet.name, () => session.connectWallet(wallet))}
                     >
                       <WalletIcon wallet={wallet} />
                       <span className="ap-wallet-name">{wallet.name}</span>
-                      <span className="ap-wallet-cue" aria-hidden>
-                        {busy === wallet.name ? '…' : '→'}
-                      </span>
+                      {/* wallet-standard reported this wallet to the page, so it IS
+                          present. This pill is the one claim on the card a user acts
+                          on, and nothing else may ever wear it. */}
+                      <span className="ap-badge ap-badge--live">installed</span>
+                      {busy === wallet.name ? (
+                        <span className="ap-row-cue" aria-hidden>
+                          &hellip;
+                        </span>
+                      ) : (
+                        <Chevron />
+                      )}
                     </button>
                   </li>
                 ))}
@@ -207,23 +281,36 @@ export function WalletGate({ children, purpose }: WalletGateProps) {
 
           <div className="ap-gate-section">
             <span className="ap-label">No wallet</span>
-            <button
-              type="button"
-              className="ap-btn ap-btn--primary ap-btn--block"
-              disabled={connecting || !session.googleAvailable}
-              title={
-                session.zkLoginDisabledReason ??
-                (connecting
-                  ? 'A connection is already in progress'
-                  : 'Opens a Google popup; your Sui address is derived from the login, client-side')
-              }
-              onClick={() => void run('google', session.signIn)}
-            >
-              {busy === 'google' ? 'Opening Google…' : 'Sign in with Google'}
-            </button>
+            <ul className="ap-rows ap-gate-rows">
+              <li>
+                <button
+                  type="button"
+                  className="ap-rowline"
+                  disabled={connecting || !session.googleAvailable}
+                  title={
+                    session.zkLoginDisabledReason ??
+                    (connecting
+                      ? 'A connection is already in progress'
+                      : 'Opens a Google popup; your Sui address is derived from the login, client-side')
+                  }
+                  onClick={() => void run('google', session.signIn)}
+                >
+                  <span className="ap-wallet-icon ap-wallet-icon--mono" aria-hidden>
+                    <GoogleMark />
+                  </span>
+                  <span className="ap-wallet-name">
+                    {busy === 'google' ? 'Opening Google…' : 'Sign in with Google'}
+                  </span>
+                  <span className="ap-badge">zkLogin</span>
+                  <Chevron />
+                </button>
+              </li>
+            </ul>
             <p className="ap-gate-note">
               zkLogin derives a Sui address from your Google login in the browser. Google never sees
-              a key and never learns your address, and Aphotic never holds one either.
+              a key and never learns your address, and Aphotic never holds one either. It is a
+              different trust story from a browser wallet, which is why it sits below the rule
+              rather than in the list.
             </p>
             {session.problems.length === 0 ? null : (
               <ul className="ap-gate-problems">

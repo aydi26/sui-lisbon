@@ -378,3 +378,54 @@ sui client object 0xbe433a2726fc61391d180ce55cdb8177f9647760b23a7704d42e3b5b9bb7
 sui client object 0xf03832c92d4bf745ac720c52fe9198fc928028ce51991059bfe59c0e4ef374e8
 node scripts/verify-onchain.mjs
 ```
+
+---
+
+## APHOTIC v2 — PUBLISHED 2026-07-26 (the second attempt)
+
+⚠ **Never overwrite a row above.** This section is appended so every earlier journal entry
+stays resolvable against the ids it was written with.
+
+| What | Id / digest |
+|---|---|
+| package (`published-at` **and** `original-id`) | `0xfa214c431cee927137422f042ed679eb6180c226d30fa3e98c6bea9e09597df2` |
+| publish digest | `DLW43Kvc8czoiWAfxWXomuHXmT7Cuysp5bSnkmsHBuhH` — `success` |
+| `UpgradeCap` | `0x12b8e8d6b4a49ac3027e5a3c2b33f9e9c8609254b5baa676dbb47ef41674c277` → deployer |
+| `TreasuryCap<APHOTIC_LP>` | `0x6dd359c759575bcc50e3ca7bf38ef21a4d6fe8f11b5cd64ca57a629547a2f520` — **consumed by `vault::create`** |
+| `Currency<APHOTIC_LP>` | `0x03b1814e4b7df25d8b309071a0d7d2da7938dd46f7c29d0aef82db6bed81378e` |
+| shared **`Vault<BTC, DBUSDC, APHOTIC_LP>`** | `0x91660fb483ec6c8ee4f9c2b4be04872b5808955fdcda962b5be5905989b3efcf` — digest `AYe5Y2EGEC1VTySuHX2jYHRSECwr1FfvGDfCBWmLdrpV` |
+| `AdminCap` | `0x3bb58bd51acd3f5caa26bc15b87fa295b4862bdcc4b60755890d911ced9ebbc1` |
+| `KeeperCap` | `0xcfbdfc8d86535786b765b803249fff505bed06b1731fba491acf17f76de87822` |
+| shared **`BatchRegistry`** | `0x9967881e88d5e22fc790d3b761e8ca55c8fd87d1a07baa11eb4a4352cd356b35` — digest `Fn4rqfdffQcMUaw1izWGDwtnA8TzfVfBnk6kxJ3YV8BV` |
+
+Published-at and original-id are equal today because this is a fresh publish. They **diverge on
+the first upgrade** — type arguments resolve against the original forever while `moveCall`
+targets the current — so they are wired as two separate variables everywhere.
+
+### Why there are three shared objects and not seven
+
+`NoteTree`, `NullifierSet`, `DenomLadder`, `CapRegistry` and both `BalanceBook`s are embedded in
+`Vault` **by value**. They are struct fields and have no object id, ever. So
+`VITE_GOVERNANCE_ID`, `VITE_NOTE_TREE_ID`, `VITE_NULLIFIER_SET_ID` and `VITE_BALANCE_LEDGER_ID`
+all take the **vault id**. Only `VAULT`, `BATCH_REGISTRY` and `ADAPTER_ALLOWLIST` name distinct
+objects.
+
+### Two rejections it took to get here
+
+**1. `VMVerificationOrDeserializationError in command 0`** with `sui move build` clean and all
+tests green. Bisected by subset dry-runs: nine of ten modules published, `clearing` alone failed,
+and a module holding only its structs with every body stubbed to `abort 0` still failed — ruling
+out complexity. Measured directly against the chain: **a struct with 32 fields publishes, 33 does
+not.** `Clearing` had 39, and was refactored into nested `Pricing`/`Allocation` structs.
+
+⚠ **`sui move build` does not run the verifier that catches this.** Gate publishes on
+`sui client publish --dry-run` instead. Note `vault::Vault` sits at **31 fields — one under the
+cap**.
+
+**2. `vault::create<B,Q,S>` consumes a `TreasuryCap<S>` and no LP share coin existed.** The only
+`S` in the tree was a `#[test_only]` witness. `aphotic_lp.move` was added with the standard
+one-time-witness shape, 8 decimals to match sats, so `init` mints the cap at publish time.
+
+**3. `UnusedValueWithoutDrop`** on the first `vault::create` call: it returns a `Vault` by value
+which must be shared in the **same** PTB, and `sui client call` cannot chain. Done with
+`sui client ptb --move-call … --assign v --move-call …::share v`.

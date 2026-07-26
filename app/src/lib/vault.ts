@@ -56,6 +56,9 @@
 import { bcs } from '@mysten/sui/bcs';
 import type { Transaction, TransactionObjectArgument } from '@mysten/sui/transactions';
 
+import { BcsWriter } from '@aphotic/sdk/bcs';
+import { blake2b256 } from '@aphotic/sdk/hash';
+
 import { config } from '../config';
 import {
   aphoticTarget,
@@ -434,6 +437,79 @@ export async function listReceipts(
     });
   }
   return rows.sort((a, b) => (a.epoch === b.epoch ? 0 : a.epoch < b.epoch ? -1 : 1));
+}
+
+// ── the digest, recomputed in the browser ───────────────────────────────────
+
+/**
+ * `blake2b256(bcs(NavProposal))` — the exact expression `vault::proposal_digest`
+ * evaluates, rebuilt from the itemised legs.
+ *
+ * This is the point of the NAV panel: the admin multisig signs a digest over
+ * these ten fields, and anyone can take the fields the contract exposes, hash
+ * them here, and check that the number being approved is the number that was
+ * proposed. Field order is the struct's declaration order — BCS has no names.
+ */
+export function proposalDigest(p: {
+  readonly epoch: bigint;
+  readonly idleSats: bigint;
+  readonly deployedSats: bigint;
+  readonly inFlightSats: bigint;
+  readonly nativeBtcSats: bigint;
+  readonly hashiClaimsSats: bigint;
+  readonly clearingPrice: bigint;
+  readonly bookMid: bigint;
+  readonly proposedAtMs: bigint;
+  readonly proposer: string;
+}): Uint8Array {
+  return blake2b256(
+    new BcsWriter()
+      .u64(p.epoch)
+      .u64(p.idleSats)
+      .u64(p.deployedSats)
+      .u64(p.inFlightSats)
+      .u64(p.nativeBtcSats)
+      .u64(p.hashiClaimsSats)
+      .u64(p.clearingPrice)
+      .u64(p.bookMid)
+      .u64(p.proposedAtMs)
+      .address(p.proposer)
+      .toBytes(),
+  );
+}
+
+/** `nav_assets_of` — the four legs, summed. The browser's own total. */
+export function proposalNavAssets(p: {
+  readonly idleSats: bigint;
+  readonly deployedSats: bigint;
+  readonly inFlightSats: bigint;
+  readonly nativeBtcSats: bigint;
+}): bigint {
+  return p.idleSats + p.deployedSats + p.inFlightSats + p.nativeBtcSats;
+}
+
+// ── coins ───────────────────────────────────────────────────────────────────
+
+export interface CoinRow {
+  readonly objectId: string;
+  readonly balance: bigint;
+}
+
+/** Injected in tests; live it is one `listCoins` page. */
+export type ListCoinsFn = (owner: string, coinType: string) => Promise<readonly CoinRow[]>;
+
+export async function listCoinsOf(
+  owner: string,
+  coinType: string,
+  opts?: { readonly listCoins?: ListCoinsFn },
+): Promise<readonly CoinRow[]> {
+  if (opts?.listCoins !== undefined) return opts.listCoins(owner, coinType);
+  const page = await getSuiClient().core.listCoins({ owner, coinType });
+  return page.objects.map((c) => ({ objectId: c.objectId, balance: BigInt(c.balance) }));
+}
+
+export function totalBalance(coins: readonly CoinRow[]): bigint {
+  return coins.reduce((sum, c) => sum + c.balance, 0n);
 }
 
 // ── the rounding twin ───────────────────────────────────────────────────────

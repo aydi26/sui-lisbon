@@ -54,29 +54,23 @@
 // @verify     cd app && npm run build
 // └── END CONTRACT ───────────────────────────────────────────────────────────
 
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import {
-  DenominationLadder,
   EpochClock,
   LifecycleStepper,
   LimitationsPanel,
-  PendingCall,
-  epochClockState,
-  type Denomination,
   type LifecycleStage,
 } from '../../components';
 import { config } from '../../config';
-
-type Side = 'bid' | 'ask';
-
-/**
- * Limit prices are expressed as a coarse discount to par, in basis points. This
- * is a ladder for the same reason sizes are: a precise limit price is as
- * fingerprinting as a precise amount, and a fingerprinted order in a uniform
- * batch is an order with an anonymity set of one.
- */
-const DISCOUNT_STEPS_BPS: readonly number[] = [0, 5, 10, 25, 50, 100];
+import { readLiveBatch, type LiveBatch } from '../../lib/batch';
+import { wiringGap } from '../../lib/moveRead';
+import { useAsyncAction } from '../../lib/useAsyncAction';
+import { readVaultTypeArgs, type VaultTypeArgs } from '../../lib/vault';
+import FillsPanel from './FillsPanel';
+import LifecyclePanel from './LifecyclePanel';
+import NotePanel from './NotePanel';
+import OrderTicket from './OrderTicket';
 
 const BATCH_STAGES: readonly LifecycleStage[] = [
   {
@@ -189,102 +183,27 @@ function SealCommitteePanel() {
   );
 }
 
-function OrderTicket() {
-  const [side, setSide] = useState<Side>('bid');
-  const [denom, setDenom] = useState<Denomination | null>(null);
-  const [discountBps, setDiscountBps] = useState<number>(DISCOUNT_STEPS_BPS[1]);
-
-  const clock = epochClockState(Date.now());
-  const cutoff = clock.phase === 'cutoff';
-  const packageWired = config.aphotic.packageId.length > 0;
-  const sealWired = config.seal.keyServerIds.length > 0;
-
-  const blocked = !packageWired
-    ? 'No package id is configured in this build, so there is no batch to submit to.'
-    : !sealWired
-      ? 'No Seal key servers are configured, so the order cannot be encrypted — and we never submit one in the clear.'
-      : cutoff
-        ? 'Submission is closed for the last 60 seconds before the boundary, so no submit can race an early key release.'
-        : null;
-
-  return (
-    <section className="aphotic-card">
-      <h3 style={{ fontSize: 'var(--text-md)', margin: 0 }}>Place a sealed order</h3>
-
-      <div className="ap-row" role="group" aria-label="Side">
-        {(['bid', 'ask'] as const).map((s) => (
-          <button
-            key={s}
-            type="button"
-            className={side === s ? 'ap-btn ap-btn--primary' : 'ap-btn'}
-            aria-pressed={side === s}
-            onClick={() => setSide(s)}
-          >
-            {s === 'bid' ? 'Buy hBTC' : 'Sell hBTC'}
-          </button>
-        ))}
-      </div>
-
-      <DenominationLadder
-        selected={denom?.index ?? null}
-        onSelect={setDenom}
-        label="Size"
-      />
-
-      <div className="ap-ladder">
-        <span className="ap-eyebrow">Limit · discount to par</span>
-        <div className="ap-ladder-row">
-          {DISCOUNT_STEPS_BPS.map((bps) => (
-            <button
-              key={bps}
-              type="button"
-              className={discountBps === bps ? 'ap-btn ap-btn--primary' : 'ap-btn'}
-              aria-pressed={discountBps === bps}
-              onClick={() => setDiscountBps(bps)}
-            >
-              <span className="ap-num">{bps === 0 ? 'par' : `−${bps} bps`}</span>
-            </button>
-          ))}
-        </div>
-        <p className="ap-reason">
-          {side === 'bid'
-            ? 'You pay at most par minus this discount. Orders strictly inside the cross fill fully; orders exactly at the clearing price are pro-rated.'
-            : 'You accept at least par minus this discount. Limit safety is asserted per fill, not merely by construction.'}{' '}
-          The price ladder is coarse for the same reason the size ladder is: a precise limit price
-          fingerprints an order just as effectively as a precise amount.
-        </p>
-      </div>
-
-      {/* TODO(F3): encrypt the order under the Seal time-lock identity
-          (close_ms ‖ policy_version ‖ batch id, all little-endian), PUT the
-          ciphertext to Walrus, and build the batch::submit_order PTB carrying
-          blake2b256(bcs(Order)) plus the blob id. Blocked on batch.move's entry
-          signature and on the shared sdk identity encoder. */}
-      <div className="ap-row">
-        <button type="button" className="ap-btn ap-btn--primary" disabled>
-          Encrypt and submit
-        </button>
-        <span className="aphotic-muted">
-          {denom === null ? 'Choose a denomination.' : `${denom.label} · ${side}`}
-        </span>
-      </div>
-
-      <p className="ap-reason ap-reason--warn">
-        {blocked ??
-          'The submit path is not wired yet: it needs the batch entry signature and the shared Seal identity encoder. The control stays disabled rather than opening a wallet prompt that cannot succeed.'}
-      </p>
-
-      <p className="ap-reason">
-        Nothing you choose here is written on-chain in the clear. What lands is a commitment to the
-        plaintext order, a Walrus blob id, and a reference to your internal balance — no amount, no
-        side, no price. The commitment binds the plaintext rather than the ciphertext, so nobody can
-        publish one blob and later claim a different order decrypted from it.
-      </p>
-    </section>
-  );
-}
-
 export function BatchScreen() {
+  const live = useAsyncAction<LiveBatch>();
+  const typeArgs = useAsyncAction<VaultTypeArgs>();
+  // The submit cut-off is a CONTRACT rule, so the controls that depend on it need
+  // a clock. One tick a second, and only while this screen is mounted.
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNowMs(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  const registryGap = wiringGap([
+    ['VITE_APHOTIC_PACKAGE_ID', config.aphotic.packageId],
+    ['VITE_BATCH_REGISTRY_ID', config.aphotic.batchRegistryId],
+  ]);
+
+  const reload = useCallback(() => {
+    void live.run(readLiveBatch);
+    void typeArgs.run(readVaultTypeArgs);
+  }, [live, typeArgs]);
+
   return (
     <div className="ap-page">
       <header className="ap-screen-head">
@@ -300,43 +219,63 @@ export function BatchScreen() {
         <WhyPanel />
       </div>
 
-      <div className="ap-grid ap-grid--2">
-        <OrderTicket />
-
-        <div style={{ display: 'grid', gap: 'var(--space-5)' }}>
-          {/* TODO(F3): read the BalanceLedger for the connected address and show
-              the per-denomination note counts the ladder should offer. */}
-          <PendingCall
-            title="Your internal balance"
-            targets={['balance::deposit', 'balance::withdraw', 'notes::append_commitment']}
-            reason="The balance ledger object id is not configured in this build, so there are no note counts to show."
-          >
-            <p style={{ color: 'var(--text-secondary)', fontSize: 'var(--text-sm)', margin: 0 }}>
-              Orders draw on a persistent internal balance that is topped up independently of
-              trading. That is not a convenience: funding escrow at order time would leak timing
-              even when the denominations hide size. Escrow custody also sits outside the
-              vault&rsquo;s NAV, so a settlement cannot move assets between the moment a NAV is
-              proposed and the moment it is approved.
-            </p>
-          </PendingCall>
-
-          {/* TODO(F3): read the BatchRegistry — the live batch id, its state, its
-              order count against MAX_BATCH_SIZE, and its close_ms. */}
-          <PendingCall
-            title="The live batch"
-            targets={['batch::open_batch', 'batch::close_batch', 'batch::reveal_order']}
-            reason="No batch registry is configured, so there is no live batch to describe. The countdown above is a property of the calendar and is honest on its own."
-          >
-            <p style={{ color: 'var(--text-secondary)', fontSize: 'var(--text-sm)', margin: 0 }}>
-              A batch holds at most {config.constants.maxBatchSize} orders, with a hard ceiling of{' '}
-              {config.constants.hardMaxBatchSize} asserted in the setter. The binding limits are a
-              thousand object-store entries and 1,024 events per transaction — neither can be raised
-              by paying more gas, which is why settlement advances an on-chain cursor and resumes
-              across transactions.
-            </p>
-          </PendingCall>
+      <section className="ap-panel">
+        <div className="ap-panel-head">
+          <h3 className="ap-panel-title">The batch, as it stands</h3>
+          <div className="ap-row">
+            {live.state.data?.registry === undefined ? null : (
+              <span className="ap-badge">
+                policy v{live.state.data.registry.policyVersion.toString()} ·{' '}
+                {live.state.data.registry.liveBatches.toString()} live
+              </span>
+            )}
+            <button
+              type="button"
+              className="ap-btn ap-btn--primary"
+              disabled={registryGap !== null || live.state.status === 'loading'}
+              title={registryGap ?? 'Read the registry and find the batch that was last opened'}
+              onClick={() => void live.run(readLiveBatch)}
+            >
+              {live.state.status === 'loading' ? 'Reading…' : 'Read the live batch'}
+            </button>
+          </div>
         </div>
+        <div className="ap-panel-body">
+          {registryGap !== null ? (
+            <p className="ap-reason ap-reason--warn">
+              {registryGap} The countdown above is a property of the calendar and is honest on its
+              own; everything else on this screen waits for a registry to read.
+            </p>
+          ) : live.state.error !== null ? (
+            <p className="ap-reason ap-reason--error">{live.state.error}</p>
+          ) : live.state.data === null ? (
+            <p className="ap-reason">
+              Nothing on this screen reads on load. One press fetches the registry, discovers the
+              batch object from the last <code>BatchOpened</code> event, and reads its state — after
+              which the panels below can act.
+            </p>
+          ) : (
+            <p className="ap-reason">
+              Cadence {(Number(live.state.data.registry.cadenceMs) / 3_600_000).toFixed(0)} h, offset{' '}
+              {(Number(live.state.data.registry.offsetMs) / 3_600_000).toFixed(0)} h — 06:00 and
+              18:00 UTC. Submission stops{' '}
+              {(Number(live.state.data.registry.submitCutoffMs) / 1000).toFixed(0)} s before close and
+              the reveal window runs{' '}
+              {(Number(live.state.data.registry.revealGraceMs) / 60_000).toFixed(0)} minutes after
+              it. None of those is chosen per batch; they are governed parameters on the registry.
+            </p>
+          )}
+        </div>
+      </section>
+
+      <div className="ap-grid ap-grid--2">
+        <OrderTicket live={live.state.data} nowMs={nowMs} onSubmitted={reload} />
+        <NotePanel typeArgs={typeArgs.state.data} onChanged={reload} />
       </div>
+
+      <LifecyclePanel live={live.state.data} nowMs={nowMs} onChanged={reload} />
+
+      <FillsPanel />
 
       <section className="aphotic-card">
         <h3 style={{ fontSize: 'var(--text-md)', margin: 0 }}>One window, four states</h3>

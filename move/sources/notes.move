@@ -593,8 +593,10 @@ public fun mint_note(
     ctx: &mut TxContext,
 ): Note {
     assert!(caps::vault_cap_vault_id(cap) == ladder.vault_id, ECapVaultMismatch);
-    // Validity of the tier, and nothing else, is what a note records.
-    denom_sats(ladder, denom_index);
+    // Validity of the tier, and nothing else, is what a note records. `denom_sats` aborts on an
+    // out-of-range tier; the amount it returns is deliberately discarded (a `Note` stores the
+    // INDEX, never the amount, so a re-denominated ladder cannot rewrite an outstanding note).
+    let _ = denom_sats(ladder, denom_index);
 
     let note = Note { id: object::new(ctx), denom_index };
     ladder.notes_outstanding = ladder.notes_outstanding + 1;

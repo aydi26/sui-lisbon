@@ -521,6 +521,30 @@ export async function discoverClearing(opts?: {
   );
 }
 
+export interface LiveBatch {
+  readonly registry: RegistrySnapshot;
+  /** Null when no batch has ever been opened — a state, not a failure. */
+  readonly batch: BatchSnapshot | null;
+}
+
+/**
+ * The registry plus whatever batch was most recently opened.
+ *
+ * Two round trips by construction: the object id has to be discovered from an
+ * event before the batch can be read at all.
+ */
+export async function readLiveBatch(
+  opts?: ReadOptions & {
+    readonly events?: EventQueryFn;
+    readonly objectChanges?: ObjectChangesFn;
+  },
+): Promise<LiveBatch> {
+  const registry = await readRegistry(opts);
+  const objectId = await discoverLiveBatch(opts);
+  const batch = objectId === null ? null : await readBatch(objectId, opts);
+  return { registry, batch };
+}
+
 export interface BatchHistoryRow {
   readonly batchId: bigint;
   readonly openedAtMs: number | null;

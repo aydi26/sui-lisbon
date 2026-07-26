@@ -64,7 +64,7 @@ These are load-bearing, not disclaimers. They appear in the product UI as well a
 
 | | State |
 |---|---|
-| Move package `aphotic` — 10 modules, 275 tests | **written and green — and NOT published.** A publish was attempted and the validator rejected it: `VMVerificationOrDeserializationError`. `clearing::Clearing` declares 39 fields against a **32-field verifier cap**, and `sui move build` does not run that verifier. Bisection, proof and fix in [`docs/SUBMISSION.md` §5](docs/SUBMISSION.md). |
+| Move package `aphotic` — 10 modules, 275 tests | **PUBLISHED AND LIVE.** package `0xfa214c431cee927137422f042ed679eb6180c226d30fa3e98c6bea9e09597df2` (published-at == original-id, fresh publish, digest `DLW43Kvc8czoiWAfxWXomuHXmT7Cuysp5bSnkmsHBuhH`) · shared `Vault` `0x91660fb483ec6c8ee4f9c2b4be04872b5808955fdcda962b5be5905989b3efcf` · shared `BatchRegistry` `0x9967881e88d5e22fc790d3b761e8ca55c8fd87d1a07baa11eb4a4352cd356b35`. The first publish attempt WAS rejected — `VMVerificationOrDeserializationError`, because `clearing::Clearing` declared 39 fields against a **32-field verifier cap that `sui move build` never runs**. It was refactored into nested structs, and a second blocker behind it (no LP share coin, so `vault::create` had no `TreasuryCap` to consume) was closed by adding `aphotic_lp.move`. Bisection in `docs/SUBMISSION.md` §5.|
 | `aphotic_lending` — our hBTC counterparty | **published and live**: `0x39d038aea02ccc0bd25e97c7f1a715e87dd6ccae19b0bf9ac255379634b6ea8c`, shared `Market` `0x220ba0e5…` (isv `953314524`), publish tx `3PCybDwuxCCxEace2zSrNutPRSNvEKAazPZjbKPTqnJZ`. Live and empty — we cannot mint hBTC. |
 | `sdk/` clearing · Merkle · Seal identity · limiter | **written and green**, 376 tests, 46 shared golden fixtures |
 | Move ↔ TypeScript clearing parity | **FAILS, and we found it ourselves.** The TypeScript, the fixtures and the Rust spec engine all agree; **Move differs**, on 15 % of 4 000 seeded books. Five named divergences with hand-derived counterexamples in `clearing-rs/tests/divergence.rs` and `docs/DESIGN-V2.md` §5ter. The worst is structural: the two fill-leaf layouts are 73 and 81 bytes, so the Merkle roots can **never** match. This is the release blocker `aphotic.md` §9 says it is, and it is open. |
@@ -97,7 +97,7 @@ same way, with the same uninformative error.
 | `lending/` | A **second** Move package, `aphotic_lending` — our own `hBTC` lending counterparty, with the honesty disclosure returned on-chain. Published. |
 | `sdk/` | The single home of every algorithm that must be byte-identical across languages: clearing, the Merkle tree, the Seal inner id, the limiter. A second copy anywhere is the bug. |
 | `keeper/` | TypeScript, one process. Proposes NAV, cranks the schedule — and holds **no discretion**. |
-| `clearing-rs/` | The offline Rust clearing twin. Source; not built here. |
+| `clearing-rs/` | The offline Rust clearing twin — **two** engines, one per candidate algorithm, plus `sim/`. 79 tests. ⚠ `cargo` is installed but not on the default PATH: `export PATH="$HOME/.cargo/bin:$PATH"`. |
 | `app/` | React 19 + Vite 6 — `/` landing, `/vault`, `/batch`, `/verify`, plus its own fully offline vitest suite. |
 | `scripts/` | `gates.{ps1,sh}` (12 invariant gates), `verify-all.ps1` (master gate, 12 steps), `verify-onchain.mjs` (live testnet assertions), `measure-clearing.mjs`, `register-deposit.ps1`, `seed-book.mjs`, `check-enoki.mjs`. |
 | `docs/` | All specifications. See the read order below. |
@@ -134,8 +134,14 @@ cd app     && npm test                          # 12 files · 157 tests, fully o
 cd app     && npm run dev                       # http://localhost:5173
 ```
 
-**275 Move + 37 lending + 376 SDK + 252 keeper + 157 app = 1 097 tests**, all green on 2026-07-26,
-plus 12 structural gates that agree verdict-for-verdict across both shells.
+```bash
+# The Rust clearing twin — cargo is installed but NOT on the default PATH here
+export PATH="$HOME/.cargo/bin:$PATH"
+cd clearing-rs && cargo test                    # 79 passed, 0 failed
+```
+
+**275 Move + 37 lending + 376 SDK + 252 keeper + 157 app + 79 Rust = 1 176 tests**, all green on
+2026-07-26, plus 12 structural gates that agree verdict-for-verdict across both shells.
 
 Copy `keeper/.env.example` → `keeper/.env` and `app/.env.example` → `app/.env`. `keeper/.env` is gitignored and is the **only** file that may ever hold a private key.
 
@@ -154,7 +160,7 @@ cd keeper && node dist/index.js clear < orders.json   # uniform-price clearing, 
 ## VERIFY
 
 ```bash
-powershell -NoProfile -File scripts/verify-all.ps1   # the master gate, 12 steps
+powershell -NoProfile -File scripts/verify-all.ps1   # the master gate — 12 PASS · 0 FAIL · 0 SKIP
 bash scripts/gates.sh                                # 12 PASS · 0 FAIL · 0 SKIP
 powershell -NoProfile -File scripts/gates.ps1        # must agree, verdict for verdict
 node scripts/verify-onchain.mjs                      # 28 PASS · 0 FAIL · 0 WARN · 4 INFO (needs network)

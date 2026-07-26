@@ -21,19 +21,23 @@ concurrently.
 | Move tests | `cd move && sui move test` | **275 passed, 0 failed** |
 | Lending package | `cd lending && sui move test` | **37 passed, 0 failed** |
 | SDK | `cd sdk && npm test` | **15 files · 376 tests** |
-| Keeper | `cd keeper && npm test` | **10 files · 178 tests** |
-| App | `cd app && npm test` | **12 files · 152 tests** |
+| Keeper | `cd keeper && npm test` | **16 files · 252 tests** |
+| App | `cd app && npm test` | **12 files · 157 tests** |
 | Gates | `bash scripts/gates.sh` | **12 PASS · 0 FAIL · 0 SKIP** |
 | On-chain | `node scripts/verify-onchain.mjs` | **28 PASS · 0 FAIL · 0 WARN · 4 INFO** |
-| Master gate | `scripts/verify-all.ps1` | **9 PASS · 3 FAIL · 0 SKIP** ⚠ |
+| Rust twin | `cd clearing-rs && cargo test` | **79 passed, 0 failed** ⚠ needs `PATH="$HOME/.cargo/bin:$PATH"` |
+| Master gate | `scripts/verify-all.ps1` | **12 PASS · 0 FAIL · 0 SKIP** (of 12 steps) |
 
-⚠ **The three master-gate failures were `keeper typecheck`, `keeper build` and `app build`** — all
-`tsc` errors in files a concurrent agent was mid-write (`keeper/src/batch/open.ts`,
-`keeper/src/vault/receipts.ts`, `app/src/lib/notes.ts`). Every *test* suite was green. **Re-run
-`verify-all.ps1` before the demo; if a build is still red, do not run `npm run dev` on stage — use
-the already-built artifacts or the §6 fallback.**
+**1 176 tests green in total** (275 Move + 37 lending + 376 SDK + 252 keeper + 157 app + 79 Rust),
+and the master gate is clean end to end.
 
-⚠ **The v2 `aphotic` package is NOT published, and it cannot be published as the tree stands.** A
+⚠ **The tree was being rewritten while this was measured**, so treat every figure as timestamped. In
+~40 minutes keeper went 178 → 252 tests and app 152 → 157, and an earlier `verify-all.ps1` run showed
+9 PASS · 3 FAIL — all three `tsc` errors in files an agent was mid-write, all three green on re-run.
+**Re-run `verify-all.ps1` before you present and use its numbers, not these.** If a build is red on
+the day, do not run `npm run dev` on stage — use the built artifacts or the §6 fallback.
+
+⚠ **The v2 `aphotic` package IS PUBLISHED — see the ids below. It took two attempts; the first was rejected by the validator and the bisection is the best technical story here.** A
 publish was attempted on 2026-07-26 and the validator rejected it with
 `VMVerificationOrDeserializationError` — `clearing::Clearing` declares 39 fields against a 32-field
 verifier cap that `sui move build` never checks. A second, independent blocker sits behind it (no LP
@@ -83,7 +87,7 @@ So say it before they ask.
 | `sui move test` — 275 tests | ✅ **LIVE** | ~18 s |
 | The published `aphotic_lending` market | ✅ **LIVE** | `0x39d038ae…`, and **empty** — say so |
 | Submit / close / reveal / clear **on chain** | ⚠ **needs the v2 package published** | see §0 and §6 |
-| Move ↔ TypeScript parity **L3** (`devInspect`, BCS bytes) | ⚠ **needs the v2 package published** | L1 (46 fixtures) and L2 (10 000 seeded cases) run today |
+| **Move ↔ TypeScript clearing parity** | ❌ **DOES NOT HOLD — do not claim it** | a third, independent Rust implementation found Move and the TypeScript disagree on **15 % of 4 000 seeded books**, five named divergences. **Volunteer this; never present parity as achieved.** See §5, story three. |
 | **BTC in — a signet deposit minting hBTC** | ❌ **~70+ min** | 6 confirmations + a mandatory 10-minute delay. **Pre-stage.** |
 | **BTC out — a redemption confirming on signet** | ❌ **~1.5–2 h** | **Pre-stage.** |
 | **The carry itself** | ❌ **NOT BUILT** | the book is empty on both sides and we can mint neither leg. Say it; do not mime it. |
@@ -109,8 +113,8 @@ cd lending && sui move build && sui move test        # expect  37 passed
 
 # 3. The offline suites
 cd sdk    && npm test                                # expect 376
-cd keeper && npm run typecheck && npm run build && npm test   # expect 178 — typecheck MUST be clean
-cd app    && npm run build && npm test               # expect 152
+cd keeper && npm run typecheck && npm run build && npm test   # expect 252 — typecheck MUST be clean
+cd app    && npm run build && npm test               # expect 157
 
 # 4. The invariant gates, in BOTH shells — they must agree verdict for verdict
 bash scripts/gates.sh
@@ -264,17 +268,33 @@ If the package is published, run it on chain instead — `begin` → `step` (loa
 > *"Notice who is sending these. Open, close, reveal, step, settle — none of them takes a capability.
 > If our keeper is offline, anyone in this room finishes the batch. Liveness is never a privilege."*
 
-### 3:20 — Determinism you can check (50 s)
+### 3:20 — The bug we went looking for and found (50 s)
+
+**Do not present parity as achieved.** Present the *search* for it — which is the stronger story, and
+the only honest one.
 
 ```bash
-cd sdk && npm test -- clearing
+export PATH="$HOME/.cargo/bin:$PATH"   # ⚠ cargo is installed but NOT on the default PATH here
+cd clearing-rs && cargo test           # 79 tests pass, two engines on purpose
 ```
 
-> *"Three levels. Forty-six shared golden fixtures that both languages consume. Ten thousand seeded
-> property cases every commit. And the release gate: the same order sets through the Move code by
-> `devInspect` and through the TypeScript, compared as **BCS bytes**. That third one needs the package
-> published, so today you are seeing the first two — and I will tell you exactly why the fixtures
-> nearly did not catch a real bug."* → §5, story two.
+> *"Our own spec says a divergence between clearing implementations is a release blocker. So we wrote
+> a **third** implementation, in Rust, from the spec rather than ported from either side — and it
+> found that our Move and our TypeScript are not the same algorithm. Four thousand random books,
+> agreement on eighty-five percent. Five named divergences, each with a hand-derived counterexample.
+> The worst is structural: the two fill-leaf layouts are seventy-three and eighty-one bytes, so the
+> Merkle roots can never match."*
+>
+> *"Two of the five aren't bugs, they're design questions — whether an overfull price level fills
+> greedily or pro-rata, and whether one under-funded account may move the uniform price for everyone.
+> So the Rust crate implements **both** engines and refuses to pick, until a human does. A parity
+> claim you haven't checked is a guess. One you've checked and failed is a bug — and this one is open."*
+
+If `cargo` will not run on the machine, show the counterexamples instead:
+
+```bash
+sed -n '/5ter/,/^---/p' docs/DESIGN-V2.md      # the five divergences, with frequencies
+```
 
 ### 4:10 — What a compromised keeper buys you (35 s)
 
@@ -345,6 +365,13 @@ at every call site, so the goldens now pin the algorithm's *scale-independence* 
 — and the production constant is pinned separately and directly against
 `aphotic::clearing::price_scale()`.
 
+**And the sequel: two implementations that agree tell you nothing.** Fixing the fixtures was not
+enough — 46 hand-written cases are too narrow a net. It took a **third** implementation, written from
+the spec rather than ported from either side, to find that Move and TypeScript disagree on 15 % of
+random books. Same lesson as the byte-order bug, one level up: **an oracle built out of the things
+under test cannot referee them.** Full detail, frequencies and counterexamples in
+`docs/DESIGN-V2.md` §5ter and `clearing-rs/tests/divergence.rs`.
+
 ---
 
 ## 6. The fallback
@@ -385,8 +412,8 @@ screenshot of today's `verify-onchain.mjs` output ready and say it is a screensh
 - Mocking a clearing result and presenting it as on-chain. **Do not.**
 - Running the carry against the empty book to "show something happening."
 - Any demo of the BTC leg in real time.
-- Quoting a Rust test count. `clearing-rs/` has never been compiled on this machine — `cargo` is not
-  installed.
+- Describing the clearing parity as achieved, or as "a rounding difference". It is a **release
+  blocker by our own spec**, it is open, and volunteering it is worth more than hiding it.
 
 ---
 
@@ -407,6 +434,7 @@ screenshot of today's `verify-onchain.mjs` output ready and say it is a screensh
 | *"Why is your keeper TypeScript when the docs say Rust?"* | Because its defining duty at close is to **decrypt**, and `@mysten/seal` has no Rust client. A Rust keeper would need a TypeScript sidecar for exactly that leg — two supervision trees, an IPC boundary carrying **order plaintext**, and a second implementation of the Seal identity encoding, which is precisely where the byte-order bug bites. The doc was changed, not the architecture; it is recorded as a deviation in `docs/GOVERNANCE.md` §9. |
 | *"Has any of this been deployed?"* | `aphotic_lending` is live at `0x39d038ae…`. The main package is written and green and **the validator rejected the publish** — a 39-field struct against a 32-field cap that `sui move build` does not check. Then tell the bisection. Never say "not published yet" as if it were a scheduling matter. |
 | *"So how do I know the Move code works if it's never run on chain?"* | You do not, and we will not pretend otherwise. What you can check is 275 Move tests and twelve structural gates. And we will volunteer the bad news, because we would rather you heard it from us: we wrote a **third** clearing implementation in Rust purely to check the parity claim, and **it failed**. TypeScript, the 46 fixtures and the Rust spec engine agree; Move differs on 15 % of 4 000 seeded books, across five named divergences — the fill-leaf layouts are 73 and 81 bytes, so the Merkle roots can never match. Counterexamples are hand-derived in `clearing-rs/tests/divergence.rs`. That is a release blocker by our own §9, it is open, and finding it is what the third implementation was for. |
+| *"Is the clearing deterministic and reproducible?"* | Deterministic, yes — same order set, same output; order-independence and truncation-monotonicity are property-tested over thousands of seeded cases. **Reproducible across implementations, not yet** — see the row above. Two of the five divergences are design questions rather than bugs (greedy vs pro-rata allocation at an overfull level; whether one under-funded account may move the uniform price for everyone), which is why the Rust crate implements both engines and refuses to pick until a human does. |
 
 ---
 

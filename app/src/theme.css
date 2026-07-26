@@ -758,22 +758,75 @@ button.ap-rowline:disabled { opacity: 0.5; cursor: not-allowed; }
   padding: var(--space-8) var(--space-4);
 }
 
-.ap-gate-card { width: 100%; max-width: 27rem; padding: 0; }
+.ap-gate-card { width: 100%; max-width: 25rem; padding: 0; }
 
+/* Sticky head: help · title · dismiss. The title is CENTRED, so the two icon
+   slots are fixed-width and the middle takes the rest — otherwise the title
+   drifts whenever one side's glyph changes. */
 .ap-gate-head {
-  padding: var(--space-6) var(--space-6) var(--space-4);
-  border-bottom: 0.5px solid var(--border-soft);
+  display: grid;
+  grid-template-columns: 28px 1fr 28px;
+  align-items: center;
+  padding: var(--space-4) var(--space-4);
 }
 .ap-gate-title {
-  margin: 0 0 var(--space-2);
-  font-size: var(--text-lg);
+  grid-column: 2;
+  margin: 0;
+  text-align: center;
+  font-size: var(--text-base);
   font-weight: 500;
   letter-spacing: var(--tracking-tight);
 }
+.ap-gate-icon {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  text-decoration: none;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.ap-gate-icon:hover { background: var(--bg-primary); color: var(--text-primary); }
+.ap-gate-icon:active { transform: scale(0.94); }
+
+.ap-gate-help {
+  margin: 0;
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 0.5px solid var(--border-soft);
+  background: var(--bg-secondary);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  line-height: var(--leading-normal);
+}
+
 .ap-gate-sub { margin: 0; font-size: var(--text-sm); color: var(--text-secondary); }
 
-.ap-gate-body { padding: var(--space-5) var(--space-6); display: grid; gap: var(--space-5); }
+.ap-gate-body { padding: var(--space-5); display: grid; gap: var(--space-5); }
 .ap-gate-section { display: grid; gap: var(--space-3); }
+
+/* Hairline-separated rows inside a bordered well — the wallet list. */
+.ap-gate-rows {
+  border: 0.5px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+.ap-gate-rows .ap-rowline {
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--text-sm);
+  text-decoration: none;
+}
+.ap-gate-rows a.ap-rowline:hover { background: var(--bg-secondary); }
+.ap-gate-rows .ap-rowline:active:not(:disabled) { transform: scale(0.98); }
+.ap-row-cue {
+  display: inline-grid;
+  place-items: center;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
 
 .ap-gate-rule {
   display: flex;
@@ -792,6 +845,8 @@ button.ap-rowline:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .ap-wallet-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
 
+/* Retained for any surface still using the boxed row; the gate now uses
+   .ap-rowline so it shares the hairline grammar with every other list. */
 .ap-wallet-row {
   display: flex;
   align-items: center;
@@ -838,7 +893,7 @@ button.ap-rowline:disabled { opacity: 0.5; cursor: not-allowed; }
 }
 
 .ap-gate-foot {
-  padding: var(--space-4) var(--space-6) var(--space-6);
+  padding: var(--space-4) var(--space-5) var(--space-5);
   border-top: 0.5px solid var(--border-soft);
   font-size: var(--text-xs);
   color: var(--text-muted);

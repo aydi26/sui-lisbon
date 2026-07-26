@@ -154,11 +154,16 @@ bash scripts/gates.sh                            # 12 PASS · 0 FAIL · 0 SKIP
 powershell -NoProfile -File scripts/gates.ps1    # must agree, verdict for verdict
 node scripts/verify-onchain.mjs                  # 28 PASS · 0 FAIL · 0 WARN · 4 INFO (needs network)
 
-powershell -NoProfile -File scripts/verify-all.ps1   # the master gate — all 12 of the above, ordered
+powershell -NoProfile -File scripts/verify-all.ps1   # the master gate — 12 PASS · 0 FAIL · 0 SKIP
 ```
 
-**Total: 275 Move + 37 lending + 376 SDK + 252 keeper + 157 app = 1 097 tests, all green**, plus 12
-structural gates that agree verdict-for-verdict across `bash` and PowerShell.
+```bash
+export PATH="$HOME/.cargo/bin:$PATH"             # cargo is installed but not on the default PATH
+cd clearing-rs && cargo test                     # 79 passed, 0 failed
+```
+
+**Total: 275 Move + 37 lending + 376 SDK + 252 keeper + 157 app + 79 Rust = 1 176 tests, all green**,
+plus 12 structural gates that agree verdict-for-verdict across `bash` and PowerShell.
 
 Move tests, per module, measured individually: `vault` **42** · `batch` **45** · `clearing` **25** ·
 `notes` **32** · `balance` **27** · `caps` **24**, with `allocate` and `oracle` accounting for the
@@ -221,10 +226,39 @@ quoteRecv       899100
 feeQuote        900             ← Σdebits == Σcredits + fee, exactly
 ```
 
-Parity is asserted at three levels: **L1** 46 shared golden fixtures consumed by both languages;
-**L2** a 10 000-case seeded property test that runs every commit; **L3** the real gate — the same
-generated order sets pushed through Move by `devInspectTransactionBlock` and compared to the
-TypeScript as **BCS bytes**. L3 needs a published package, so it is the one gate still owed (§6).
+### ⚠ And the parity claim currently FAILS — we found it, and we are not going to bury it
+
+`aphotic.md` §9 says a divergence between clearing implementations is a **release blocker**. We wrote
+a **third** implementation in Rust specifically to test that claim, reading the same
+`sdk/fixtures/clearing.golden.json` in place. It found that `clearing.move` and the TypeScript **are
+not the same algorithm.**
+
+Seeded census over **4 000 random books: full agreement on 3 407 (85 %)**. The TypeScript, the 46
+fixtures and the Rust spec engine all agree with each other; it is **Move** that differs — and Move
+is what settles. Five named divergences, each with a hand-derived counterexample in
+`clearing-rs/tests/divergence.rs` and `docs/DESIGN-V2.md` §5ter:
+
+| # | Divergence | Frequency / consequence |
+|---|---|---|
+| D1 | **Fill-leaf layout.** Move's `bcs(Fill)` is 73 bytes (`batch_id`, no `fee`); the spec's is 81 (`fee`, no `batch_id`, `u128` price). | The two Merkle roots can **never** match for a non-empty fill set. This alone makes byte-comparison meaningless today. |
+| D2 | **Allocation.** Move fills an overfull strictly-inside level **greedily**; the spec **pro-rates** it. Bids 60@10 + 60@10 against ask 50@5 → Move gives 50/0, the spec gives 25/25. | 97 of 4 000 (2.4 %). Two participants at the same price get different fills. |
+| D3 | **Fee.** Move folds rounding dust into the fee; the spec keeps them separate — asserted exactly as `move.fee == spec.fee + spec.dust`. | 516 of 4 000 (**12.9 %**) — the most frequent and the least visible. |
+| D4 | **Truncation timing.** Move truncates at *load*, before price discovery, so one under-funded account **moves the uniform clearing price** for everyone. Counterexample clears at 10 on Move and 12 on the spec. | A design question, not a rounding one. |
+| D5 | **Price width.** `u64` in Move, `u128` in the spec. One fixture is not expressible against Move at all. | |
+
+**Which side is right is a human decision, not a mechanical one.** D2 and D4 in particular are genuine
+design choices, which is why the Rust crate deliberately implements **both** engines rather than
+picking a winner. What is not optional is saying so: *a parity claim that has not been checked is a
+guess, and one that has been checked and failed is a bug.* This one is open, and it is the single
+highest-priority item in §7.
+
+The same pass found that §5bis(d) of our own design doc **miscounts its own byte layout** — it says
+"= 73 bytes" for a field list that sums to 81; the code is right and the prose was wrong.
+
+So the honest state of the three parity levels is: **L1** 46 shared fixtures — green, and now known
+to be too narrow to catch this. **L2** 10 000 seeded property cases — green, but they assert
+*structural invariants*, not cross-implementation equality. **L3**, the real gate — `devInspect`
+byte-for-byte — is owed, and would fail today on D1 alone.
 
 ---
 
@@ -314,6 +348,13 @@ separately and directly against `aphotic::clearing::price_scale()`. Move is the 
 deployed contract, and `1e8` is sats-natural for an 8-decimal asset. (One rounding fixture block had
 been tuned to divide exactly at `1e9`; it was passing by accident and had to be retuned.)
 
+**The sequel is the point.** Fixing the fixtures was not enough, because 46 hand-written cases are
+simply too narrow a net. It took a **third, independent implementation** — the Rust crate, written to
+the spec rather than ported from either existing side — to find that Move and TypeScript disagree on
+15 % of random books (§4). Two implementations that agree tell you they agree; they do not tell you
+they are right. That is the same lesson as the endianness bug, one level up: an oracle built from the
+things under test cannot referee them.
+
 ---
 
 ## 6. Honest limitations
@@ -390,16 +431,26 @@ bar and the one we state.
 | 1 | The **v2 `aphotic` package is not published**, and the reason is on-chain, not procedural: `clearing::Clearing` has 39 fields against a 32-field verifier cap (§5). A second blocker sits behind it — the LP share coin module was never written, so no `Vault` can be created either. | Everything on-chain in the demo runs against the local suite plus the published `aphotic_lending`. The **L3 Move↔TS parity gate needs a published package** and is therefore still owed. Both blockers are diagnosed, bounded and single-file; neither is a design problem. |
 | 2 | `scripts/measure-clearing.mjs` ran and reported **"NOTHING WAS MEASURED"** — the published package predates `clearing`. | `MAX_BATCH_SIZE = 256` is a **reasoned** default, not a measured one. The resumable cursor path exists from day one precisely so a measurement can lower it without a redesign. |
 | 3 | Some of the keeper's CLI commands are **declared but not wired**; they exit **2** naming the module they need rather than exiting 0. | `schedule` `seal-id` `clear` `verify-limiter` run for real offline. A command that exits 0 having done nothing is how a demo fails without anyone noticing, so none does. Run `node dist/index.js --help` for the current split — the `!` marker is authoritative, not this table. |
-| 4 | The tree was being written by several agents while this was measured. Between two passes ~40 minutes apart, keeper went **178 → 252** tests and app **152 → 157**; earlier `verify-all.ps1` runs showed **9 PASS · 3 FAIL** where the three failures were `tsc` errors in files mid-write, and both cleared on re-run. | Every figure here is timestamped to 2026-07-26 and was re-measured at the end. **Re-run before quoting.** |
-| 5 | `clearing-rs/` (the Rust clearing twin) is written but **`cargo` and `rustc` are not installed on this machine**, so it was never compiled or tested here. | It is source, not evidence. Do not cite a Rust test count. |
-| 6 | `sui move build` emits **4 lint warnings** on a clean rebuild (`W99001` non-composable transfer to sender, 2× `W09014` unused `&mut`, `W02013` discarded return). Exit code is 0. `docs/DEPLOYED.md` records "zero warnings" from an earlier run of the same command; the tree moved. | Cosmetic; listed because "zero warnings" would have been the easy thing to copy. |
-| 7 | `scripts/verify-onchain.mjs`'s 28 assertions still check the **v1 legacy** `aphotic` package and vault ids alongside the live Hashi/DeepBook/Pyth ones. | Its Hashi, DeepBook, config, event and Pyth assertions are current and load-bearing; its two `aphotic` rows are historical. |
+| 4 | The tree was being written by several agents while this was measured. Between two passes ~40 minutes apart, keeper went **178 → 252** tests and app **152 → 157**; earlier `verify-all.ps1` runs showed **9 PASS · 3 FAIL**, all three `tsc` errors in files mid-write. The final run was **12 PASS · 0 FAIL · 0 SKIP**. | Every figure here is timestamped to 2026-07-26 and was re-measured at the end. **Re-run before quoting.** |
+| 5 | **The Move ↔ TypeScript clearing parity claim fails** on 15 % of 4 000 seeded books, with five named divergences (§4). | This is the release blocker our own spec says it is, and it is **open**. Do not claim bit-identical parity anywhere. `clearing-rs/` is built and green at 79 tests and implements **both** engines on purpose, because a single engine could not have found this. |
+| 6 | `clearing-rs/sim/` is standalone: **Hashi's own UTXO-pool simulator is not in this repo**, so the fragmentation leg is parameterised, not calibrated. Every emitted file carries `"calibrated_against_hashi_sim": false`. | Latency-model output is a shape, not a forecast. |
+| 7 | `sui move build` emits **4 lint warnings** on a clean rebuild (`W99001` non-composable transfer to sender, 2× `W09014` unused `&mut`, `W02013` discarded return). Exit code is 0. `docs/DEPLOYED.md` records "zero warnings" from an earlier run of the same command; the tree moved. | Cosmetic; listed because "zero warnings" would have been the easy thing to copy. |
+| 8 | `scripts/verify-onchain.mjs`'s 28 assertions still check the **v1 legacy** `aphotic` package and vault ids alongside the live Hashi/DeepBook/Pyth ones. | Its Hashi, DeepBook, config, event and Pyth assertions are current and load-bearing; its two `aphotic` rows are historical. |
 
 ---
 
 ## 7. What comes next
 
-**Immediately, and in this order, because the blockers are sequential** — (1) group seven of
+**First, before anything else: resolve the five clearing divergences (§4).** D1 (the fill-leaf layout)
+is mechanical — pick one layout and regenerate. D3 (dust folded into the fee) is a one-line decision
+about where the residual lives. D2 and D4 are genuine design questions that need a human to answer,
+not a patch: whether an overfull price level fills greedily or pro-rata, and whether one under-funded
+account may move the uniform price for everyone. Our reading is that pro-rata (D2) and
+truncate-after-pricing (D4) are correct, because both keep the price a function of *intent* rather
+than of *funding* — but that is a decision to make deliberately and record, and the Rust crate keeps
+both engines until it is made. Then turn L3 on, because L3 is what stops this recurring.
+
+**Then, in this order, because the deployment blockers are sequential** — (1) group seven of
 `Clearing`'s correlated scalars into a nested `has store` struct, which costs one field each and gets
 it to 32; nested structs do not inherit the parent's field count. (2) Write the LP share coin module
 so `vault::create` has a `TreasuryCap` to consume. (3) Publish, and record both `published-at` and
