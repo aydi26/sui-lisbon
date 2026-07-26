@@ -153,10 +153,9 @@ export function ConservationPanel() {
 
         {snapshot === null || data === null ? (
           <p className="ap-reason">
-            No wallet is needed and none is asked for. This panel reads public scalars and redoes
-            the vault&rsquo;s own identities in your browser — the point is that you do not have to
-            take the tick on trust, because you can see both sides of every equation. A leg that
-            cannot be recomputed from the published read surface says so; it never gets a tick.
+            No wallet needed. One press reads the public scalars and redoes the vault&rsquo;s own
+            identities here, both sides of every equation shown. A leg that cannot be recomputed
+            says so; it never gets a tick.
           </p>
         ) : (
           <>
@@ -190,9 +189,7 @@ export function ConservationPanel() {
                 <span className="ap-metric-value">
                   {formatBtc(snapshot.escrowBaseCustody, { suffix: true })}
                 </span>
-                <span className="ap-metric-sub">
-                  held OUTSIDE NAV, so a settlement cannot move assets between propose and approve
-                </span>
+                <span className="ap-metric-sub">held outside NAV, deliberately</span>
               </div>
               <div className="ap-metric">
                 <span className="ap-metric-label">Note tree root</span>
@@ -202,9 +199,7 @@ export function ConservationPanel() {
                 >
                   {toHex(snapshot.noteRoot)}
                 </span>
-                <span className="ap-metric-sub">
-                  depth 20 · every membership proof folds to one of the last 32 published roots
-                </span>
+                <span className="ap-metric-sub">depth 20 · last 32 roots accepted</span>
               </div>
             </div>
           </>

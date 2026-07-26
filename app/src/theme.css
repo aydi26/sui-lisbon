@@ -15,9 +15,19 @@
    @facts      RE-THEME NOTE: the ported landing CSS still contains the source
    @facts        project's indigo/violet literals (#6366f1 #a855f7 #a78bfa #818cf8
    @facts        #4338ca). They must be replaced by var(--accent)/var(--btc).
+   @facts      NAV WEIGHTING: .aphotic-navlink--primary (the vault) and
+   @facts        .aphotic-navlink--quiet (the batch auction) are the presentation
+   @facts        half of the decision recorded in App.tsx — the vault leads, the
+   @facts        auction is a working second surface, not a peer. Both stay
+   @facts        reachable; the classes change colour and a hairline, nothing else.
+   @facts        [aria-current='page'] is (0,2,0) and so still wins over both, which
+   @facts        is why a selected /batch is accent-coloured like any other route.
    @implements :root design tokens · @font-face Cravelo · @font-face Inter fallback
                · base element reset · a small set of shared primitives
+               · the nav weight classes (--primary / --quiet)
    @forbidden  hardcoding a hex colour in any component — use the tokens
+   @forbidden  expressing the nav weighting by disabling or hiding a route — it is
+               typography only; /batch works and must stay reachable
    @invariant  1. Every colour a component uses resolves to a token declared here.
    @invariant  2. No token name is renamed after the landing port (the landing CSS
                   consumes --accent / --btc / --bg-* / --text-*).
@@ -279,6 +289,39 @@ button {
 
 .aphotic-navlink[aria-current='page'] {
   color: var(--accent);
+}
+
+/* Nav weighting. The vault is the product; the batch auction is a working second
+   surface that needs a two-sided market the vault does not. Both are reachable
+   and both work — only the typography says which one leads. Deliberately small
+   moves: a shade of colour and a hairline, not a badge or a size jump. */
+.aphotic-navlink--primary {
+  color: var(--text-primary);
+  position: relative;
+}
+
+.aphotic-navlink--primary::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -0.4em;
+  height: 0.5px;
+  background: var(--accent);
+  opacity: 0.55;
+}
+
+.aphotic-navlink--primary[aria-current='page']::after {
+  opacity: 1;
+}
+
+.aphotic-navlink--quiet {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.aphotic-navlink--quiet:hover {
+  color: var(--text-secondary);
 }
 
 /* ── shared chip (mode indicator, provenance tags) ──────────────────────────── */

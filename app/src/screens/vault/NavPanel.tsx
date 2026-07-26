@@ -9,16 +9,19 @@
 //             `approve_nav` steps 1-5
 // @rules      G7 G8
 // @depends    ../../lib/vault.ts (F2) · ../../lib/useAsyncAction.ts
-// @facts      THE MOST DIFFERENTIATING SURFACE IN THE PRODUCT, so it is itemised
-// @facts        rather than summarised. NAV is a keeper PROPOSAL and an admin
-// @facts        APPROVAL — two parties, not two scopes of one automation key.
+// @facts      THE MOST DIFFERENTIATING SURFACE IN THE PRODUCT, so it is the one
+// @facts        panel here that stays itemised rather than summarised: the keeper's
+// @facts        proposal leg by leg, the digest, and who has signed it.
+// @facts      NAV IS TWO PARTIES, NOT TWO SCOPES: `propose_nav` (keeper, records
+// @facts        only) and `approve_nav` (admin multisig, commits). That sentence is
+// @facts        load-bearing and stays on screen in both states.
 // @facts      THE FOUR LEGS: idle + deployed + in-flight + native BTC.
 // @facts        · idle is the one leg MOVE CHECKS ITSELF: `approve_nav` asserts
 // @facts          `p.idle_sats == v.base.value()` (EIdleMismatch).
 // @facts        · native BTC is NOT VERIFIABLE BY MOVE — Sui has no Bitcoin light
 // @facts          client. The contract caps it at the on-Sui withdrawal claims
-// @facts          behind it (ENavLegUncapped). That cap is the honest bound and is
-// @facts          printed beside the greyed leg, never rounded off.
+// @facts          behind it (ENavLegUncapped). That cap is the honest bound: the
+// @facts          leg is greyed, badged and printed with its cap, never rounded off.
 // @facts      THE DIGEST IS RECOMPUTED HERE. `blake2b256(bcs(NavProposal))` over
 // @facts        the ten fields the contract exposes, compared byte-for-byte with
 // @facts        `current_proposal_digest`. That is what the multisig signs, so a
@@ -30,6 +33,7 @@
 // @implements export function NavPanel(): JSX.Element
 // @forbidden  presenting the native-BTC leg as verified, or dropping its cap
 // @forbidden  a read on mount
+// @forbidden  restating the mechanism in prose — that moved to /docs
 // @invariant  1. The unverifiable leg is visually distinct AND annotated.
 // @invariant  2. The digest comparison is a real byte comparison, or it says it
 //                could not be made.
@@ -86,6 +90,17 @@ function Leg({
   );
 }
 
+function Check({ label, value }: { label: string; value: string }) {
+  return (
+    <li>
+      <div className="ap-rowline">
+        <span className="ap-wallet-name">{label}</span>
+        <span className="aphotic-muted">{value}</span>
+      </div>
+    </li>
+  );
+}
+
 export function NavPanel() {
   const nav = useAsyncAction<NavRead>();
   const gap = wiringGap([
@@ -134,59 +149,55 @@ export function NavPanel() {
           <p className="ap-reason ap-reason--error">{nav.state.error}</p>
         ) : null}
 
-        {data === null ? (
-          <p className="ap-reason">
-            NAV is a keeper <strong>proposal</strong> and an admin <strong>approval</strong> — two
-            parties, not two scopes of one automation key. Read it and every leg appears
-            separately, with the one leg Move cannot verify greyed and capped.
-          </p>
-        ) : proposal === null ? (
+        <p className="ap-reason">
+          Two <strong>parties</strong>, not two scopes of one automation key: the keeper writes a{' '}
+          <strong>proposal</strong> that commits nothing, an admin multisig signs the{' '}
+          <strong>approval</strong> that does.
+        </p>
+        <p className="ap-reason">
+          Four legs — idle, deployed, in flight, native BTC. The last is{' '}
+          <strong>not verifiable by Move</strong> and is capped at the on-Sui withdrawal claims
+          behind it.
+        </p>
+
+        {data === null ? null : proposal === null ? (
           <>
-            <p className="ap-reason">
-              No proposal is outstanding. The vault is at epoch{' '}
-              <strong>{data.snapshot.epoch.toString()}</strong>, and the last approved price was{' '}
-              {data.snapshot.lastNavSupply === 0n
-                ? 'par — no shares exist yet'
-                : `${formatSats(data.snapshot.lastNavAssets)} assets over ${formatSats(data.snapshot.lastNavSupply)} shares`}
-              {data.snapshot.lastNavAtMs === 0n
-                ? '.'
-                : `, approved ${new Date(Number(data.snapshot.lastNavAtMs)).toUTCString()}.`}
-            </p>
             <ul className="ap-rows ap-gate-rows">
               <Leg
                 label="Idle hBTC"
                 sats={data.snapshot.idleSats}
-                note="read directly from the vault's own balance — the one leg approve_nav checks itself (EIdleMismatch)"
+                note="the vault’s own balance — the one leg approve_nav checks itself"
               />
               <Leg
                 label="Deployed"
                 sats={data.snapshot.deployedSats}
-                note="lending-adapter positions, converted from shares to assets"
+                note="lending-adapter shares, converted to assets"
               />
               <Leg
                 label="In flight"
                 sats={data.snapshot.inFlightSats}
-                note="withdrawal transactions referencing our own request ids"
+                note="withdrawals referencing our own request ids"
               />
               <Leg
                 label="Native BTC"
                 sats={data.snapshot.nativeBtcSats}
                 unverifiable
-                note={`Sui has no Bitcoin light client. Capped at the on-Sui claim of ${formatSats(
+                note={`Capped at the on-Sui claim of ${formatSats(
                   data.snapshot.hashiClaimsSats,
-                )} sats — the contract asserts native_btc ≤ hashi_claims and reverts otherwise.`}
+                )} sats — the contract reverts above it.`}
               />
             </ul>
+            <p className="ap-reason">
+              No proposal outstanding at epoch <strong>{data.snapshot.epoch.toString()}</strong>.
+              Last approved{' '}
+              {data.snapshot.lastNavAtMs === 0n
+                ? 'never'
+                : new Date(Number(data.snapshot.lastNavAtMs)).toUTCString()}
+              .
+            </p>
           </>
         ) : (
           <>
-            <p className="ap-reason ap-reason--warn">
-              A proposal is outstanding for epoch <strong>{proposal.epoch.toString()}</strong>,
-              recorded by <span className="aphotic-mono">{truncateMiddle(proposal.proposer)}</span>{' '}
-              at {new Date(Number(proposal.proposedAtMs)).toUTCString()}. It commits nothing until
-              the admin multisig approves this exact digest.
-            </p>
-
             <ul className="ap-rows ap-gate-rows">
               <Leg
                 label="Idle hBTC"
@@ -194,7 +205,7 @@ export function NavPanel() {
                 note={
                   proposal.idleSats === data.snapshot.idleSats
                     ? 'matches the vault’s own balance — the leg Move checks itself'
-                    : `DISAGREES with the vault’s balance of ${formatSats(data.snapshot.idleSats)} sats; approve_nav would abort EIdleMismatch`
+                    : `DISAGREES with the vault’s ${formatSats(data.snapshot.idleSats)} sats; approve_nav would abort EIdleMismatch`
                 }
               />
               <Leg label="Deployed" sats={proposal.deployedSats} note="lending-adapter positions" />
@@ -213,7 +224,7 @@ export function NavPanel() {
                     <strong>Total NAV</strong>
                     <br />
                     <span className="aphotic-muted" style={{ fontSize: 'var(--text-xs)' }}>
-                      summed in this browser from the four legs above
+                      summed in this browser from the four legs — it is not a signed field
                     </span>
                   </span>
                   <span className="ap-num">
@@ -230,8 +241,8 @@ export function NavPanel() {
               </p>
               <p className={digestAgrees === true ? 'ap-reason ap-reason--ok' : 'ap-reason ap-reason--error'}>
                 {digestAgrees === true
-                  ? 'Recomputed in your browser from the ten fields above — blake2b256 over the BCS of the proposal — and it matches the digest the contract holds, byte for byte.'
-                  : 'The digest recomputed here does NOT match the one on chain. That means the fields shown do not serialise to the digest the multisig would be signing; do not approve it.'}
+                  ? 'Recomputed here from the ten fields above and matched byte for byte.'
+                  : 'Recomputed here and it does NOT match the digest on chain. Do not approve it.'}
               </p>
               {digestAgrees === true ? null : (
                 <p className="aphotic-mono" style={{ fontSize: 'var(--text-xs)', margin: 0, wordBreak: 'break-all' }}>
@@ -241,56 +252,38 @@ export function NavPanel() {
             </div>
 
             <div className="ap-gate-section">
-              <span className="ap-label">What approval will re-check</span>
+              <span className="ap-label">
+                What approve_nav re-checks · proposed by {truncateMiddle(proposal.proposer)} at{' '}
+                {new Date(Number(proposal.proposedAtMs)).toUTCString()}
+              </span>
               <ul className="ap-rows ap-gate-rows">
-                <li>
-                  <div className="ap-rowline">
-                    <span className="ap-wallet-name">Proposal age</span>
-                    <span className="aphotic-muted">
-                      must be ≤ {(Number(data.snapshot.maxProposalAgeMs) / 60_000).toFixed(0)} min
-                    </span>
-                  </div>
-                </li>
-                <li>
-                  <div className="ap-rowline">
-                    <span className="ap-wallet-name">NAV jump</span>
-                    <span className="aphotic-muted">
-                      ≤ {data.snapshot.maxNavJumpBps.toString()} bps against the last approved price
-                    </span>
-                  </div>
-                </li>
-                <li>
-                  <div className="ap-rowline">
-                    <span className="ap-wallet-name">Clearing price vs book mid</span>
-                    <span className="aphotic-muted">
-                      ≤ {data.snapshot.maxPriceDevBps.toString()} bps ·{' '}
-                      {proposal.bookMid === 0n
-                        ? 'no reference this epoch (an empty book is a defined state, not a brick)'
-                        : `mid ${formatSats(proposal.bookMid)}`}
-                    </span>
-                  </div>
-                </li>
-                <li>
-                  <div className="ap-rowline">
-                    <span className="ap-wallet-name">Native-BTC cap</span>
-                    <span className="aphotic-muted">
-                      {proposal.nativeBtcSats <= proposal.hashiClaimsSats ? 'within' : 'EXCEEDS'} the
-                      on-Sui claims behind it
-                    </span>
-                  </div>
-                </li>
+                <Check
+                  label="Proposal age"
+                  value={`≤ ${(Number(data.snapshot.maxProposalAgeMs) / 60_000).toFixed(0)} min`}
+                />
+                <Check
+                  label="NAV jump"
+                  value={`≤ ${data.snapshot.maxNavJumpBps.toString()} bps on the last approved price`}
+                />
+                <Check
+                  label="Clearing vs book mid"
+                  value={`≤ ${data.snapshot.maxPriceDevBps.toString()} bps · ${
+                    proposal.bookMid === 0n
+                      ? 'no reference this epoch'
+                      : `mid ${formatSats(proposal.bookMid)}`
+                  }`}
+                />
+                <Check
+                  label="Native-BTC cap"
+                  value={`${
+                    proposal.nativeBtcSats <= proposal.hashiClaimsSats ? 'within' : 'EXCEEDS'
+                  } the on-Sui claims behind it`}
+                />
+                <Check label="Solvency" value="against committed supply, not total supply" />
               </ul>
             </div>
           </>
         )}
-
-        <p className="ap-reason">
-          Approval is not a rubber stamp on a number the keeper chose. The multisig signs an exact
-          digest and the contract re-checks that digest, the proposal&rsquo;s age, the relative NAV
-          jump, the clearing-versus-mid deviation and the cap on the native-BTC leg — then asserts
-          solvency against <em>committed</em> supply, which is the correct denominator because total
-          supply undercounts owed-but-unminted shares.
-        </p>
       </div>
     </section>
   );

@@ -28,8 +28,14 @@
 // @invariant  2. Every <img> has a non-empty, accurate alt.
 // @invariant  3. The paragraph states plainly that hBTC is custodial-threshold
 //                wrapped BTC. It is never softened to tighten the pitch.
-// @ac         the paragraph names the carry AND the sealed auction, says clearing
-//             is deterministic and recomputable, and concedes the hBTC trust model.
+// @facts      WEIGHTING: the heading and the paragraph both open on the vault —
+// @facts        "Below Par, / Redeemed At Par" is the carry in four words. The
+// @facts        auction follows in the same paragraph, named as the second thing
+// @facts        and not dropped. The h2 keeps its two-line <span className="line-1">
+// @facts        / <br /> structure, which the CSS styles by position.
+// @ac         the paragraph names the carry FIRST and the sealed auction second,
+//             says clearing is deterministic and recomputable, and concedes the
+//             hBTC trust model.
 // @ac         ⚠ It must NOT claim a TradeCap-only keeper or a Move-pinned exit.
 //             Both were v1 and are gone: the keeper's limit is now that none of its
 //             functions takes an `address` at all, and the exit destination is
@@ -107,8 +113,8 @@ export default function BeamSection() {
           </div>
         </div>
         <div className="beam-text-side">
-          <h2><span className="line-1">Sealed Clearing,</span><br />Native Bitcoin</h2>
-          <p>Buy the redemption claim below par, redeem it at par. Cross opposing flow at one price, twice a day, before it reaches Hashi&rsquo;s public queue. hBTC is custodial-threshold wrapped BTC &mdash; we say so plainly.</p>
+          <h2><span className="line-1">Below Par,</span><br />Redeemed At Par</h2>
+          <p>Buy the redemption claim below par, redeem it at par, lend the idle balance in between &mdash; that is the vault, and it ships first. Second, a sealed-order auction crosses opposing flow at one price before any of it reaches Hashi&rsquo;s public queue; clearing is deterministic, so anyone can recompute the result. hBTC is custodial-threshold wrapped BTC &mdash; we say so plainly.</p>
         </div>
       </div>
     </section>

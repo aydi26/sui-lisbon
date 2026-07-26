@@ -8,10 +8,19 @@
 // @rules      G7 G8 G10
 // @depends    ../../lib/vault.ts (F2) · ../../lib/tx.ts · ../../lib/useAsyncAction.ts
 //             · ../../components (F1)
-// @facts      THE ASYNCHRONY IS THE PRODUCT, so it is on screen rather than hidden
-// @facts        behind a spinner: you REQUEST, an epoch prices, then you CLAIM.
-// @facts        The button says "Request" and never "Deposit", because nothing is
-// @facts        deposited at a price until the admin multisig approves one.
+// @facts      THE DOING SURFACE OF /vault, in the order a holder needs it: what you
+// @facts        hold, then the one control that changes it, then what you can claim.
+// @facts        The protocol explanation lives in /docs; this panel keeps captions.
+// @facts      THE ASYNCHRONY IS THE PRODUCT, so it stays on screen rather than
+// @facts        hidden behind a spinner: you REQUEST, an epoch prices, then you
+// @facts        CLAIM. The button says "Request" and never "Deposit", because
+// @facts        nothing is deposited at a price until the admin multisig approves
+// @facts        one — and it never says "Redeem" either, for the same reason.
+// @facts      ONE LADDER, TWO DIRECTIONS. A direction toggle in front of a single
+// @facts        DenominationLadder, rather than two ladders stacked: the ladder
+// @facts        carries its own uniformity explainer, and rendering it twice was
+// @facts        half the length of this screen. The toggle labels avoid the words
+// @facts        "deposit" and "redeem" so no enabled control ever reads as a write.
 // @facts      A receipt is claimable iff `receipt.epoch < vault.epoch`. Before
 // @facts        that the row says "prices at epoch N" and offers no control — the
 // @facts        contract would abort ENotYetPriced, and an enabled button that
@@ -26,14 +35,15 @@
 // @facts        and `pending_redeem_shares` are the vault's own running sums for the
 // @facts        open epoch, and `approve_nav` prices BOTH legs at the ONE price it
 // @facts        writes — which is exactly what removes the incentive to time a
-// @facts        request against the boundary. Shown beside the countdown for that
-// @facts        reason, and labelled as the epoch's rather than the address's.
+// @facts        request against the boundary. Labelled as the epoch's, in one line.
 // @implements export function PositionPanel(): JSX.Element
 // @forbidden  a free-form amount field — the ladder is the only size control
 // @forbidden  a read on mount — the panel reads when the user asks
 // @forbidden  showing a share balance, an epoch or a claim before it was read
+// @forbidden  a disabled control whose reason is only beside it and not on it
 // @invariant  1. Nothing numeric renders until a read returned it.
-// @invariant  2. No enabled control can abort for a reason we already know.
+// @invariant  2. No enabled control can abort for a reason we already know, and
+//                every disabled one carries that reason in its own `title`.
 // @ac         renders unconfigured with the read disabled and the reason stated.
 // @verify     cd app && npm test -- vault
 // └── END CONTRACT ───────────────────────────────────────────────────────────
@@ -76,6 +86,9 @@ interface Position {
   readonly prices: ReadonlyMap<string, { readonly navAssets: bigint; readonly navSupply: bigint }>;
 }
 
+/** Which way the one ladder points. Neither label may read as a write verb. */
+type Direction = 'in' | 'out';
+
 function Metric({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
     <div className="ap-metric">
@@ -86,13 +99,19 @@ function Metric({ label, value, sub }: { label: string; value: string; sub?: str
   );
 }
 
+const METRIC_ROW = {
+  display: 'grid',
+  gap: 'var(--space-5)',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(9rem, 1fr))',
+} as const;
+
 export function PositionPanel() {
   const account = useCurrentAccount();
   const address = account?.address ?? null;
   const tx = useAphoticTx();
   const position = useAsyncAction<Position>();
-  const [depositDenom, setDepositDenom] = useState<Denomination | null>(null);
-  const [redeemDenom, setRedeemDenom] = useState<Denomination | null>(null);
+  const [direction, setDirection] = useState<Direction>('in');
+  const [denom, setDenom] = useState<Denomination | null>(null);
 
   const gap = wiringGap([
     ['VITE_APHOTIC_PACKAGE_ID', config.aphotic.packageId],
@@ -125,27 +144,22 @@ export function PositionPanel() {
     if (result.status === 'success') await position.run(load);
   };
 
-  const requestDeposit = async () => {
-    if (data === null || address === null || depositDenom === null) return;
+  const request = async () => {
+    if (data === null || address === null || denom === null) return;
     await send((t) =>
-      buildRequestDeposit(t, {
-        typeArgs: data.typeArgs,
-        sender: address,
-        sats: depositDenom.sats,
-        coinIds: data.baseCoins.map((c) => c.objectId),
-      }),
-    );
-  };
-
-  const requestRedeem = async () => {
-    if (data === null || address === null || redeemDenom === null) return;
-    await send((t) =>
-      buildRequestRedeem(t, {
-        typeArgs: data.typeArgs,
-        sender: address,
-        shares: redeemDenom.sats,
-        coinIds: data.shareCoins.map((c) => c.objectId),
-      }),
+      direction === 'in'
+        ? buildRequestDeposit(t, {
+            typeArgs: data.typeArgs,
+            sender: address,
+            sats: denom.sats,
+            coinIds: data.baseCoins.map((c) => c.objectId),
+          })
+        : buildRequestRedeem(t, {
+            typeArgs: data.typeArgs,
+            sender: address,
+            shares: denom.sats,
+            coinIds: data.shareCoins.map((c) => c.objectId),
+          }),
     );
   };
 
@@ -161,27 +175,30 @@ export function PositionPanel() {
   const baseHeld = data === null ? 0n : totalBalance(data.baseCoins);
   const sharesHeld = data === null ? 0n : totalBalance(data.shareCoins);
 
-  const depositBlocked =
+  /** The one reason string. It goes on the control, not only beside it. */
+  const blocked =
     data === null
-      ? 'Read your position first — the deposit needs the vault’s type parameters and your coins.'
-      : depositDenom === null
-        ? 'Choose a denomination.'
-        : data.snapshot.paused
-          ? 'The vault is paused, so no new deposit is accepted. Redeeming and claiming still work.'
-          : depositDenom.sats < data.snapshot.minDepositSats
-            ? `Below the vault’s minimum of ${formatSats(data.snapshot.minDepositSats)} sats.`
-            : baseHeld < depositDenom.sats
-              ? `You hold ${formatBtc(baseHeld)} hBTC, which is less than this denomination.`
-              : null;
-
-  const redeemBlocked =
-    data === null
-      ? 'Read your position first.'
-      : redeemDenom === null
+      ? 'Read your position first — the request needs the vault’s type parameters and your coins.'
+      : denom === null
         ? 'Choose a size.'
-        : sharesHeld < redeemDenom.sats
-          ? `You hold ${formatSats(sharesHeld)} share units, which is less than this size.`
-          : null;
+        : direction === 'in'
+          ? data.snapshot.paused
+            ? 'The vault is paused, so no new deposit is accepted. Leaving still works.'
+            : denom.sats < data.snapshot.minDepositSats
+              ? `Below the vault’s minimum of ${formatSats(data.snapshot.minDepositSats)} sats.`
+              : baseHeld < denom.sats
+                ? `You hold ${formatBtc(baseHeld)} hBTC, less than this size.`
+                : null
+          : sharesHeld < denom.sats
+            ? `You hold ${formatSats(sharesHeld)} share units, less than this size.`
+            : null;
+
+  const caption =
+    denom === null
+      ? 'No size chosen.'
+      : direction === 'in'
+        ? `${denom.label} hBTC in → a receipt, priced at the next approval`
+        : `${formatSats(denom.sats)} share units out → burned at the next approved NAV`;
 
   return (
     <section className="ap-panel">
@@ -191,6 +208,9 @@ export function PositionPanel() {
           {data === null ? null : (
             <span className="ap-badge">epoch {data.snapshot.epoch.toString()}</span>
           )}
+          {data !== null && data.snapshot.paused ? (
+            <span className="ap-badge ap-badge--warn">paused · exits open</span>
+          ) : null}
           <button
             type="button"
             className="ap-btn"
@@ -204,12 +224,7 @@ export function PositionPanel() {
       </div>
 
       <div className="ap-panel-body" style={{ display: 'grid', gap: 'var(--space-5)' }}>
-        {gap !== null ? (
-          <p className="ap-reason ap-reason--warn">
-            {gap} Every value on this panel would have to be invented, so none is shown. The
-            variables are inlined at build time — this is a deploy-time gap, not a runtime one.
-          </p>
-        ) : null}
+        {gap !== null ? <p className="ap-reason ap-reason--warn">{gap}</p> : null}
 
         {position.state.error !== null ? (
           <p className="ap-reason ap-reason--error">{position.state.error}</p>
@@ -217,13 +232,12 @@ export function PositionPanel() {
 
         {data === null ? (
           <p className="ap-reason">
-            Nothing here reads on load. Press <strong>Read from chain</strong> and this panel shows
-            your share balance, your outstanding receipts and the epoch price each one settles at —
-            and nothing before then.
+            Nothing here reads on load. Press <strong>Read from chain</strong> for your shares, your
+            receipts and the epoch each one settles at.
           </p>
         ) : (
           <>
-            <div className="ap-grid ap-grid--2">
+            <div style={METRIC_ROW}>
               <Metric
                 label="Shares held"
                 value={formatSats(sharesHeld)}
@@ -237,23 +251,18 @@ export function PositionPanel() {
               <Metric
                 label="Vault NAV"
                 value={formatBtc(data.snapshot.navAssets, { suffix: true })}
-                sub="idle + deployed + in flight + native BTC"
-              />
-              <Metric
-                label="This epoch’s pending legs"
-                value={`${formatBtc(data.snapshot.pendingDepositAssets)} in`}
-                sub={`${formatSats(data.snapshot.pendingRedeemShares)} shares out — the WINDOW's totals, not yours; approve_nav prices both legs at the one price`}
+                sub="four legs, itemised below"
               />
               <Metric
                 label="Last approved price"
                 value={
                   data.snapshot.lastNavSupply === 0n
-                    ? 'par (no shares yet)'
+                    ? 'par'
                     : `${formatSats(data.snapshot.lastNavAssets)} / ${formatSats(data.snapshot.lastNavSupply)}`
                 }
                 sub={
                   data.snapshot.lastNavAtMs === 0n
-                    ? 'never approved'
+                    ? 'never approved — no shares yet'
                     : new Date(Number(data.snapshot.lastNavAtMs)).toUTCString()
                 }
               />
@@ -264,13 +273,7 @@ export function PositionPanel() {
               <ul className="ap-rows ap-gate-rows">
                 <li>
                   <div className="ap-rowline">
-                    <span className="ap-wallet-name">
-                      Pending deposits
-                      <br />
-                      <span className="aphotic-muted" style={{ fontSize: 'var(--text-xs)' }}>
-                        hBTC in the vault, not yet priced and not yet backing a share
-                      </span>
-                    </span>
+                    <span className="ap-wallet-name">Pending deposits</span>
                     <span className="ap-num">
                       {formatBtc(data.snapshot.pendingDepositAssets, { suffix: true })}
                     </span>
@@ -278,13 +281,7 @@ export function PositionPanel() {
                 </li>
                 <li>
                   <div className="ap-rowline">
-                    <span className="ap-wallet-name">
-                      Pending redemptions
-                      <br />
-                      <span className="aphotic-muted" style={{ fontSize: 'var(--text-xs)' }}>
-                        shares surrendered into escrow, burned at the next approval
-                      </span>
-                    </span>
+                    <span className="ap-wallet-name">Pending redemptions</span>
                     <span className="ap-num">
                       {formatSats(data.snapshot.pendingRedeemShares)} shares
                     </span>
@@ -292,75 +289,66 @@ export function PositionPanel() {
                 </li>
               </ul>
               <p className="ap-reason">
-                Both totals are the whole epoch&rsquo;s, not yours — every request in the window
-                prices at the <em>same</em> approved NAV, which is what removes the incentive to
-                time a deposit against the boundary. They clear together when the admin multisig
-                approves, and epoch{' '}
-                <strong>{data.snapshot.epoch.toString()}</strong> becomes epoch{' '}
-                {(data.snapshot.epoch + 1n).toString()}.
+                The window&rsquo;s totals, not yours: <code>approve_nav</code> prices both legs at
+                the one price it writes.
               </p>
             </div>
-
-            {data.snapshot.paused ? (
-              <p className="ap-reason ap-reason--warn">
-                The vault is <strong>paused</strong>. New deposits are refused; redeeming and
-                claiming are not. Pausing stops new risk, not the exit — that asymmetry is in the
-                contract, not in this screen.
-              </p>
-            ) : null}
           </>
         )}
 
-        {/* ── request a deposit ── */}
+        {/* ── the one size control, pointed either way ── */}
         <div className="ap-gate-section">
-          <span className="ap-label">Request a deposit</span>
-          <DenominationLadder selected={depositDenom?.index ?? null} onSelect={setDepositDenom} label="Amount" />
+          <span className="ap-label">Request</span>
+          <div className="ap-row" role="group" aria-label="Direction">
+            <button
+              type="button"
+              className={direction === 'in' ? 'ap-btn ap-btn--primary' : 'ap-btn'}
+              aria-pressed={direction === 'in'}
+              title="Move hBTC into the vault and take a receipt"
+              onClick={() => setDirection('in')}
+            >
+              hBTC → shares
+            </button>
+            <button
+              type="button"
+              className={direction === 'out' ? 'ap-btn ap-btn--primary' : 'ap-btn'}
+              aria-pressed={direction === 'out'}
+              title="Surrender shares into escrow and take a receipt"
+              onClick={() => setDirection('out')}
+            >
+              shares → hBTC
+            </button>
+          </div>
+
+          <DenominationLadder
+            selected={denom?.index ?? null}
+            onSelect={setDenom}
+            label={direction === 'in' ? 'Amount' : 'Shares'}
+          />
+
           <div className="ap-row">
             <button
               type="button"
               className="ap-btn ap-btn--primary"
-              disabled={depositBlocked !== null || busy || !tx.canSend}
-              title={depositBlocked ?? tx.disabledReason ?? 'Move your hBTC into the pending balance and take a receipt'}
-              onClick={() => void requestDeposit()}
+              disabled={blocked !== null || busy || !tx.canSend}
+              title={
+                blocked ??
+                tx.disabledReason ??
+                (direction === 'in'
+                  ? 'Move your hBTC into the pending balance and take a receipt'
+                  : 'Surrender shares now; they burn at the next approved NAV')
+              }
+              onClick={() => void request()}
             >
               Request
             </button>
-            <span className="aphotic-muted">
-              {depositDenom === null ? 'No size chosen.' : `${depositDenom.label} → a receipt, priced next epoch`}
-            </span>
+            <span className="aphotic-muted">{caption}</span>
           </div>
-          <p className="ap-reason">
-            {depositBlocked ?? tx.disabledReason ?? (
-              <>
-                Your hBTC moves into the vault&rsquo;s pending balance and you hold a receipt. No
-                shares are minted yet: they are minted at the price the admin multisig approves for
-                this epoch, which is what makes the request/settle split real rather than cosmetic.
-              </>
-            )}
-          </p>
-        </div>
 
-        {/* ── request a redemption ── */}
-        <div className="ap-gate-section">
-          <span className="ap-label">Request a redemption</span>
-          <DenominationLadder selected={redeemDenom?.index ?? null} onSelect={setRedeemDenom} label="Shares" />
-          <div className="ap-row">
-            <button
-              type="button"
-              className="ap-btn"
-              disabled={redeemBlocked !== null || busy || !tx.canSend}
-              title={redeemBlocked ?? tx.disabledReason ?? 'Surrender shares now; they burn at the next approved NAV'}
-              onClick={() => void requestRedeem()}
-            >
-              Request
-            </button>
-            <span className="aphotic-muted">
-              {redeemDenom === null ? 'No size chosen.' : `${formatSats(redeemDenom.sats)} share units`}
-            </span>
-          </div>
           <p className="ap-reason">
-            {redeemBlocked ??
-              'Shares are surrendered now and burned at the next approved NAV. This path is deliberately not pause-gated.'}
+            {blocked ??
+              tx.disabledReason ??
+              'No shares are minted and none are burned until the admin multisig approves a price for this epoch.'}
           </p>
         </div>
 
@@ -371,8 +359,8 @@ export function PositionPanel() {
             <p className="ap-reason">Not read yet.</p>
           ) : data.receipts.length === 0 ? (
             <p className="ap-reason">
-              This address holds no receipts. A receipt is a bearer object — whoever holds it claims
-              it — which is why this lists what you own rather than what you once asked for.
+              This address holds no receipts. A receipt is a bearer object, so this lists what you
+              own rather than what you once asked for.
             </p>
           ) : (
             <ul className="ap-rows ap-gate-rows">
@@ -399,7 +387,7 @@ export function PositionPanel() {
                       </span>
                       {priced ? (
                         <>
-                          <span className="aphotic-muted">{preview ?? '—'}</span>
+                          <span className="ap-num">{preview ?? '—'}</span>
                           <button
                             type="button"
                             className="ap-btn ap-btn--primary"
@@ -422,10 +410,8 @@ export function PositionPanel() {
             </ul>
           )}
           <p className="ap-reason">
-            The amount beside a claimable receipt is computed here, in your browser, with the same
-            rounding-down <code>mul_div</code> the contract runs. Round-down is subadditive, so the
-            sum of the individual claims can never exceed the epoch total — the dust stays with the
-            vault and never with a claimant.
+            Previewed in your browser with the contract&rsquo;s own round-down <code>mul_div</code>,
+            so it can never overstate: the dust stays with the vault.
           </p>
         </div>
 

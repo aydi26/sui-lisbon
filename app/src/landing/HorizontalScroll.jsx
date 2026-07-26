@@ -19,16 +19,33 @@
 // @facts        titleX     = 600 - local * 1200  [px]
 // @facts      THEME: panel gradients p1/p2/p3 live in LandingPage.css; the padlock
 // @facts        stroke is #16c8d9 (was #6366f1 upstream).
+// @facts      WEIGHTING (the cards are NOT three peers): card 1 is the vault and is
+// @facts        the longest and most concrete; card 2 is explicitly the second
+// @facts        product and is the shortest; card 3 ties verification back to the
+// @facts        discount the vault harvests. The `lede` line above each paragraph
+// @facts        states the asymmetry outright — one side of the market vs two —
+// @facts        rather than leaving a reader to infer it. It is additive DOM inside
+// @facts        .hscroll-content-text and touches no measured element: the maths
+// @facts        reads track.children.length (the <li>s) and titlesRef only.
+// @facts      THE LEAK IS STILL THE LEAD STORY, it has just moved to card 1, where
+// @facts        it belongs: the public queue is WHY hBTC trades below par, and the
+// @facts        discount is what the vault exists to harvest. Card 2 keeps it as
+// @facts        the thing the auction routes around.
 // @implements export default function HorizontalScroll()
 // @forbidden  a 4th card without editing .hscroll-section/.hscroll-track together
 // @forbidden  claiming hBTC is trustless or non-custodial — G8
-// @invariant  1. CARDS.length === 3 — carry / sealed auction / verify.
-// @invariant  2. Card 2 names the PUBLIC withdrawal queue as the leak being routed
+// @invariant  1. CARDS.length === 3 — vault / sealed auction / verify.
+// @invariant  2. Card 1 names the PUBLIC withdrawal queue and its four leaked
+//                fields as the cause of the discount, and names the NAV split
+//                (keeper proposes, admin multisig approves).
+// @invariant  3. Card 2 names that same public queue as what the auction routes
 //                around, and says uniform-price clearing makes front-running
 //                meaningless rather than merely hard.
-// @invariant  3. Card 3 states the limiter is RE-DERIVED from Hashi's own events,
+// @invariant  4. Card 3 states the limiter is RE-DERIVED from Hashi's own events,
 //                never read from a trusted SDK call (G5).
 // @ac         three panels scroll horizontally across 300vh of vertical scroll.
+// @ac         the vault card reads as the product and the auction card reads as
+//             the second surface — by copy and lede, never by removal.
 // @verify     cd app && npm run build
 // └── END CONTRACT ───────────────────────────────────────────────────────────
 
@@ -36,17 +53,19 @@ import React, { useEffect, useRef } from "react";
 
 const CARDS = [
   {
-    title: "CARRY",
+    title: "VAULT",
     counter: "01 / 03",
     className: "p1",
-    text: "Exiting the bridge is queued and rate-limited, so hBTC trades below par. The vault buys that discount and redeems at par. Idle capital lends in between. The keeper proposes a NAV; an admin multisig approves it.",
+    lede: "The product · needs one side of the market",
+    text: "Hashi's withdrawal queue is a public Move object: who, how much, to which Bitcoin address, since when. Exiting is watched and rate-limited, so hBTC trades below par. The vault buys that redemption claim below par and redeems it at par, lending the idle balance in between. The keeper proposes a NAV; an admin multisig approves it.",
     icon: <img src="/logos/aphotic-mark.svg" alt="Aphotic" />,
   },
   {
     title: "SEALED",
     counter: "02 / 03",
     className: "p2",
-    text: "The withdrawal queue is public: who, how much, where to. Aphotic crosses flow before it lands there — sealed orders, one price, twice a day. Front-running isn't made hard, it's made meaningless.",
+    lede: "Second · needs two sides",
+    text: "The same public queue, routed around instead of harvested. Sealed orders cross opposing flow at one uniform price, twice a day, before any of it reaches that queue — front-running isn't made hard, it's made meaningless.",
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="#16c8d9" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="65%" height="65%">
         <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
@@ -58,7 +77,8 @@ const CARDS = [
     title: "VERIFY",
     counter: "03 / 03",
     className: "p3",
-    text: "Same orders in, same price out — every tie broken. Clearing runs on-chain in Move, so anyone can recompute it and prove their fill against a published root. The bridge's rate limiter is re-derived from its own events, not taken on faith.",
+    lede: "Both, checkable by a stranger",
+    text: "Clearing runs on-chain in Move — same orders in, same price out, every tie broken — so anyone can recompute it and prove their fill against a published root. And the rate limiter that creates the discount in the first place is re-derived from Hashi's own events, never read from a trusted SDK call.",
     icon: <img src="/logos/globe.svg" alt="" />,
   },
 ];
@@ -122,6 +142,7 @@ export default function HorizontalScroll() {
               <div className="hscroll-counter">{card.counter}</div>
               <div className="hscroll-content">
                 <div className="hscroll-content-text">
+                  <div className="hscroll-lede">{card.lede}</div>
                   <p>{card.text}</p>
                 </div>
                 <div className="hscroll-content-icon">{card.icon}</div>

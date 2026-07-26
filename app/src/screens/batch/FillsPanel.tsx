@@ -23,13 +23,16 @@
 // @facts      A batch with no revealed orders still settles: price 0, an EMPTY
 // @facts        root of 32 zero bytes, zero debits and credits. The cadence
 // @facts        settles every pass, with or without orders.
+// @facts      TRIMMED (2026-07-26): the push-not-claim rationale and the
+// @facts        settlement-arithmetic paragraph moved to /docs. The panel keeps
+// @facts        the numbers it read, the two verdicts, and one caption.
 // @implements export function FillsPanel(): JSX.Element
 // @forbidden  proving against a root computed here instead of the published one
 // @forbidden  a read on mount
 // @invariant  1. A fill row appears only after the fill list was read.
 // @invariant  2. The two verdicts are reported separately and never merged.
 // @ac         renders unconfigured, naming the missing variable.
-// @verify     cd app && npm test -- batchScreen
+// @verify     cd app && npm test -- batch
 // └── END CONTRACT ───────────────────────────────────────────────────────────
 
 import { useState } from 'react';
@@ -144,9 +147,8 @@ export function FillsPanel() {
 
         {data === null ? (
           <p className="ap-reason">
-            A fill is provable against the published root by a Merkle path, so you can check your
-            own execution without downloading everyone else&rsquo;s — and without us being able to
-            show you a different list from the one we settled.
+            Not read yet. A fill is provable against the published root, so you can check your own
+            execution without downloading everyone else&rsquo;s.
           </p>
         ) : (
           <>
@@ -180,8 +182,7 @@ export function FillsPanel() {
               </p>
               {data.fills.length === 0 ? (
                 <p className="ap-reason">
-                  No fills. An empty fill set roots to 32 zero bytes — not to a hash of nothing —
-                  and that is what is printed above.
+                  No fills. An empty set roots to 32 zero bytes, which is what is printed above.
                 </p>
               ) : null}
             </div>
@@ -233,11 +234,8 @@ export function FillsPanel() {
         )}
 
         <p className="ap-reason">
-          Settlement is value-preserving or it reverts, and the fee is an explicit third term rather
-          than a silent shortfall: debits equal credits plus fee. Under-funded accounts are handled
-          by a rule, not by a rejection — the ledger freezes at close and any fill an account cannot
-          cover is truncated deterministically, with the counterparty recomputed symmetrically from
-          the same frozen snapshot.
+          Fills are pushed, not claimed. Settlement is value-preserving or it reverts: debits equal
+          credits plus fee.
         </p>
       </div>
     </section>

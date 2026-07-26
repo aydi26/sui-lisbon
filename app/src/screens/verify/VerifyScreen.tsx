@@ -51,6 +51,12 @@
 // @facts        4 000 seeded books. <ParityPanel/> renders it FIRST, above
 // @facts        everything this screen gets right, because volunteering the one
 // @facts        failure is worth more than any tick beneath it.
+// @facts      TRIMMED (2026-07-26): /docs now owns the teaching, so the
+// @facts        six-step walkthrough of the rule above is a ONE-PARAGRAPH caption
+// @facts        on screen (<DeterminismPanel/>) and the full statement lives in
+// @facts        the banner and on /docs. NOTHING VERIFIABLE WAS TRIMMED — the
+// @facts        parity failure, the recomputed conservation identities, the
+// @facts        'na' escrow leg and the committee probe are the screen.
 // @implements export function VerifyScreen(): JSX.Element
 // @forbidden  a second implementation of clearing, the Merkle tree or the Seal
 //             identity encoding in app/ — import the shared one or render
@@ -126,14 +132,17 @@ function wiringRows(): readonly WiringRow[] {
 function WiringCensus() {
   const rows = wiringRows();
   return (
-    <section className="aphotic-card">
-      <h3 style={{ fontSize: 'var(--text-md)', margin: 0 }}>What this build points at</h3>
-      <p className="aphotic-muted" style={{ marginTop: 0 }}>
-        Read from the bundle, not from a document. These values are inlined at build time, so this
-        table is the only reliable way to know what a deployed page is actually talking to — an
-        empty row means the build shipped without it.
-      </p>
-      <ul className="ap-kv">
+    <section className="ap-panel">
+      <div className="ap-panel-head">
+        <h3 className="ap-panel-title">What this build points at</h3>
+        <span className="ap-badge">{rows.filter((r) => r.value.length === 0).length} unset</span>
+      </div>
+      <div className="ap-panel-body">
+        <p className="ap-reason">
+          Read from the bundle, not from a document — an empty row means the build shipped without
+          it.
+        </p>
+        <ul className="ap-kv">
         {rows.map((row) => (
           <li key={row.label}>
             <span>{row.label}</span>
@@ -154,63 +163,36 @@ function WiringCensus() {
             {row.note !== undefined ? <span className="aphotic-muted">{row.note}</span> : null}
           </li>
         ))}
-      </ul>
+        </ul>
+      </div>
     </section>
   );
 }
 
+/**
+ * The clearing rule, as a caption rather than a lecture.
+ *
+ * The step-by-step walkthrough is TEACHING and now lives on /docs. What has to
+ * stay on a verification screen is the shape of the rule the panel above says
+ * Move disagrees with — every tie named, so a reader can see there is no
+ * implementation freedom left for two honest implementations to differ over.
+ */
 function DeterminismPanel() {
   return (
-    <section className="aphotic-card">
-      <h3 style={{ fontSize: 'var(--text-md)', margin: 0 }}>The rule, in full</h3>
-      <p className="aphotic-muted" style={{ marginTop: 0 }}>
-        Written out because a verification surface that asks you to trust the summary is not a
-        verification surface. Every tie below is broken, so there is no implementation freedom left
-        for two honest implementations to disagree over.
-      </p>
-      <ol style={{ color: 'var(--text-secondary)', fontSize: 'var(--text-sm)', paddingLeft: '1.2rem' }}>
-        <li>
-          <strong>Canonical order.</strong> Bids by limit price descending, then submitter bytes
-          ascending, then submission index. Asks the same with price ascending.
-        </li>
-        <li>
-          <strong>Price discovery.</strong> The candidates are the distinct limit prices actually
-          present. For each, executable volume is the smaller of demand and supply. Take the maximum
-          volume; break ties by the smallest imbalance; break remaining ties by the lowest price.
-          Integer arithmetic throughout — there is no floating point anywhere in the path.
-        </li>
-        <li>
-          <strong>Allocation.</strong> Orders strictly inside the cross fill completely. Orders
-          exactly at the clearing price share the residual pro-rata, rounded down, and the leftover
-          sats go one at a time to the largest fractional remainders, ties broken by canonical
-          position.
-        </li>
-        <li>
-          <strong>Limit safety.</strong> Asserted per fill rather than assumed from the construction:
-          a bid never pays above its limit, an ask never sells below its.
-        </li>
-        <li>
-          <strong>Rounding.</strong> Quote conversion rounds toward the vault, so the dust residual
-          can never be negative.
-        </li>
-        <li>
-          <strong>The root.</strong> A blake2b256 Merkle tree over domain-separated fill leaves in
-          canonical order, odd nodes duplicated. Publishing the root is what makes an individual
-          fill provable without publishing a list.
-        </li>
-      </ol>
-      <p className="ap-reason">
-        Settlement is value-preserving or it reverts, and the fee is an explicit third term rather
-        than a silent shortfall: debits equal credits plus fee. Under-funded accounts are handled by
-        a rule, not by a rejection — the ledger freezes at close and any fill an account cannot cover
-        is truncated deterministically, with the counterparty recomputed symmetrically from the same
-        frozen snapshot.
-      </p>
-      <p className="ap-reason">
-        Fills are pushed rather than claimed. A pull model would leave an unbounded unclaimed
-        liability that has to be excluded from NAV and reconciled forever; pushing makes settlement
-        terminal, and the proof-of-fill button below is what the claim story was actually for.
-      </p>
+    <section className="ap-panel">
+      <div className="ap-panel-head">
+        <h3 className="ap-panel-title">The rule being compared</h3>
+        <span className="ap-badge">integer arithmetic only</span>
+      </div>
+      <div className="ap-panel-body">
+        <p className="ap-reason">
+          Canonical order (price, then submitter bytes, then index) → price discovery over the
+          distinct limits present, max volume, ties broken by smallest imbalance then lowest price →
+          strictly-inside orders fill fully, the price level pro-rates with the leftover sats going
+          to the largest fractional remainders → limit safety asserted per fill → rounding toward
+          the vault → a blake2b256 Merkle root over the fill leaves. Step by step on Docs.
+        </p>
+      </div>
     </section>
   );
 }
@@ -221,9 +203,8 @@ export function VerifyScreen() {
       <header className="ap-screen-head">
         <h1>Recompute it yourself</h1>
         <p>
-          Same order set, same price, always. Everything on this page is either something you can
-          check without trusting us, or a statement that we cannot yet let you check it. The first
-          panel is the one we would most like to have been able to leave out.
+          Everything below is either something you can check without trusting us, or a statement
+          that we cannot yet let you check it.
         </p>
       </header>
 

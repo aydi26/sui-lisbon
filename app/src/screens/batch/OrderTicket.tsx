@@ -24,14 +24,23 @@
 // @facts      BOTH LADDERS ARE COARSE. A precise limit price fingerprints an order
 // @facts        as effectively as a precise amount, and a fingerprinted order in a
 // @facts        uniform batch has an anonymity set of one.
+// @facts      TRIMMED (2026-07-26): the reasoning behind the ladders, the
+// @facts        commitment and the cut-off is TEACHING and lives on /docs. This
+// @facts        ticket keeps one-line captions and the refusals — a caption is
+// @facts        what a control needs; a lecture is what a docs page is for.
+// @facts      ⚠ THE SEAL LINE IS UNCONDITIONAL AND IS THE ONLY PLACE THIS ROUTE
+// @facts        STATES D9 SINCE THE COMMITTEE DASHBOARD MOVED TO /verify: an
+// @facts        order that cannot be sealed is not submitted, and we never fall
+// @facts        back to plaintext. Do not gate it on a wallet or a read.
 // @implements export function OrderTicket(props): JSX.Element
 // @forbidden  a free-form amount OR price field
 // @forbidden  submitting anything that was not sealed
 // @invariant  1. Every failure that can be known before the wallet opens is stated
 //                on the disabled control.
 // @invariant  2. The cut-off reason names the contract rule, not a UI preference.
+// @invariant  3. The no-plaintext-fallback line renders unconditionally.
 // @ac         renders unconfigured with submit disabled and the reason stated.
-// @verify     cd app && npm test -- batchScreen
+// @verify     cd app && npm test -- batch
 // └── END CONTRACT ───────────────────────────────────────────────────────────
 
 import { useState } from 'react';
@@ -95,11 +104,11 @@ export function OrderTicket({ live, nowMs, onSubmitted }: OrderTicketProps) {
           : live === null
             ? 'Read the live batch first.'
             : batch === null
-              ? 'No batch has been opened yet. Opening one is permissionless — anyone can, and the close time is not theirs to choose.'
+              ? 'No batch is open. Opening one is permissionless.'
               : batch.state !== 0
                 ? `This batch is ${['OPEN', 'SEALED', 'CLEARING', 'SETTLED'][batch.state] ?? batch.state}, so it no longer accepts orders.`
                 : insideCutoff
-                  ? 'Submission is closed for the last 60 seconds before the boundary. The contract asserts it — a submit landing there would abort ESubmitWindowClosed — so that no submit can race an early key release caused by key-server clock skew.'
+                  ? 'Submission is closed for the last 60 s before the boundary — the contract asserts it (ESubmitWindowClosed), so no submit can race an early key release.'
                   : denom === null
                     ? 'Choose a size.'
                     : address === null
@@ -205,11 +214,9 @@ export function OrderTicket({ live, nowMs, onSubmitted }: OrderTicketProps) {
           </div>
           <p className="ap-reason">
             {side === 'bid'
-              ? 'You pay at most par minus this discount. Orders strictly inside the cross fill fully; orders exactly at the clearing price are pro-rated.'
-              : 'You accept at least par minus this discount. Limit safety is asserted per fill, not merely by construction.'}{' '}
-            The price ladder is coarse for the same reason the size ladder is: a precise limit price
-            fingerprints an order just as effectively as a precise amount. Par is one quote sat per
-            base sat — {formatSats(priceForDiscountBps(0n))} at the contract&rsquo;s price scale.
+              ? 'You pay at most par minus this discount.'
+              : 'You accept at least par minus this discount.'}{' '}
+            Coarse on purpose: a precise price fingerprints an order as well as a precise amount.
           </p>
         </div>
 
@@ -242,16 +249,20 @@ export function OrderTicket({ live, nowMs, onSubmitted }: OrderTicketProps) {
             Submitted. Commitment{' '}
             <span className="aphotic-mono">{truncateMiddle(receipt.commitment, 8)}</span>, ciphertext
             at Walrus blob <span className="aphotic-mono">{truncateMiddle(receipt.blobId, 8)}</span>.
-            Keep nothing: after close, anyone can fetch that blob, obtain the key shares and reveal
-            it for you.
           </p>
         )}
 
+        {/* Two lines, both load-bearing: what lands on chain, and the refusal.
+            Neither is gated on a wallet, a read or a config — the second one is
+            this route's only statement of D9. */}
         <p className="ap-reason">
-          Nothing you choose here is written on chain in the clear. What lands is a commitment to
-          the plaintext order, a Walrus blob id, and a reference to your internal balance — no
-          amount, no side, no price. The commitment binds the plaintext rather than the ciphertext,
-          so nobody can publish one blob and later claim a different order decrypted from it.
+          What lands on chain is a commitment that binds the plaintext, a blob id and a reference to
+          your internal balance: no amount, no side, no price.
+        </p>
+        <p className="ap-reason">
+          The order is sealed to the {config.seal.threshold}-of-
+          {Math.max(config.seal.keyServerIds.length, 5)} Seal committee before it is published. With
+          no committee wired this control refuses — we never fall back to plaintext.
         </p>
       </div>
     </section>

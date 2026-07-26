@@ -119,9 +119,8 @@ export function HistoryPanel() {
 
         {data === null ? (
           <p className="ap-reason">
-            Every batch that has ever run, assembled from its four events — opened, closed, cleared,
-            settled — with each stage linking to the transaction it landed in. Nothing is
-            interpolated: a stage that never happened stays a dash.
+            Not read yet. Every batch, assembled from its four events, each stage linking to its
+            transaction. Nothing is interpolated: a stage that never happened stays a dash.
           </p>
         ) : (
           <>
@@ -181,17 +180,16 @@ export function HistoryPanel() {
               <span className="ap-label">Valuations</span>
               {proposal === null ? (
                 <p className="ap-reason">
-                  No proposal is outstanding right now, so there is no live digest to check. A
-                  digest is an <em>argument</em> to <code>approve_nav</code> and does not appear in
-                  the event, which is why the rows below link to their transactions instead of
-                  printing one.
+                  No proposal outstanding, so there is no live digest to check. A digest is an{' '}
+                  <em>argument</em> to <code>approve_nav</code> and is not in the event, so the rows
+                  below link to their transactions instead of printing one.
                 </p>
               ) : (
                 <p className={digestAgrees === true ? 'ap-reason ap-reason--ok' : 'ap-reason ap-reason--error'}>
                   Live proposal for epoch {proposal.epoch.toString()}, digest{' '}
                   <span className="aphotic-mono">{truncateMiddle(toHex(proposal.digest), 10)}</span>.{' '}
                   {digestAgrees === true
-                    ? 'Recomputed here from its ten fields and identical, byte for byte — that is the number the admin multisig has to sign, and a keeper cannot swap different numbers underneath it.'
+                    ? 'Recomputed here from its ten fields and identical, byte for byte — that is the number the multisig signs.'
                     : 'It does NOT match the digest recomputed here from the fields the contract reports. Do not approve it.'}
                 </p>
               )}

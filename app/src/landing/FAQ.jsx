@@ -23,10 +23,20 @@
 // @implements export default function FAQ()
 // @forbidden  calling hBTC trustless, non-custodial, or "just Bitcoin" — G8
 // @forbidden  implying Aphotic can expedite a native-BTC withdrawal — G3
+// @facts      WEIGHTING: answer 1 opens on the VAULT and describes it in full
+// @facts        before the auction is mentioned at all, and says outright that the
+// @facts        auction needs a two-sided market to be worth anything. That is the
+// @facts        same asymmetry the landing cards and the nav express. It is a
+// @facts        presentation decision, not a deletion: answers 2-6 are untouched
+// @facts        and the auction keeps its own answer (3).
 // @invariant  1. ITEMS.length === 6.
 // @invariant  2. The hBTC answer states the custodial-threshold trust model plainly.
 // @invariant  3. One item is entirely about what v1 does NOT hide, including that
 //                note spends are LINKABLE. It is never removed to tighten the pitch.
+// @invariant  4. Answer 3 keeps the queue-leak story in full — the four leaked
+//                fields and "meaningless" rather than "hard". Leading with the
+//                vault does not mean dropping the leak: the leak is what creates
+//                the discount the vault harvests.
 // @ac         the on-record honesty lines appear here, in the answers a reader is
 //             most likely to open: hBTC is custodial-threshold wrapped BTC · v1
 //             note spends are LINKABLE (the Merkle path is public, so the leaf
@@ -41,7 +51,7 @@ import React, { useState } from "react";
 const ITEMS = [
   {
     q: "What is Aphotic?",
-    a: "Two things sharing one balance sheet. A redemption-carry vault buys hBTC at a discount on the secondary market, redeems it one-for-one through the Hashi withdrawal queue, and captures the spread, with idle capital earning lending yield between carries. A sealed-order batch auction clears hBTC at a uniform price twice daily, with orders encrypted until the batch closes, so opposing flow crosses directly and never touches the queue. The vault ships first because it does not depend on two-sided flow; the auction is the differentiator but needs a market.",
+    a: "A redemption-carry vault, first and mostly. It buys hBTC at a discount on the secondary market, redeems it one-for-one through the Hashi withdrawal queue, and captures the spread, with idle capital earning lending yield between carries. It works from the first deposit, because it needs one side of the market rather than two. Sharing the same balance sheet, second, is a sealed-order batch auction that clears hBTC at a uniform price twice daily, with orders encrypted until the batch closes, so opposing flow crosses directly and never touches the queue. That one is the differentiator, but it needs a two-sided market to be worth anything, and pretending otherwise would be the easiest lie on this page.",
   },
   {
     q: "Why does the spread exist at all?",

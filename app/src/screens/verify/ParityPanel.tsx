@@ -32,6 +32,12 @@
 // @facts      WHY THIS IS THE FIRST PANEL: a verification screen's only value is
 // @facts        being believed when it says something is fine. Volunteering the one
 // @facts        thing that is not fine is worth more than any green tick.
+// @facts      2026-07-26: the rest of /verify was trimmed for the new /docs page.
+// @facts        THIS PANEL WAS NOT. It moved to the `.ap-panel` grammar and lost
+// @facts        one sentence of throat-clearing; every figure, every consequence
+// @facts        and the release-blocker framing are untouched, and it still
+// @facts        renders FIRST. A trim that quietened this panel would be the one
+// @facts        edit that costs the screen its reason to exist.
 // @implements export const DIVERGENCES · export function ParityPanel(): JSX.Element
 // @forbidden  softening "release blocker", the 15 % figure, or the word NEVER in D1
 // @forbidden  claiming bit-identical parity anywhere in this app
@@ -136,55 +142,50 @@ function Row({ d }: { readonly d: Divergence }) {
  */
 export function ParityPanel() {
   return (
-    <section className="aphotic-card" aria-label="Clearing parity — the claim does not currently hold">
-      <div className="ap-row" style={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
-        <h3 style={{ fontSize: 'var(--text-md)', margin: 0 }}>
-          The parity claim does not currently hold
-        </h3>
+    <section className="ap-panel" aria-label="Clearing parity — the claim does not currently hold">
+      <div className="ap-panel-head">
+        <h3 className="ap-panel-title">The parity claim does not currently hold</h3>
         <span className="ap-chip ap-chip--warn">
           <span className="ap-chip-dot" aria-hidden="true" />
           release blocker
         </span>
       </div>
 
-      <p className="ap-msg ap-msg--bad" style={{ marginTop: '0.75rem' }}>
-        A divergence between clearing implementations is a <strong>release blocker</strong>. We wrote a
-        third implementation, in Rust, specifically to check for one — and it found one. The
-        TypeScript, the 46 golden fixtures and the Rust spec engine all agree with each other.{' '}
-        <strong>Move differs</strong>, and Move is what settles.
-      </p>
+      <div className="ap-panel-body" style={{ display: 'grid', gap: 'var(--space-4)' }}>
+        <p className="ap-msg ap-msg--bad" style={{ margin: 0 }}>
+          A divergence between clearing implementations is a <strong>release blocker</strong>. We
+          wrote a third implementation, in Rust, specifically to check for one — and it found one.
+          The TypeScript, the 46 golden fixtures and the Rust spec engine all agree with each other.{' '}
+          <strong>Move differs</strong>, and Move is what settles.
+        </p>
 
-      <div className="ap-grid ap-grid--2" style={{ marginTop: '0.75rem' }}>
-        <div className="ap-metric">
-          <div className="ap-metric-label">Seeded books in full agreement</div>
-          <div className="ap-metric-value">3 407 / 4 000</div>
-          <div className="ap-metric-sub">85 % — so 15 % diverge</div>
+        <div className="ap-grid ap-grid--2">
+          <div className="ap-metric">
+            <div className="ap-metric-label">Seeded books in full agreement</div>
+            <div className="ap-metric-value">3 407 / 4 000</div>
+            <div className="ap-metric-sub">85 % — so 15 % diverge</div>
+          </div>
+          <div className="ap-metric">
+            <div className="ap-metric-label">Named divergences</div>
+            <div className="ap-metric-value">5</div>
+            <div className="ap-metric-sub">two of them are design questions, not bugs</div>
+          </div>
         </div>
-        <div className="ap-metric">
-          <div className="ap-metric-label">Named divergences</div>
-          <div className="ap-metric-value">5</div>
-          <div className="ap-metric-sub">two of them are design questions, not bugs</div>
-        </div>
+
+        <ul className="ap-rows" style={{ listStyle: 'none', padding: 0 }}>
+          {DIVERGENCES.map((d) => (
+            <Row key={d.id} d={d} />
+          ))}
+        </ul>
+
+        <p className="ap-reason">
+          Which side is right is a human decision, which is why the Rust crate implements{' '}
+          <strong>both</strong> engines rather than picking a winner. Until D1 is resolved we claim
+          bit-identical parity nowhere, and this app never compares a locally recomputed root
+          against the published one as though a match were expected. Full detail:{' '}
+          <code>docs/DESIGN-V2.md</code> §5ter and <code>clearing-rs/tests/divergence.rs</code>.
+        </p>
       </div>
-
-      <ul className="ap-rows" style={{ marginTop: '0.75rem', listStyle: 'none', padding: 0 }}>
-        {DIVERGENCES.map((d) => (
-          <Row key={d.id} d={d} />
-        ))}
-      </ul>
-
-      <p className="ap-reason">
-        Which side is right is a human decision rather than a mechanical one, which is why the Rust
-        crate deliberately implements <strong>both</strong> engines instead of picking a winner. What
-        is not optional is saying so: a parity claim that has not been checked is a guess, and one
-        that has been checked and failed is a bug. Until D1 is resolved we do not claim bit-identical
-        parity anywhere, and this app never compares a locally recomputed root against the published
-        one as though a match were expected.
-      </p>
-      <p className="aphotic-muted" style={{ fontSize: 'var(--text-sm)', margin: 0 }}>
-        Full detail: <code>docs/DESIGN-V2.md</code> §5ter and{' '}
-        <code>clearing-rs/tests/divergence.rs</code>.
-      </p>
     </section>
   );
 }

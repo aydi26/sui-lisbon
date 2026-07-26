@@ -28,6 +28,11 @@
 // @facts      A SESSION KEY IS A SIGNATURE OVER A PERSONAL MESSAGE, not a
 // @facts        transaction. It authorises the key servers to answer THIS browser
 // @facts        for a bounded time; it moves nothing and can sign nothing.
+// @facts      TRIMMED (2026-07-26): the four-state walkthrough and the reveal
+// @facts        essay moved to /docs; the panel keeps the controls, the state it
+// @facts        actually read, and ONE line saying reveal is permissionless —
+// @facts        which is not decoration, it is why "Reveal all" may touch orders
+// @facts        that are not yours.
 // @implements export function LifecyclePanel(props): JSX.Element
 // @forbidden  claiming an order is revealed before the transaction succeeded
 // @forbidden  decrypting before close — the policy would deny, and pretending
@@ -35,7 +40,7 @@
 // @invariant  1. Reveal is offered only in SEALED, only inside the grace window.
 // @invariant  2. A plaintext whose commitment does not match is never submitted.
 // @ac         renders unconfigured with every control disabled and stated.
-// @verify     cd app && npm test -- batchScreen
+// @verify     cd app && npm test -- batch
 // └── END CONTRACT ───────────────────────────────────────────────────────────
 
 import { useRef, useState } from 'react';
@@ -214,15 +219,11 @@ export function LifecyclePanel({ live, nowMs, onChanged }: LifecyclePanelProps) 
 
         {live === null ? (
           <p className="ap-reason">
-            Not read yet. A batch holds at most {config.constants.maxBatchSize} orders, with a hard
-            ceiling of {config.constants.hardMaxBatchSize} asserted in the setter — the binding
-            limits are a thousand object-store entries and 1,024 events per transaction, neither of
-            which can be raised by paying more gas.
+            Not read yet. A batch holds at most {config.constants.maxBatchSize} orders.
           </p>
         ) : batch === null ? (
           <p className="ap-reason">
-            No batch has ever been opened on this registry. Opening one is permissionless and takes
-            no timestamp: <code>close_ms</code> is derived from the cadence.
+            No batch has ever been opened on this registry. Opening one is permissionless.
           </p>
         ) : (
           <div className="ap-grid ap-grid--2">
@@ -303,10 +304,8 @@ export function LifecyclePanel({ live, nowMs, onChanged }: LifecyclePanelProps) 
               ))}
             </ul>
             <p className="ap-reason">
-              Everything above is public from the moment of submission, and none of it says how
-              much, which side, or at what price. What is hidden before close is hidden from
-              everyone — subject to the Seal threshold. What is hidden after close is hidden from
-              nobody, including the orders that went unfilled.
+              Public from the moment of submission, and none of it says how much, which side, or at
+              what price. After close, nothing stays hidden — including unfilled orders.
             </p>
           </div>
         )}
@@ -347,12 +346,11 @@ export function LifecyclePanel({ live, nowMs, onChanged }: LifecyclePanelProps) 
           {work === null ? null : <span className="aphotic-muted">{work}</span>}
         </div>
 
+        {/* One line, but not an optional one: it is why "Reveal all" acts on
+            other people's orders, and it is the answer to the obvious objection. */}
         <p className="ap-reason">
-          <strong>Reveal is permissionless, and that is the design.</strong> The time-lock policy
-          checks the policy version and the clock, and nothing else — no sender. So after close, any
-          passer-by can fetch the key shares and reveal every order in the batch, whether or not the
-          submitter is still online and whether or not they would like it revealed. Nobody can grief
-          a batch by going offline, which is precisely how commit–reveal schemes die.
+          Reveal is permissionless — the policy has no sender check — so nobody can grief a batch by
+          going offline.
         </p>
 
         {tx.last === null ? null : tx.last.status === 'success' ? (

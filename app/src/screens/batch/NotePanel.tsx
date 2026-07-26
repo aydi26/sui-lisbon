@@ -25,6 +25,9 @@
 // @facts        unlinkability. This panel says so where the spend happens.
 // @facts      Escrow is topped up INDEPENDENTLY of trading on purpose: funding at
 // @facts        order time leaks timing even when denominations hide size.
+// @facts      TRIMMED (2026-07-26): the note/tree/nullifier explanation moved to
+// @facts        /docs. TWO pieces of copy here are DISCLOSURES, not teaching, and
+// @facts        stay whatever else goes: the show-once secret warning, and D8.
 // @implements export function NotePanel(props): JSX.Element
 // @forbidden  a free-form amount field — the ladder is the only size control
 // @forbidden  an <input> anywhere on this route (there is a test)
@@ -34,7 +37,7 @@
 // @invariant  2. A spend is never offered unless the locally rebuilt path folds to
 //                the published root.
 // @ac         renders unconfigured with every control disabled and stated.
-// @verify     cd app && npm test -- batchScreen
+// @verify     cd app && npm test -- batch
 // └── END CONTRACT ───────────────────────────────────────────────────────────
 
 import { useState } from 'react';
@@ -251,10 +254,8 @@ export function NotePanel({ typeArgs, onChanged }: NotePanelProps) {
 
         {data === null ? (
           <p className="ap-reason">
-            Orders draw on a persistent internal balance topped up independently of trading. That is
-            not a convenience: funding escrow at order time leaks timing even when the denominations
-            hide size. Escrow custody also sits outside the vault&rsquo;s NAV, so a settlement
-            cannot move assets between the moment a NAV is proposed and the moment it is approved.
+            Orders draw on a persistent balance, topped up independently of trading: funding it at
+            order time leaks timing even when the denominations hide size.
           </p>
         ) : (
           <div className="ap-grid ap-grid--2">
@@ -309,11 +310,13 @@ export function NotePanel({ typeArgs, onChanged }: NotePanelProps) {
 
         {fresh === null ? null : (
           <div className="ap-gate-section">
+            {/* The one warning on this route that must never be shortened into a
+                footnote: nothing on chain can reconstruct this secret, so losing
+                it is terminal for the note. */}
             <p className="ap-reason ap-reason--error" style={{ fontSize: 'var(--text-sm)' }}>
               <strong>This is the only time this secret is shown.</strong> It exists in this browser
-              and nowhere else — the contract sees only its commitment, and nothing on chain can
-              reconstruct it. If you lose it, this note is unspendable by you, by us, and by
-              everyone, permanently. Download it before you go any further.
+              and nowhere else — the contract sees only its commitment. Lose it and this note is
+              unspendable by you, by us, and by everyone, permanently. Download it now.
             </p>
             <ul className="ap-rows ap-gate-rows">
               <li>
@@ -378,8 +381,8 @@ export function NotePanel({ typeArgs, onChanged }: NotePanelProps) {
           <span className="ap-label">Notes held in this browser</span>
           {mine.length === 0 ? (
             <p className="ap-reason">
-              None. Notes live in this browser&rsquo;s storage and in the files you downloaded —
-              never on a server of ours.
+              None. Notes live in this browser and in the files you downloaded — never on a server
+              of ours.
             </p>
           ) : (
             <ul className="ap-rows ap-gate-rows">
@@ -413,11 +416,11 @@ export function NotePanel({ typeArgs, onChanged }: NotePanelProps) {
               ))}
             </ul>
           )}
+          {/* D8, unconditional and unsoftened. It renders whether or not a note
+              exists, because it is the honest caveat on the whole mechanism. */}
           <p className="ap-reason ap-reason--warn">
             A spend publishes the Merkle path in the clear, so <strong>the leaf index names the
-            note</strong> and the spend is linkable to the deposit that funded it. v1 delivers
-            uniformity, not unlinkability — the commitment and nullifier machinery earns its keep by
-            making the zero-knowledge upgrade a verifier swap, not a redesign.
+            note</strong>: v1 delivers uniformity, not unlinkability.
           </p>
         </div>
 

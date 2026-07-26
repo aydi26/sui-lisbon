@@ -10,9 +10,18 @@
 // @facts        a full-bleed hero with its own nav) but STILL carries the trust
 // @facts        disclosure. Every other route gets the frame:
 // @facts          /        landing
-// @facts          /vault   redemption-carry vault
-// @facts          /batch   sealed-order batch auction
+// @facts          /vault   redemption-carry vault      — PRIMARY
+// @facts          /batch   sealed-order batch auction  — secondary, quieted
 // @facts          /verify  recompute it yourself
+// @facts          /docs    what is built and what is not
+// @facts      NAV WEIGHTING (presentation only — nothing is removed or disabled):
+// @facts        the vault leads because it is the product that ships and works from
+// @facts        the first deposit; it needs one side of the market. The batch
+// @facts        auction is the differentiator but needs two sides, so it is present,
+// @facts        routable and fully working — just not typeset as the vault's peer.
+// @facts        `NAV[].weight` is a class-name switch and nothing else. If you are
+// @facts        tempted to "clean this up" by deleting /batch: the Move module is
+// @facts        published and the screen works. Quieting is not deleting.
 // @facts      <WalletBar/> lives in the SHELL, not per screen: one session, one
 // @facts        connect affordance, visible from every app route. Both sign-in
 // @facts        paths (browser extension and Enoki zkLogin) are wallet-standard
@@ -45,7 +54,11 @@
 // @invariant  2. A blocking config problem is stated on screen before any screen
 //                offers a control that depends on it.
 // @invariant  3. A screen that throws never blanks the app — the nav survives.
+// @invariant  4. NAV[0] is /vault. Every NAV entry stays reachable at full
+//                function regardless of its weight — weight is typography.
 // @ac         all four routes render with no wallet and no published package.
+// @ac         the nav names Vault before Batch, and Batch carries a hint saying it
+//             is the second surface rather than being dropped.
 // @verify     cd app && npm test -- routes
 // @verify     cd app && npm run build
 // └── END CONTRACT ───────────────────────────────────────────────────────────
@@ -57,11 +70,23 @@ import { EpochClock, WalletBar } from './components';
 import { config, configProblems } from './config';
 import { useAphoticSession } from './session';
 
+/**
+ * The nav is WEIGHTED, not merely ordered. The vault is the product that ships
+ * and the one a visitor should meet first; the batch auction is a real, working
+ * second surface that needs a two-sided market the vault does not, so it is
+ * present and reachable but deliberately quieter. `weight` drives nothing but a
+ * class name — no route is hidden, disabled or removed.
+ */
 const NAV = [
-  { to: '/vault', label: 'Vault' },
-  { to: '/batch', label: 'Batch' },
-  { to: '/verify', label: 'Verify' },
-  { to: '/docs', label: 'Docs' },
+  { to: '/vault', label: 'Vault', weight: 'primary', hint: 'The redemption-carry vault — the product.' },
+  {
+    to: '/batch',
+    label: 'Batch',
+    weight: 'quiet',
+    hint: 'Sealed-order batch auction — the second surface, and it needs a two-sided market.',
+  },
+  { to: '/verify', label: 'Verify', weight: 'default', hint: 'Recompute the published state yourself.' },
+  { to: '/docs', label: 'Docs', weight: 'default', hint: 'What is built, what is not, and why.' },
 ] as const;
 
 /**
@@ -179,7 +204,16 @@ export function App() {
 
           <nav className="aphotic-navlinks" aria-label="Application">
             {NAV.map((item) => (
-              <NavLink key={item.to} to={item.to} className="aphotic-navlink">
+              <NavLink
+                key={item.to}
+                to={item.to}
+                title={item.hint}
+                className={
+                  item.weight === 'default'
+                    ? 'aphotic-navlink'
+                    : `aphotic-navlink aphotic-navlink--${item.weight}`
+                }
+              >
                 {item.label}
               </NavLink>
             ))}

@@ -26,6 +26,16 @@
 /* @facts        .hero height 360vh · .hscroll-section 300vh · .hscroll-track    */
 /* @facts          300vw · .beam-section 200vh · .big-title font-size 44vw       */
 /* @facts        every rgba(255,255,255,x) value and the #000 backgrounds        */
+/* @facts      ADDED AFTER THE PORT (the only rules that are not upstream):      */
+/* @facts        .hscroll-lede — the small uppercase weight line above each card */
+/* @facts          paragraph, saying which product the card is and whether it    */
+/* @facts          needs one side of the market or two.                          */
+/* @facts        .hscroll-panel.p1 .hscroll-content-text p — card 1 is the vault */
+/* @facts          and carries the most copy, so its measure is one step tighter */
+/* @facts          (2.1rem / 1.4rem) so the longest paragraph still clears the   */
+/* @facts          18vw title behind it. Both are TYPE ONLY: no height, width,   */
+/* @facts          position or transform is touched, so the scroll maths in      */
+/* @facts          HorizontalScroll.jsx is untouched by construction.            */
 /* @implements the .landing/.landing-nav style scope for src/landing/*.jsx       */
 /* @forbidden  a 4th hscroll card without changing 300vh + 300vw together        */
 /* @forbidden  overflow-x: hidden on .landing — it breaks position: sticky       */
@@ -297,12 +307,28 @@ body:has(.landing) {
   max-width: 48.75rem;
   color: #fff;
 }
+/* The card's weight line: which of the two products this is, and what it needs to
+   work. Small, uppercase and quiet — the paragraph stays the loud thing. */
+.landing .hscroll-lede {
+  font-family: 'Cravelo', sans-serif;
+  font-size: 0.85rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.55);
+  margin-bottom: 0.9rem;
+}
 .landing .hscroll-content-text p {
   font-family: 'Cravelo', sans-serif;
   font-size: 2.4rem;
   color: rgba(255,255,255,0.92);
   line-height: 1.35;
   letter-spacing: -0.01em;
+}
+/* Card 1 is the vault and carries the most copy of the three; hold its measure a
+   step tighter so the longest paragraph still clears the big title behind it. */
+.landing .hscroll-panel.p1 .hscroll-content-text p {
+  font-size: 2.1rem;
+  line-height: 1.3;
 }
 .landing .hscroll-content-icon {
   width: 8.75rem;
@@ -337,6 +363,8 @@ body:has(.landing) {
   .landing .hscroll-bigtitle { font-size: 22vw; }
   .landing .hscroll-content { flex-direction: column; align-items: flex-start; }
   .landing .hscroll-content-text p { font-size: 1.6rem; }
+  .landing .hscroll-panel.p1 .hscroll-content-text p { font-size: 1.4rem; }
+  .landing .hscroll-lede { font-size: 0.72rem; margin-bottom: 0.6rem; }
   .landing .hscroll-content-icon { width: 5rem; height: 5rem; }
 }
 

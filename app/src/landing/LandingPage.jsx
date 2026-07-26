@@ -17,6 +17,12 @@
 // @facts        primary CTA, "/verify" for the secondary. A stale target does not
 // @facts        404 — the catch-all bounces it back to "/", which during a demo
 // @facts        looks like a button that does nothing.
+// @facts      WEIGHTING: every CTA on this page — the nav button and the gradient
+// @facts        button in .cta-section — routes to /vault, and the CTA paragraph
+// @facts        now leads with the vault and names the auction second, as the
+// @facts        thing that needs a two-sided market. There is NO CTA to /batch on
+// @facts        the landing page; the route is reached from the app nav. That is a
+// @facts        presentation decision — /batch works and is not hidden.
 // @facts      Ported VERBATIM from the upstream landing page (docs/RECON.md R13
 // @facts        names the repo + path; never re-derive it here).
 // @facts        Every timing constant, scroll formula and NumberFlow config is
@@ -190,7 +196,7 @@ export default function LandingPage({ onConnect, connecting = false, refreshKey 
 
       <section className="cta-section">
         <h2>Bitcoin, Working Quietly</h2>
-        <p>Two things sharing one balance sheet: a vault that buys the redemption claim below par and redeems it at par, and a sealed-order auction that clears hBTC at one uniform price twice a day. Sui testnet · Bitcoin signet.</p>
+        <p>The vault is the product: buy the redemption claim below par, redeem it at par, lend the idle balance in between. It works from the first deposit, because it needs one side of the market. A sealed-order auction shares the same balance sheet and clears twice a day — second, because it needs both. Sui testnet · Bitcoin signet.</p>
         <div className="cta-buttons">
           <button className="gradient-btn" onClick={handleEnter} disabled={connecting}>
             {connecting ? "Connecting..." : "Enter the vault"}

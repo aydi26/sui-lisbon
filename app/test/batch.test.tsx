@@ -29,8 +29,16 @@
 // @facts      ⚠ D8 — v1 note spends are LINKABLE (the Merkle path is in the clear,
 // @facts        so `leaf_index` names the note). The disclosure renders
 // @facts        UNCONDITIONALLY — it is not gated on a wallet, a read or a config.
+// @facts      2026-07-26 — /batch WAS TRIMMED for the new /docs page and
+// @facts        de-emphasised behind the vault. This file is now also the guard
+// @facts        on that trim, in BOTH directions: the pitch essay, the
+// @facts        four-state walkthrough, the committee dashboard and the second
+// @facts        countdown must stay OFF the screen, while every disclosure above
+// @facts        must stay ON it. A trim that took a disclosure with it would be
+// @facts        indistinguishable from a trim that worked, without these.
 // @implements the /batch safety net: ladder exactness, plaintext binding, the
-//             refusal to seal, the cut-off, and the linkability disclosure
+//             refusal to seal, the cut-off, the linkability disclosure, and that
+//             the trim removed only teaching
 // @forbidden  relaxing the no-input assertion to accommodate a design tweak
 // @forbidden  a network call — every panel is asserted inert on mount
 // @invariant  1. Every ladder rung converts to an exact integer price at 1e8.
@@ -38,6 +46,7 @@
 // @invariant  3. An unconfigured committee refuses to encrypt; an unconfigured
 //                publisher refuses to store — both BEFORE any request is made.
 // @invariant  4. Nothing on /batch fetches on mount.
+// @invariant  5. The screen states D9 and D8 with no wallet, no read, no config.
 // @ac         cd app && npm test -- batch
 // @verify     cd app && npm run build
 // └── END CONTRACT ───────────────────────────────────────────────────────────
@@ -389,10 +398,14 @@ describe('<BatchScreen/> unconfigured', () => {
     expect(container.querySelectorAll('[contenteditable]')).toHaveLength(0);
   });
 
-  it('states the pitch: the queue is public and Aphotic crosses flow before it', () => {
+  it('keeps ONE line of why — the queue is public — and leaves the argument to /docs', () => {
     const text = wrap(<BatchScreen />).container.textContent ?? '';
     expect(text).toMatch(/public Move object/i);
-    expect(text).toMatch(/before it reaches the queue/i);
+    expect(text).toMatch(/docs/i);
+    // The three-paragraph pitch this screen used to open with now lives on
+    // /docs. If it comes back, the trim has been undone.
+    expect(text).not.toMatch(/watched forming, request by request/i);
+    expect(text).not.toMatch(/that is a structural answer rather than a latency race/i);
   });
 
   it('states that uniform-price clearing makes front-running MEANINGLESS, not hard', () => {
@@ -407,17 +420,27 @@ describe('<BatchScreen/> unconfigured', () => {
     expect(text).toMatch(/3-of-5|threshold/i);
   });
 
-  it('excludes the zkLogin salt provider from the committee, and says why', () => {
-    // One party holding identity linkage AND a decryption share defeats the
-    // whole arrangement. That reasoning belongs on screen, not only in a doc.
+  it('leaves committee HEALTH to /verify but keeps the refusal on the control', () => {
+    // The probe dashboard is a verification surface, not a trading one, so it
+    // moved. What may not move is D9: this route still says, unconditionally,
+    // that an order which cannot be sealed is not submitted.
     const text = wrap(<BatchScreen />).container.textContent ?? '';
-    expect(text).toMatch(/salt provider/i);
-    expect(text).toMatch(/linkage/i);
+    expect(text).not.toMatch(/probe the committee/i);
+    expect(text).toMatch(/never fall back to plaintext/i);
   });
 
   it('refuses rather than degrading when no committee is wired', () => {
     const text = wrap(<BatchScreen />).container.textContent ?? '';
     expect(text).toMatch(/never fall back to plaintext/i);
+  });
+
+  it('reads as a SECONDARY surface — no lifecycle essay, no second countdown', () => {
+    // The vault leads. /batch may not compete for attention with a four-state
+    // walkthrough or a clock the app shell already renders.
+    const text = wrap(<BatchScreen />).container.textContent ?? '';
+    expect(text).not.toMatch(/One window, four states/i);
+    expect(text).not.toMatch(/What is hidden, and for how long/i);
+    expect(text).not.toMatch(/to clearing/i);
   });
 
   it('renders the D8 linkability disclosure UNCONDITIONALLY', () => {

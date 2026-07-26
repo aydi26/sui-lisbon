@@ -21,8 +21,12 @@
 // @facts        and the venue object. The per-venue cap accessor is GENERIC over
 // @facts        that type, so it is not read here: a cap shown against the wrong
 // @facts        type argument would be worse than no cap at all.
+// @facts      THE CAPABILITY ESSAY MOVED TO /docs. What is left here is the list
+// @facts        itself, two numbers, the one-line INV-C1 statement and the D3
+// @facts        disclosure — the two sentences that would be dishonest to cut.
 // @implements export function AllocationPanel(): JSX.Element
 // @forbidden  inventing an adapter, a cap or a yield figure
+// @forbidden  a paragraph that explains the capability model rather than this list
 // @forbidden  a read on mount
 // @invariant  1. Nothing renders as an allowlisted destination that was not read.
 // @ac         renders unconfigured and names the missing variable.
@@ -50,6 +54,13 @@ interface AllowlistRead {
   readonly paused: boolean;
   readonly adapters: readonly AdapterRow[];
 }
+
+/** Composed from the existing tokens — theme.css is owned elsewhere. */
+const METRIC_ROW = {
+  display: 'grid',
+  gap: 'var(--space-5)',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(9rem, 1fr))',
+} as const;
 
 export function AllocationPanel() {
   const allowlist = useAsyncAction<AllowlistRead>();
@@ -115,10 +126,9 @@ export function AllocationPanel() {
           <p className="ap-reason ap-reason--error">{allowlist.state.error}</p>
         ) : null}
 
-        <p style={{ color: 'var(--text-secondary)', fontSize: 'var(--text-sm)', margin: 0 }}>
-          The keeper can move idle capital only to destinations on this allowlist, and only within
-          each destination&rsquo;s cap. The functions take <strong>no address parameter at all</strong>
-          , so the allowlist is not a filter applied to an argument — there is no argument to filter.
+        <p className="ap-reason">
+          <code>allocate</code> takes <strong>no address parameter at all</strong> — this list is
+          not a filter on an argument, there is no argument to filter.
         </p>
 
         {data === null ? (
@@ -145,18 +155,25 @@ export function AllocationPanel() {
         )}
 
         {data === null ? null : (
-          <p className="ap-reason">
-            {formatBtc(data.principalSats, { suffix: true })} principal deployed, marked at{' '}
-            {formatBtc(data.markedSats, { suffix: true })}.
-            {data.paused ? ' Allocation is paused registry-wide.' : ''}
-          </p>
+          <div style={METRIC_ROW}>
+            <div className="ap-metric">
+              <span className="ap-metric-label">Principal deployed</span>
+              <span className="ap-metric-value">{formatBtc(data.principalSats, { suffix: true })}</span>
+            </div>
+            <div className="ap-metric">
+              <span className="ap-metric-label">Marked at</span>
+              <span className="ap-metric-value">{formatBtc(data.markedSats, { suffix: true })}</span>
+              <span className="ap-metric-sub">
+                {data.paused ? 'allocation paused registry-wide' : `${data.count} allowlisted`}
+              </span>
+            </div>
+          </div>
         )}
 
         <p className="ap-reason ap-reason--warn">
-          No hBTC lending market exists on Sui testnet at all — so the counterparty behind any
-          adapter above is one <strong>we deployed ourselves</strong>. The adapter is shaped to the
-          real vault-share surface, so a mainnet adapter is a new module rather than a refactor, but
-          nothing here is evidence of third-party demand.
+          No hBTC lending market exists on Sui testnet, so the counterparty behind any adapter above
+          is one <strong>we deployed ourselves</strong>. Nothing here is evidence of third-party
+          demand.
         </p>
       </div>
     </section>

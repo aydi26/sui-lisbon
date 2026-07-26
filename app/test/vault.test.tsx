@@ -29,6 +29,12 @@
 // @facts      ⚠ NOTHING READS ON MOUNT. The screen assertions below drive a fetch
 // @facts        spy that REJECTS, so any mount-time request fails the suite
 // @facts        loudly rather than passing quietly against a live node.
+// @facts      ⚠ /vault WAS TRIMMED AGAINST /docs. The protocol explanation moved
+// @facts        to /docs, so the assertions below are what may NOT move with it:
+// @facts        the word "Request", the unverifiable-and-capped native-BTC leg,
+// @facts        the two-parties sentence, the D2 carry disclosure, and a reason on
+// @facts        every disabled control. Anything this file does not pin is prose
+// @facts        the screen is free to shorten.
 // @implements the /vault safety net: the rounding twin, the digest twin, the
 //             not-wired guards, and the screen's honesty invariants
 // @forbidden  a network call from any test — the fetch spy rejects
@@ -37,6 +43,7 @@
 //             2. Every reader refuses BEFORE the wire when an id is unwired.
 //             3. The deposit control says "Request", never "Deposit".
 //             4. The native-BTC leg is annotated as unverifiable AND capped.
+//             5. Every disabled control carries its reason in its own `title`.
 // @ac         cd app && npm test -- vault
 // @verify     cd app && npm test -- vault
 // └── END CONTRACT ───────────────────────────────────────────────────────────
@@ -516,10 +523,44 @@ describe('the /vault screen, unconfigured and signed out', () => {
     expect(text).not.toMatch(/fully reconstructible NAV\b(?!.*Do not)/);
   });
 
-  it('carries the countdown to the next 06:00 / 18:00 UTC boundary', () => {
+  it('states the valuation cadence in the header instead of a second countdown', () => {
     const text = renderVault(<VaultScreen />).container.textContent ?? '';
     expect(text).toMatch(/06:00 and 18:00 UTC/);
-    expect(text).toMatch(/display only/i);
+    expect(text).toMatch(/propose_nav/);
+    expect(text).toMatch(/approve_nav/);
+    // The live countdown belongs to the shell: App.tsx renders EpochClock inline
+    // in the nav on every route. A second one here is not just duplication — two
+    // clocks can disagree, and one of them would then be wrong on screen.
+    expect(text).not.toMatch(/to clearing/i);
+  });
+
+  it('offers ONE size control pointed either way, not one ladder per direction', () => {
+    // The ladder carries its own uniformity explainer. Rendering it twice was
+    // half the length of this screen and taught the same lesson twice.
+    const { container } = renderVault(<PositionPanel />);
+    expect(container.querySelectorAll('.ap-ladder')).toHaveLength(1);
+    const toggles = Array.from(container.querySelectorAll('button[aria-pressed]')).map((b) =>
+      (b.textContent ?? '').toLowerCase(),
+    );
+    expect(toggles).toContain('hbtc → shares');
+    expect(toggles).toContain('shares → hbtc');
+    // A direction toggle is always enabled, so its label must never read as a
+    // write: routes.smoke fails any enabled control that looks like one.
+    for (const label of toggles) {
+      expect(/deposit|redeem|withdraw|submit|approve|settle|claim/.test(label)).toBe(false);
+    }
+  });
+
+  it('keeps every disabled control’s reason ON the control, not only beside it', () => {
+    const { container } = renderVault(<VaultScreen />);
+    const disabled = Array.from(container.querySelectorAll('button[disabled]'));
+    expect(disabled.length).toBeGreaterThan(0);
+    for (const button of disabled) {
+      expect(
+        (button.getAttribute('title') ?? '').length,
+        `disabled control "${button.textContent}" states no reason on itself`,
+      ).toBeGreaterThan(0);
+    }
   });
 
   it('refuses to claim the carry is running', () => {

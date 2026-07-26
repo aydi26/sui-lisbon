@@ -36,9 +36,10 @@
 // └── END CONTRACT ───────────────────────────────────────────────────────────
 
 import { cleanup, render } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import ParityPanel, { DIVERGENCES } from '../src/screens/verify/ParityPanel';
+import VerifyScreen from '../src/screens/verify/VerifyScreen';
 import {
   conservationChecks,
   escrowCheck,
