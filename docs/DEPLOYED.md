@@ -429,3 +429,29 @@ one-time-witness shape, 8 decimals to match sats, so `init` mints the cap at pub
 **3. `UnusedValueWithoutDrop`** on the first `vault::create` call: it returns a `Vault` by value
 which must be shared in the **same** PTB, and `sui client call` cannot chain. Done with
 `sui client ptb --move-call … --assign v --move-call …::share v`.
+
+### Correction — the `AdapterRegistry` belongs to a package, not to the deployment
+
+The first `AdapterRegistry` (`0xd743861834773a81…`) was created by the **superseded** package
+`0x2ebf955e…`. It still exists and still works, but its type is
+`0x2ebf955e…::allocate::AdapterRegistry`, so nothing in the live package can consume it —
+`verify-onchain.mjs` caught exactly that with a type-prefix assertion rather than an existence
+check. A registry that exists but is the wrong type is the failure an existence check misses.
+
+Recreated against the live package:
+
+| What | Id |
+|---|---|
+| shared `AdapterRegistry` | `0x216b878d592129d6c5ce7c5c2b1f72d77cef8ed852db5934cb5a559a2eec29ca` |
+| `AdapterAdminCap` | `0xf6b4d0bbd904c0af83f6a3235f03d5c03128575870c824ea9f8b6db31c6a47e1` |
+| digest | `67aHU3fsZQr76sVubKwEbQSjX2kd97st91f45qv6PafM` |
+
+`allocate::new` returns `(AdapterRegistry, AdapterAdminCap)` unshared **on purpose**, so a
+deployment PTB can inspect the pair before publishing it; `allocate::share` is the second step.
+
+**Live verification, after the rewire:**
+
+```
+node scripts/verify-onchain.mjs
+  33 PASS · 0 FAIL · 0 WARN · 6 INFO
+```
