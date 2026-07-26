@@ -36,3 +36,11 @@ tmp/
 .env*
 # ...but .env.example is the canonical VITE_* list and MUST stay tracked.
 !**/.env.example
+
+# Scratch left behind by tooling. `*.tmp` is here because a shell-spliced source
+# file lands as one, and a half-written .tsx that compiles is worse than one that
+# does not — it gets committed.
+*.tmp
+*.bak
+*.orig
+*.rej

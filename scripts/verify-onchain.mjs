@@ -85,11 +85,15 @@ const DEFAULTS = {
   // which is worse than no run at all. The v1 ids remain in docs/DEPLOYED.md
   // § LEGACY so old digests stay resolvable.
   //
-  // They are blank rather than filled because the v2 package IS NOT PUBLISHED:
-  // `sui client publish` is rejected on chain with
-  // VMVerificationOrDeserializationError — `clearing::Clearing` declares 39 fields
-  // and the Sui verifier caps a struct at 32 (B25). Every check below WARNs while
-  // unset, and asserts against chain the moment keeper/.env carries a real id.
+  // They are blank HERE on purpose: the live v2 ids are wired in keeper/.env, which
+  // takes precedence, so a redeploy needs no edit to this file. Every check below
+  // WARNs while unset and asserts against chain the moment an id is supplied — which
+  // is why a bare checkout still runs green.
+  //
+  // Live as of 2026-07-26 (docs/DEPLOYED.md): package 0x2ebf955e…d9a3, UpgradeCap
+  // 0x74a25d12…cde5, shared AdapterRegistry 0xd7438618…b9f1. Vault / BatchRegistry /
+  // AdminCap / KeeperCap do NOT exist yet — B26: `vault::create` consumes a
+  // `TreasuryCap<S>` and the package defines no LP share coin.
   //
   // published-at vs original stay separate on purpose: `Vault<...>`'s type string
   // keeps the ORIGINAL forever while moveCalls must target the published-at, so
@@ -403,7 +407,7 @@ async function checkP1() {
   // Skipped rather than failed when unset, so this script still runs green on a
   // clean checkout that has not published yet.
   if (!CFG.APHOTIC_PACKAGE_ID) {
-    row('P1', 'aphotic package', 'WARN', 'APHOTIC_PACKAGE_ID unset — v2 publish REJECTED on chain (B25: Clearing has 39 fields, limit 32)');
+    row('P1', 'aphotic package', 'WARN', 'APHOTIC_PACKAGE_ID unset — package not published (or keeper/.env not wired)');
   } else {
     await checkObject('aphotic pkg (callable)', CFG.APHOTIC_PACKAGE_ID, { package: true });
     if (CFG.APHOTIC_ORIGINAL_PACKAGE_ID && CFG.APHOTIC_ORIGINAL_PACKAGE_ID !== CFG.APHOTIC_PACKAGE_ID) {
@@ -416,7 +420,7 @@ async function checkP1() {
   // id, which is what a type string keeps forever.
   const APHOTIC_ORIGIN = CFG.APHOTIC_ORIGINAL_PACKAGE_ID || CFG.APHOTIC_PACKAGE_ID;
   if (!CFG.APHOTIC_VAULT_ID) {
-    row('P1', 'Vault<B,Q,S>', 'WARN', 'APHOTIC_VAULT_ID unset — no vault created yet (B25/B26)');
+    row('P1', 'Vault<B,Q,S>', 'WARN', 'APHOTIC_VAULT_ID unset — B26: vault::create needs a TreasuryCap<S> and no LP share coin exists');
   } else {
     await checkObject('Vault<B,Q,S>', CFG.APHOTIC_VAULT_ID, {
       shared: true,
@@ -429,7 +433,7 @@ async function checkP1() {
   // The other two shared objects. Both carry `vault_id` in Move, so a mismatch here
   // means a registry bound to a different vault than the one we are pointing at.
   if (!CFG.APHOTIC_BATCH_REGISTRY_ID) {
-    row('P1', 'BatchRegistry', 'WARN', 'APHOTIC_BATCH_REGISTRY_ID unset — not created yet (B25/B26)');
+    row('P1', 'BatchRegistry', 'WARN', 'APHOTIC_BATCH_REGISTRY_ID unset — B26: create_registry needs a vault_id');
   } else {
     await checkObject('BatchRegistry', CFG.APHOTIC_BATCH_REGISTRY_ID, {
       shared: true,
@@ -437,7 +441,7 @@ async function checkP1() {
     });
   }
   if (!CFG.APHOTIC_ADAPTER_REGISTRY_ID) {
-    row('P1', 'AdapterRegistry', 'WARN', 'APHOTIC_ADAPTER_REGISTRY_ID unset — not created yet (B25)');
+    row('P1', 'AdapterRegistry', 'WARN', 'APHOTIC_ADAPTER_REGISTRY_ID unset — allocate::create not run');
   } else {
     await checkObject('AdapterRegistry', CFG.APHOTIC_ADAPTER_REGISTRY_ID, {
       shared: true,
@@ -450,7 +454,7 @@ async function checkP1() {
   // AddressOwner; if the two resolve to the same address the two-party NAV split that
   // the governance claim rests on is silently void, so that is checked explicitly.
   if (!CFG.APHOTIC_ADMIN_CAP_ID) {
-    row('P1', 'AdminCap', 'WARN', 'APHOTIC_ADMIN_CAP_ID unset — not minted yet (B25/B26)');
+    row('P1', 'AdminCap', 'WARN', 'APHOTIC_ADMIN_CAP_ID unset — B26: minted only inside vault::create');
   } else {
     await checkObject('AdminCap', CFG.APHOTIC_ADMIN_CAP_ID, {
       typeStartsWith: `${APHOTIC_ORIGIN}::caps::AdminCap`,
@@ -458,7 +462,7 @@ async function checkP1() {
     });
   }
   if (!CFG.APHOTIC_KEEPER_CAP_ID) {
-    row('P1', 'KeeperCap', 'WARN', 'APHOTIC_KEEPER_CAP_ID unset — not minted yet (B25/B26)');
+    row('P1', 'KeeperCap', 'WARN', 'APHOTIC_KEEPER_CAP_ID unset — B26: minted only inside vault::create');
   } else {
     await checkObject('KeeperCap', CFG.APHOTIC_KEEPER_CAP_ID, {
       typeStartsWith: `${APHOTIC_ORIGIN}::caps::KeeperCap`,
@@ -472,7 +476,7 @@ async function checkP1() {
            : `admin ${short(CFG.APHOTIC_ADMIN_ADDRESS)} != keeper ${short(CFG.APHOTIC_KEEPER_ADDRESS)}`);
   }
   if (!CFG.APHOTIC_UPGRADE_CAP_ID) {
-    row('P1', 'UpgradeCap', 'WARN', 'APHOTIC_UPGRADE_CAP_ID unset — nothing published yet (B25)');
+    row('P1', 'UpgradeCap', 'WARN', 'APHOTIC_UPGRADE_CAP_ID unset — nothing published yet');
   } else {
     await checkObject('UpgradeCap', CFG.APHOTIC_UPGRADE_CAP_ID, { typeStartsWith: '0x2::package::UpgradeCap' });
   }
