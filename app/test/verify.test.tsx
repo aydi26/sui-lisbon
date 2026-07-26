@@ -24,6 +24,11 @@
 // @facts        the deployed read surface, and the test asserts it can never
 // @facts        report 'ok' — that is the single unacceptable outcome for this
 // @facts        screen.
+// @facts      2026-07-26 — /verify was TRIMMED for the new /docs page: the
+// @facts        six-step clearing walkthrough became a one-paragraph caption.
+// @facts        This file now also guards that trim, so the next edit cannot
+// @facts        quietly take the parity panel's primacy, the tie-break names or
+// @facts        the nothing-on-mount rule with it.
 // @implements the anti-softening and wrong-detection safety net for /verify
 // @forbidden  relaxing a case here to make a copy edit pass — fix the copy, or the
 //             claim was never honest in the first place
@@ -277,5 +282,43 @@ describe('the clearing parity failure is stated in full', () => {
     const text = parityText();
     expect(text).toMatch(/DESIGN-V2\.md/);
     expect(text).toMatch(/divergence\.rs/);
+  });
+});
+
+// ── the trim kept the checking and dropped the teaching ─────────────────────
+// /docs now carries the explanation. What this screen may never hand over is
+// the failure it volunteers and the arithmetic it redoes.
+
+describe('the trimmed /verify screen', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('the network is down'))));
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const screenText = () => render(<VerifyScreen />).container.textContent ?? '';
+
+  it('still puts the parity failure above everything it could reassure about', () => {
+    const text = screenText();
+    const parity = text.indexOf('parity claim does not currently hold');
+    const conservation = text.indexOf('Conservation, recomputed here');
+    expect(parity).toBeGreaterThanOrEqual(0);
+    expect(conservation).toBeGreaterThan(parity);
+  });
+
+  it('keeps the clearing rule as a caption, with every tie still named', () => {
+    const text = screenText();
+    expect(text).toMatch(/Canonical order/i);
+    expect(text).toMatch(/largest fractional remainder/i);
+    // The six-step lecture moved to /docs; the caption points there.
+    expect(text).not.toMatch(/Written out because a verification surface/i);
+    expect(text).toMatch(/Docs/);
+  });
+
+  it('reads nothing on mount — every check on this screen is a press', () => {
+    render(<VerifyScreen />);
+    expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 });
