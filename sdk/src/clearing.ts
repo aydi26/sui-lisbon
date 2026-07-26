@@ -102,8 +102,20 @@ export const SIDE_ASK = 1 as const;
 
 export type Side = typeof SIDE_BID | typeof SIDE_ASK;
 
-/** `quote = qty_base * price / PRICE_SCALE`. DeepBook's FLOAT_SCALING convention. */
-export const PRICE_SCALE = 1_000_000_000n;
+/**
+ * `quote = qty_base * price / PRICE_SCALE`.
+ *
+ * ⚠ 1e8, NOT DeepBook's 1e9 FLOAT_SCALING. This constant was 1e9 here while
+ * `aphotic::clearing::PRICE_SCALE` and the keeper's engine were both 1e8 — a
+ * three-way implementation with two scales, which is exactly the divergence
+ * aphotic.md §9 calls a release blocker. The Move package is the authority: it is
+ * the deployed contract, and 1e8 is sats-natural for an 8-decimal asset.
+ *
+ * The golden fixtures pass their own `priceScale` explicitly, so they pin the
+ * algorithm's SCALE-INDEPENDENCE rather than this number. This number is pinned
+ * separately against `clearing::price_scale()`.
+ */
+export const PRICE_SCALE = 100_000_000n;
 
 /** Governed default (docs/DESIGN-V2.md §2 / D4). */
 export const MAX_BATCH_SIZE = 256;

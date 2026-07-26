@@ -43,8 +43,17 @@ const golden = loadClearingGolden();
 
 describe('constants', () => {
   it('pins the price scale and the batch-size ceilings', () => {
-    expect(PRICE_SCALE).toBe(1_000_000_000n);
-    expect(golden.priceScale).toBe(PRICE_SCALE.toString());
+    // The PRODUCTION scale must equal aphotic::clearing::price_scale(). Move is the
+    // authority — it is the deployed contract — and 1e8 is sats-natural for an
+    // 8-decimal asset. This constant was 1e9 here while Move and the keeper were
+    // both 1e8: a three-way implementation with two scales, which §9 calls a
+    // release blocker.
+    expect(PRICE_SCALE).toBe(100_000_000n);
+    // The fixtures deliberately run at their OWN scale, passed explicitly to
+    // clear(). That makes them pin the algorithm's scale-independence instead of
+    // silently re-pinning whatever the default happens to be — which is how the
+    // divergence above survived having 46 green fixtures.
+    expect(golden.priceScale).not.toBe(PRICE_SCALE.toString());
     expect(MAX_BATCH_SIZE).toBe(256);
     expect(HARD_MAX_BATCH_SIZE).toBe(512);
     expect(SIDE_BID).toBe(0);
@@ -80,7 +89,15 @@ describe('clearing golden fixtures', () => {
     it(`${c.name} — ${c.why.slice(0, 90)}`, () => {
       const orders = buildOrders(c, golden.addresses);
       const balances = buildBalances(c, golden.addresses);
-      const input = { orders, balances, feeMatchedBps: BigInt(c.feeMatchedBps) };
+      // priceScale is EXPLICIT here, never inherited. A fixture that adopts whatever
+      // the default happens to be re-pins the default instead of testing it — which
+      // is precisely how a 1e9-in-the-SDK / 1e8-in-Move split survived 46 green cases.
+      const input = {
+        orders,
+        balances,
+        feeMatchedBps: BigInt(c.feeMatchedBps),
+        priceScale: BigInt(golden.priceScale),
+      };
 
       if (c.expectThrow) {
         expect(() => clear(input)).toThrow(c.expectThrow);
@@ -122,6 +139,10 @@ describe('per-case value conservation', () => {
         orders,
         balances: buildBalances(c, golden.addresses),
         feeMatchedBps: BigInt(c.feeMatchedBps),
+        // EXPLICIT, never inherited from the default. A fixture that silently
+        // adopts whatever PRICE_SCALE happens to be re-pins the default instead of
+        // testing it, which is how a 1e9/1e8 split survived 46 green cases.
+        priceScale: BigInt(golden.priceScale),
       });
 
       let bidBase = 0n;
@@ -138,13 +159,13 @@ describe('per-case value conservation', () => {
           expect(f.fee).toBe(0n);
           bidBase += f.qtyBase;
           bidQuote += f.quote;
-          expect(f.quote).toBe(quoteForBid(f.qtyBase, r.price));
+          expect(f.quote).toBe(quoteForBid(f.qtyBase, r.price, BigInt(golden.priceScale)));
         } else {
           expect(r.price).toBeGreaterThanOrEqual(o.limitPrice);
           askBase += f.qtyBase;
           askCredit += f.quote - f.fee;
           feeSum += f.fee;
-          expect(f.quote).toBe(quoteForAsk(f.qtyBase, r.price));
+          expect(f.quote).toBe(quoteForAsk(f.qtyBase, r.price, BigInt(golden.priceScale)));
           expect(f.fee).toBeLessThanOrEqual(f.quote);
         }
       }
@@ -291,14 +312,19 @@ describe('the fills root', () => {
 });
 
 describe('quote conversion rounds TOWARD THE VAULT', () => {
+  // These deliberately exercise the DEFAULT scale — that is the point of the block,
+  // so the quantities are chosen to divide NON-exactly at PRICE_SCALE = 1e8. They
+  // were tuned for 1e9 before, which made them pass by accident at the wrong scale.
   it('bids round up and asks round down', () => {
-    expect(quoteForBid(1_500_000_000n, 1n)).toBe(2n);
-    expect(quoteForAsk(1_500_000_000n, 1n)).toBe(1n);
+    // 150_000_000 * 1 / 1e8 = 1.5 — the only interesting case is a real remainder.
+    expect(quoteForBid(150_000_000n, 1n)).toBe(2n);
+    expect(quoteForAsk(150_000_000n, 1n)).toBe(1n);
   });
 
   it('agree when the division is exact', () => {
-    expect(quoteForBid(1_000_000n, 10_000_000_000n)).toBe(10_000_000n);
-    expect(quoteForAsk(1_000_000n, 10_000_000_000n)).toBe(10_000_000n);
+    // 1e6 * 1e9 / 1e8 = 1e7, exactly — no remainder, so no direction to choose.
+    expect(quoteForBid(1_000_000n, 1_000_000_000n)).toBe(10_000_000n);
+    expect(quoteForAsk(1_000_000n, 1_000_000_000n)).toBe(10_000_000n);
   });
 
   it('the bid quote is never below the ask quote — dust can never be negative', () => {
