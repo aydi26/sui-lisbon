@@ -533,6 +533,31 @@ function Invoke-GateSealLe {
 }
 
 # Informational census — never fails (docs/CONVENTIONS.md §3).
+# movelock — Move.lock `subdir` values must use forward slashes, or the package does
+# not build off Windows at all. `sui move build` on Windows REWRITES the lock with
+# backslashes, so this regresses on every build here and must be checked, not fixed once.
+#
+# ⚠ Deliberately delegates to scripts/normalize-move-lock.mjs rather than matching a
+# regex here. gates.ps1 and gates.sh once disagreed precisely because PowerShell regex
+# is case-insensitive and grep is not; one shared implementation makes that impossible.
+function Invoke-GateMoveLock {
+    $title = 'Move.lock subdirs are forward-slashed (builds off Windows)'
+    $script = Join-Path $RepoRoot 'scripts/normalize-move-lock.mjs'
+    if (-not (Test-Path $script)) {
+        return (New-Result 'movelock' $title 'SKIP' @() 'NOTHING CHECKED — scripts/normalize-move-lock.mjs absent')
+    }
+    $node = Get-Command node -ErrorAction SilentlyContinue
+    if (-not $node) {
+        return (New-Result 'movelock' $title 'SKIP' @() 'NOTHING CHECKED — node is not on PATH')
+    }
+    $out = & node $script --check 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        return (New-Result 'movelock' $title 'PASS' @() 'move/Move.lock and lending/Move.lock both clean')
+    }
+    $hits = @($out | ForEach-Object { New-Hit 'Move.lock' 0 ([string]$_) })
+    return (New-Result 'movelock' $title 'FAIL' $hits 'a Windows `sui move build` rewrote it — run: node scripts/normalize-move-lock.mjs')
+}
+
 function Invoke-GateTodo {
     $roots = @('move', 'keeper', 'sdk', 'app', 'scripts')
     $present = @($roots | Where-Object { Test-RootExists $_ })
@@ -573,6 +598,7 @@ $Registry = [ordered]@{
     'keepercap'  = { Invoke-GateKeeperCap }
     'send'       = { Invoke-GateSend }
     'seal_le'    = { Invoke-GateSealLe }
+    'movelock'   = { Invoke-GateMoveLock }
     'todo'       = { Invoke-GateTodo }
 }
 

@@ -17,10 +17,21 @@
 // @facts        nothing is deposited at a price until the admin multisig approves
 // @facts        one — and it never says "Redeem" either, for the same reason.
 // @facts      ONE LADDER, TWO DIRECTIONS. A direction toggle in front of a single
-// @facts        DenominationLadder, rather than two ladders stacked: the ladder
-// @facts        carries its own uniformity explainer, and rendering it twice was
-// @facts        half the length of this screen. The toggle labels avoid the words
-// @facts        "deposit" and "redeem" so no enabled control ever reads as a write.
+// @facts        VaultSizeLadder, rather than two ladders stacked. The toggle labels
+// @facts        avoid the words "deposit" and "redeem" so no enabled control ever
+// @facts        reads as a write.
+// @facts      ⚠ THAT LADDER IS **NOT** DenominationLadder, AND THE SWAP WAS A BUG FIX.
+// @facts        This panel used the NOTE ladder, whose floor is 1_000_000 sats
+// @facts        (0.01 hBTC), while the live vault's `min_deposit_sats` is 1_000 —
+// @facts        the screen demanded a THOUSAND TIMES what the contract does. Since a
+// @facts        testnet faucet pays far less than 0.01 hBTC, every tier was
+// @facts        unaffordable and every control disabled: /vault looked broken while
+// @facts        the chain was fine (observed 2026-07-26, wallet 663_717 sats).
+// @facts        The note ladder was never wrong — it is for a different object. G9
+// @facts        fixes NOTE denominations because escrow must not leak order size; a
+// @facts        vault request publishes its amount in the receipt and in
+// @facts        `pending_deposit_assets`, so there was no size to hide and the
+// @facts        borrowed floor bought nothing. DENOMINATIONS is untouched.
 // @facts      A receipt is claimable iff `receipt.epoch < vault.epoch`. Before
 // @facts        that the row says "prices at epoch N" and offers no control — the
 // @facts        contract would abort ENotYetPriced, and an enabled button that
@@ -51,7 +62,7 @@
 import { useState } from 'react';
 import { useCurrentAccount } from '@mysten/dapp-kit';
 
-import { DenominationLadder, type Denomination } from '../../components';
+import { VaultSizeLadder, type VaultSize } from '../../components';
 import { config } from '../../config';
 import { formatBtc, formatSats, truncateMiddle } from '../../lib/format';
 import { wiringGap } from '../../lib/moveRead';
@@ -111,7 +122,7 @@ export function PositionPanel() {
   const tx = useAphoticTx();
   const position = useAsyncAction<Position>();
   const [direction, setDirection] = useState<Direction>('in');
-  const [denom, setDenom] = useState<Denomination | null>(null);
+  const [size, setSize] = useState<VaultSize | null>(null);
 
   const gap = wiringGap([
     ['VITE_APHOTIC_PACKAGE_ID', config.aphotic.packageId],
@@ -145,19 +156,19 @@ export function PositionPanel() {
   };
 
   const request = async () => {
-    if (data === null || address === null || denom === null) return;
+    if (data === null || address === null || size === null) return;
     await send((t) =>
       direction === 'in'
         ? buildRequestDeposit(t, {
             typeArgs: data.typeArgs,
             sender: address,
-            sats: denom.sats,
+            sats: size.sats,
             coinIds: data.baseCoins.map((c) => c.objectId),
           })
         : buildRequestRedeem(t, {
             typeArgs: data.typeArgs,
             sender: address,
-            shares: denom.sats,
+            shares: size.sats,
             coinIds: data.shareCoins.map((c) => c.objectId),
           }),
     );
@@ -175,30 +186,41 @@ export function PositionPanel() {
   const baseHeld = data === null ? 0n : totalBalance(data.baseCoins);
   const sharesHeld = data === null ? 0n : totalBalance(data.shareCoins);
 
+  /**
+   * What the ladder is measured in, and against what. Both are `null` until a read
+   * returns them: the floor is the vault's own `min_deposit_sats`, never a constant
+   * in this app, and a holding of `0` is not the same claim as "not read yet".
+   */
+  const minSats = data === null ? null : data.snapshot.minDepositSats;
+  const heldUnits = data === null ? null : direction === 'in' ? baseHeld : sharesHeld;
+
   /** The one reason string. It goes on the control, not only beside it. */
   const blocked =
     data === null
       ? 'Read your position first — the request needs the vault’s type parameters and your coins.'
-      : denom === null
+      : size === null
         ? 'Choose a size.'
         : direction === 'in'
           ? data.snapshot.paused
             ? 'The vault is paused, so no new deposit is accepted. Leaving still works.'
-            : denom.sats < data.snapshot.minDepositSats
-              ? `Below the vault’s minimum of ${formatSats(data.snapshot.minDepositSats)} sats.`
-              : baseHeld < denom.sats
+            : // Belt and braces: the ladder is anchored ON this value, so a tier can
+              // never fall below it. Kept so a future ladder change cannot silently
+              // start offering a size that aborts EBelowMinDeposit.
+              size.sats < data.snapshot.minDepositSats
+              ? `Below the vault’s minimum of ${formatSats(data.snapshot.minDepositSats)}.`
+              : baseHeld < size.sats
                 ? `You hold ${formatBtc(baseHeld)} hBTC, less than this size.`
                 : null
-          : sharesHeld < denom.sats
+          : sharesHeld < size.sats
             ? `You hold ${formatSats(sharesHeld)} share units, less than this size.`
             : null;
 
   const caption =
-    denom === null
+    size === null
       ? 'No size chosen.'
       : direction === 'in'
-        ? `${denom.label} hBTC in → a receipt, priced at the next approval`
-        : `${formatSats(denom.sats)} share units out → burned at the next approved NAV`;
+        ? `${size.label} in → a receipt, priced at the next approval`
+        : `${size.sats.toLocaleString('en-US')} share units out → burned at the next approved NAV`;
 
   return (
     <section className="ap-panel">
@@ -320,9 +342,12 @@ export function PositionPanel() {
             </button>
           </div>
 
-          <DenominationLadder
-            selected={denom?.index ?? null}
-            onSelect={setDenom}
+          <VaultSizeLadder
+            selected={size?.index ?? null}
+            onSelect={setSize}
+            minSats={minSats}
+            heldUnits={heldUnits}
+            unit={direction === 'in' ? 'sats' : 'shares'}
             label={direction === 'in' ? 'Amount' : 'Shares'}
           />
 

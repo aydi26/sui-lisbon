@@ -19,6 +19,12 @@ export type { AddressPillProps } from './AddressPill';
 export { DenominationLadder, DENOMINATIONS } from './DenominationLadder';
 export type { Denomination, DenominationLadderProps } from './DenominationLadder';
 
+// The vault's OWN size control. Not DenominationLadder: that ladder governs notes
+// (G9, append-only, escrow must not leak size), while a vault request's amount is
+// public on chain. Its floor is the vault's `min_deposit_sats`, read from chain.
+export { VaultSizeLadder, vaultSizes } from './VaultSizeLadder';
+export type { VaultSize, VaultSizeLadderProps } from './VaultSizeLadder';
+
 export { EpochClock, epochClockState } from './EpochClock';
 export type { EpochClockProps, EpochClockState, EpochPhase } from './EpochClock';
 

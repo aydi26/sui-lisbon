@@ -421,6 +421,7 @@ Anchor: `#rpc-transport`
 | `@mysten/sui@2.22.1` subpaths | `./grpc` → `SuiGrpcClient`; `./jsonRpc` → `SuiJsonRpcClient`. **`@mysten/sui/client` does NOT export `SuiClient`** — that name is gone in 2.x. `[D3]` |
 | JSON-RPC mirrors (chain id `4c78adac`) | `https://rpc-testnet.suiscan.xyz:443` (primary probe) · `https://sui-testnet-rpc.publicnode.com` · `https://sui-testnet.nodeinfra.com`. **Probes only.** `sui-testnet.public.blastapi.io` is dead (403). |
 | Unsupported on every mirror | `suix_getNormalizedMoveModulesByPackage`. The per-module `sui_getNormalizedMoveModule` **is** supported and is how ABI/visibility was verified. `[D2]` |
+| ⚠ **Mirrors serve DELETED objects as live** (2026-07-26) | `suix_getCoins` on `rpc-testnet.suiscan.xyz` returned coin `0x913519a6…` at version **887160253** as an owned object; the fullnode answered **`Object … not found`** — it had been spent. A PTB built from a mirror-sourced object id fails at execution, and the failure looks like a contract bug rather than a stale read. **Rule: every id that will be SPENT comes from the gRPC fullnode.** In `app/`, `listCoinsOf`, `listReceipts` and `readObjectType` are all on `getSuiClient()` (gRPC); the single JSON-RPC read is `readObjectFields`, and it is display-only (`Vault.caps`), where lagging is stale but never unspendable. |
 | Chain id | `4c78adac` |
 
 **HTTP/2 requirement.** The Hashi guardian at `https://guardian.testnet.hashi.sui.io` sits behind

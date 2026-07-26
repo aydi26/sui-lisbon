@@ -206,6 +206,17 @@ export type ObjectFieldsFn = (objectId: string) => Promise<ObjectFields>;
  * Used for the fields no Move accessor can return across a PTB boundary: the
  * embedded `CapRegistry` is reachable only as `&CapRegistry` (`vault::cap_registry`),
  * and a reference cannot cross a programmable-transaction command boundary.
+ *
+ * ⚠ THIS IS THE ONE READ IN THE APP THAT DOES NOT GO TO THE gRPC FULLNODE, and the
+ * mirror is measurably behind it. Observed 2026-07-26: `suix_getCoins` on
+ * `rpc-testnet.suiscan.xyz` returned coin `0x913519a6…` at version 887160253 as a
+ * live owned object, while the fullnode answered `Object … not found` — it had been
+ * spent. Building a transaction from mirror-sourced object ids would therefore fail
+ * at execution, which is exactly why every id the app SPENDS comes from
+ * `getSuiClient()` (gRPC): `listCoinsOf`, `listReceipts` and `readObjectType` are all
+ * on the authoritative path. What is read here is display-only — who holds the two
+ * NAV roles — where a lagging answer is stale, never unspendable. Do not widen this
+ * function's use to anything that feeds a PTB argument.
  */
 export async function readObjectFields(
   objectId: string,

@@ -10,7 +10,7 @@
 # @rules      G9 (no Note carries an amount) · G10 (edition idioms)
 # @depends    scripts/gates.ps1 — this file MUST stay semantically identical to it
 # @facts      Gate list (13):
-# @facts        g7 g4 g2 ids sdk purity transport notes batchstate keepercap send seal_le todo
+# @facts        g7 g4 g2 ids sdk purity transport notes batchstate keepercap send seal_le movelock todo
 # @facts        default = all.
 # @facts      Same allowlists, same patterns, same exit contract as gates.ps1.
 # @facts      ⚠ THE PRODUCT PIVOTED. gateway.move / router.move / journal.move / the old
@@ -463,6 +463,34 @@ gate_seal_le() {
   return 0
 }
 
+# movelock — Move.lock `subdir` values must use forward slashes, or the package does
+# not build off Windows at all. `sui move build` on Windows REWRITES the lock with
+# backslashes, so this regresses on every build there and must be checked, not fixed once.
+#
+# ⚠ Deliberately delegates to scripts/normalize-move-lock.mjs rather than matching a
+# regex here. gates.ps1 and gates.sh once disagreed precisely because PowerShell regex
+# is case-insensitive and grep is not; one shared implementation makes that impossible.
+gate_movelock() {
+  local title='Move.lock subdirs are forward-slashed (builds off Windows)'
+  if [ ! -f "$REPO/scripts/normalize-move-lock.mjs" ]; then
+    skip_gate movelock "$title" 'scripts/normalize-move-lock.mjs absent'
+    return 0
+  fi
+  if ! command -v node >/dev/null 2>&1; then
+    skip_gate movelock "$title" 'node is not on PATH'
+    return 0
+  fi
+  local out
+  if out="$(node "$REPO/scripts/normalize-move-lock.mjs" --check 2>&1)"; then
+    pass_gate movelock "$title" 'move/Move.lock and lending/Move.lock both clean'
+  else
+    fail_gate movelock "$title" \
+      'a Windows `sui move build` rewrote it — run: node scripts/normalize-move-lock.mjs' \
+      "$out"
+  fi
+  return 0
+}
+
 gate_todo() {
   local present; present="$(roots_present move keeper sdk app scripts)"
   if [ -z "$present" ]; then
@@ -483,7 +511,7 @@ gate_todo() {
 }
 
 # ── dispatch ─────────────────────────────────────────────────────────────────
-ALL_GATES="g7 g4 g2 ids sdk purity transport notes batchstate keepercap send seal_le todo"
+ALL_GATES="g7 g4 g2 ids sdk purity transport notes batchstate keepercap send seal_le movelock todo"
 
 REQUESTED=""
 for arg in "$@"; do
@@ -495,7 +523,7 @@ for arg in "$@"; do
       echo "gates.sh [$(printf '%s' "$ALL_GATES" | tr ' ' '|')|all] [--strict]   (default: all)"
       echo "  --strict  a match in a comment fails too (literal 'string must not appear')"
       exit 0 ;;
-    g7 | g4 | g2 | ids | sdk | purity | transport | notes | batchstate | keepercap | send | seal_le | todo)
+    g7 | g4 | g2 | ids | sdk | purity | transport | notes | batchstate | keepercap | send | seal_le | movelock | todo)
       REQUESTED="$REQUESTED $key" ;;
     *) echo "gates.sh: unknown gate '$arg'. Known: $ALL_GATES, all" >&2; exit 2 ;;
   esac
