@@ -1,10 +1,12 @@
 # ┌── APHOTIC CONTRACT ─────────────────────────────────────────────────────────
-# @task       T2.3 (operator companion to keeper/src/execution/crank.ts) · blocker B11
-# @phase      2
+# @task       ops — the operator-side BTC on-ramp, no BUILD-PLAN unit id
+# @phase      ops
 # @status     DONE
-# @spec       docs/FACTS.md#hashi-move-api · docs/RECON.md#r14 · .hashi_src/design__docs__deposit.mdx
-# @spec       docs/DESIGN-V2.md §8 D12 (B11: this file used to hardcode two Hashi ids)
-# @rules      G1 G6 G7
+# @spec       docs/FACTS.md#hashi-move-api · docs/FACTS.md#latencies · docs/RECON.md#r14
+# @spec       .hashi_src/design__docs__deposit.mdx
+# @spec       docs/DESIGN-V2.md §8 D12 (B11: this file used to hardcode two Hashi ids — CLOSED)
+# @rules      G1 (the BTC leg is slow and is never live-demoable — pre-stage it)
+# @rules      G7 (every Hashi id arrives as config; the `ids` gate proves it)
 # @depends    keeper/.env → keeper/src/config.ts (the ONLY id homes, G7) · the `sui` CLI for signing
 # @facts      Hashi has NO deposit relayer. Verified empirically: 20 consecutive
 # @facts        DepositRequested events had 20 DISTINCT tx senders, and in every

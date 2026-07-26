@@ -3,10 +3,12 @@
 # @task       T0.6 (v2 retarget)
 # @phase      0
 # @status     DONE
-# @spec       docs/GOLDEN-RULES.md (G2 G4 G5 G7) · docs/CONVENTIONS.md §2.6 · §3
+# @spec       CLAUDE.md "THE 10 GOLDEN RULES" (G2 G3 G7 G9) · docs/CONVENTIONS.md §2.6 · §6
 # @spec       docs/DESIGN-V2.md §7 (INV-C1 + the complete KeeperCap surface) · §10 (the gate rows)
 # @spec       docs/DESIGN-V2.md §1 F1 (the Seal LE/BE trap) · §8 D12 (B11) · §11 (the notes ladder)
-# @rules      G2 G4 G5 G7
+# @rules      G3 (no keeper-nameable destination) · G5 (monotonic, mechanical state)
+# @rules      G6 (the Seal identity is LITTLE-ENDIAN) · G7 (one implementation; ids as config)
+# @rules      G9 (no Note carries an amount) · G10 (edition idioms)
 # @depends    nothing — pure PowerShell 5.1, no modules
 # @facts      Gate list (13):
 # @facts        g7 g4 g2 ids sdk purity transport notes batchstate keepercap send seal_le todo
@@ -500,7 +502,13 @@ function Invoke-GateSend {
     }
     $files = Get-GateFiles $roots $RxTs
     $allow = @('^' + [regex]::Escape($SendTs) + '$')
-    $hits = Find-Hits $files ([regex]::Escape('signAndExecute')) $allow
+    # (?-i) forces CASE SENSITIVITY — PowerShell regex is case-insensitive by default,
+    # so the bare word also matched the TYPE `SignAndExecute` and the injected field
+    # `readonly signAndExecute?: SignAndExecute`. Neither is a call site, and flagging
+    # them made the gate cry wolf on dependency injection.
+    # `\s*\(` narrows it to an actual invocation, which is the only thing that can
+    # broadcast a transaction without going through the devInspect wrapper.
+    $hits = Find-Hits $files '(?-i)\bsignAndExecute\s*\(' $allow
     return (New-SkipOrVerdict 'send' $title $roots $files $hits 'a revert must never be broadcast')
 }
 

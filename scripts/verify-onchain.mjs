@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 // ┌── APHOTIC CONTRACT ────────────────────────────────────────────────────────
-// @task       T0.1
-// @phase      0
+// @task       ops — live-testnet verification harness, no BUILD-PLAN unit id
+// @phase      ops
 // @status     DONE
 // @spec       docs/RECON.md#r1 (L6-L15) · #r4 (L43-L53) · #r5 (L55-L68)
 // @spec       docs/RECON.md#r6 (L70-L74) · #r8 (L101-L112) · #r10 (L152-L158) · #r11 (L160-L167)
-// @spec       docs/DAY-ONE.md (D1-D10) · docs/BUILD-PLAN.md T0.1
-// @rules      G3 G5 G7 G9
+// @spec       docs/FACTS.md#hashi-onchain-config · #hbtc · #deepbook-venue · #pyth
+// @spec       docs/DAY-ONE-RESULTS.md — the [D<n>] receipts these assertions re-prove live
+// @rules      G1 (the Hashi facts this re-checks) · G7 (ids arrive as config, never hardcoded)
 // @depends    nothing — plain node ESM, ZERO npm dependencies, `fetch` only
 // @facts      ⚠ SANCTIONED ID LITERALS. Per docs/CONVENTIONS.md §2.6 canonical ids may live
 // @facts        only in keeper/src/config.ts, app/src/config.ts, *.env.example, move/Move.toml.

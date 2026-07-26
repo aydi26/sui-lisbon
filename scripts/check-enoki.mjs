@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 // ┌── APHOTIC CONTRACT ────────────────────────────────────────────────────────
-// @task       T3.3
-// @phase      3
+// @task       ops — deploy tooling, no BUILD-PLAN unit id
+// @phase      ops
 // @status     DONE
-// @spec       docs/APP.md §2.1 (<ZkLoginButton/>), §7 A1
-// @rules      G7
+// @spec       docs/DEPLOY.md (Enoki / Google origin registration — the 403 this script prevents)
+// @spec       docs/FACTS.md#zklogin (the Enoki endpoints and what zkLogin needs registered)
+// @rules      G7 (the api key and the origin arrive as config, never as a literal)
 // @facts      Enoki REST base = https://api.enoki.mystenlabs.com, version prefix
 // @facts        /v1, auth header `Authorization: Bearer <apiKey>` (read from
 // @facts        @mysten/enoki 1.2.7 dist/EnokiClient/index.mjs — DEFAULT_API_URL).

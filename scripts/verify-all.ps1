@@ -5,7 +5,7 @@
 # @status     DONE
 # @spec       docs/BUILD-PLAN.md "Cut-line VERIFY" · CLAUDE.md "BUILD & TEST COMMANDS"
 # @spec       docs/DESIGN-V2.md §9 (sdk parity is a RELEASE GATE) · §10 (test targets)
-# @rules      G2 G4 G5 G7 G10
+# @rules      G7 (the sdk/ parity run is the release gate) · G10 (edition/typing discipline)
 # @depends    scripts/gates.ps1 · scripts/verify-onchain.mjs · scripts/measure-clearing.mjs
 # @facts      12 ordered steps:
 # @facts        move build · move test · sdk typecheck · sdk test · keeper typecheck ·

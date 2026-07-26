@@ -85,8 +85,12 @@ describe('parseMoveAbort', () => {
   });
 
   it('recognises the Hashi withdrawal minimum by its byte-string', () => {
+    // The discriminant is the ABORT CODE, not the address — so the module address
+    // here is a placeholder on purpose. Pinning the real Hashi package id in a test
+    // fixture would put a canonical id outside config.ts, which is what the `ids`
+    // gate exists to prevent, and would buy nothing: the parser never reads it.
     const raw =
-      'MoveAbort(MoveLocation { module: 0xfcea10ca::withdraw, function: 3 }, 9223372105742876675): the amount is below the minimum';
+      'MoveAbort(MoveLocation { module: 0xHASHI::withdraw, function: 3 }, 9223372105742876675): the amount is below the minimum';
     expect(parseMoveAbort(raw)?.explanation).toMatch(/30,000 sat minimum/i);
   });
 

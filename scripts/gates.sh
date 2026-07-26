@@ -3,9 +3,11 @@
 # @task       T0.6 (v2 retarget)
 # @phase      0
 # @status     DONE
-# @spec       docs/GOLDEN-RULES.md (G2 G4 G5 G7) · docs/CONVENTIONS.md §2.6 · §3
+# @spec       CLAUDE.md "THE 10 GOLDEN RULES" (G2 G3 G7 G9) · docs/CONVENTIONS.md §2.6 · §6
 # @spec       docs/DESIGN-V2.md §7 (INV-C1) · §10 (the gate rows) · §1 F1 (the Seal LE/BE trap)
-# @rules      G2 G4 G5 G7
+# @rules      G3 (no keeper-nameable destination) · G5 (monotonic, mechanical state)
+# @rules      G6 (the Seal identity is LITTLE-ENDIAN) · G7 (one implementation; ids as config)
+# @rules      G9 (no Note carries an amount) · G10 (edition idioms)
 # @depends    scripts/gates.ps1 — this file MUST stay semantically identical to it
 # @facts      Gate list (13):
 # @facts        g7 g4 g2 ids sdk purity transport notes batchstate keepercap send seal_le todo

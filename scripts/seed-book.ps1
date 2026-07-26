@@ -1,9 +1,10 @@
 # ┌── APHOTIC CONTRACT ────────────────────────────────────────────────────────
-# @task       B2 (docs/STATUS.md L153-L157 "Known blockers") — ops tooling, no BUILD-PLAN task id
+# @task       ops — venue tooling, no BUILD-PLAN unit id
 # @phase      ops
 # @status     DONE
-# @spec       docs/STATUS.md#known-blockers · docs/RECON.md#r10 (L154-L160)
-# @rules      G4 G7 G8
+# @spec       docs/STATUS.md §7 "Not blockers — deliberate, and settled" · docs/RECON.md#r10 (L154-L160)
+# @spec       docs/FACTS.md#deepbook-venue
+# @rules      G2 (honesty about what is obtainable) · G7 (ids as config)
 # @depends    scripts/seed-book.mjs (all logic lives there — this file is a Windows wrapper only)
 # @facts      `sui` 1.76.0 lives at %LOCALAPPDATA%\sui\sui.exe and is NOT reliably on PATH
 # @facts        ⇒ this wrapper prepends it, which is the whole reason the wrapper exists.

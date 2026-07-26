@@ -1,12 +1,17 @@
 #!/usr/bin/env node
 // ┌── APHOTIC CONTRACT ────────────────────────────────────────────────────────
-// @task       B2 (docs/STATUS.md L153-L157 "Known blockers") — ops tooling, no BUILD-PLAN task id
-// @phase      ops  [CUT-LINE ADJACENT — NAV has no mid until this book has two sides]
+// @task       ops — venue tooling, no BUILD-PLAN unit id
+// @phase      ops  [NOT cut-line. Phase 2 (the carry) is DELIBERATELY not executed —
+//             docs/BUILD-PLAN.md "Phase 2". This script exists to document what inventory is
+//             obtainable, and the honest answer today is "none".]
 // @status     DONE
-// @spec       docs/STATUS.md#known-blockers (B2: hBTC/DBUSDC book empty on both sides)
+// @spec       docs/STATUS.md §7 "Not blockers — deliberate, and settled" (the hBTC/DBUSDC book
+//             is empty on BOTH sides and we can mint neither leg)
+// @spec       docs/FACTS.md#deepbook-venue (pool, params, and why the carry is not demoable)
 // @spec       docs/RECON.md#r4 (L43-L53 DeepBook callable pkg) · #r5 (L55-L68 ids) · #r10 (L154-L160 venue reality)
 // @spec       docs/RECON.md#r11 (L162-L169 Pyth BETA feed) · docs/DEPLOYED.md (our BalanceManager)
-// @rules      G4 G7 G8 G9 G10
+// @rules      G2 (never present an obtainable-inventory claim we cannot evidence)
+// @rules      G7 (every id arrives as config) · G10 (sats are u64; integer arithmetic only)
 // @depends    keeper/src/config.ts + keeper/.env (the ONLY id homes, G7) · the `sui` CLI for signing
 // @facts      DEEPBOOK PRICE UNIT: quote_units = base_units * price / 1e9  (FLOAT_SCALING = 1_000_000_000)
 // @facts        base = hBTC 8 dec (sats) · quote = DBUSDC 6 dec
