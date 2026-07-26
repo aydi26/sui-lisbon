@@ -1,11 +1,11 @@
 // ┌── APHOTIC CONTRACT ────────────────────────────────────────────────────────
-// @task       T0.4
+// @task       X.app
 // @phase      0
 // @status     DONE
-// @spec       docs/APP.md §1 (stack), docs/BUILD-PLAN.md Phase 0 T0.4
+// @spec       docs/BUILD-PLAN.md "Cross-cutting units" (X.app — the app build)
 // @spec       docs/RECON.md R13 (landing deps: globe.gl ^2.45.3 + three ^0.183.2)
 // @rules      G7
-// @depends    package.json (T0.4)
+// @depends    package.json (X.app)
 // @facts      BUILD_OUTDIR = 'dist'
 // @facts      GLOBE_CHUNK = { three, three-globe, globe.gl } — ~1.2 MB, must not
 // @facts        enter the entry chunk or the 3 vault screens pay for the hero.
@@ -16,7 +16,8 @@
 //             .env.example, keeper/src/config.ts, move/Move.toml may hold them)
 // @invariant  1. Nothing under src/landing/ is imported statically from the entry —
 //                the landing page is ALWAYS React.lazy'd (see src/routes.tsx).
-// @ac         docs/APP.md §7 A11 (mock mode renders with zero signet/RPC)
+// @ac         docs/BUILD-PLAN.md "Cross-cutting units" X.app — `cd app && npm run
+//             build && npm test` is the unit's VERIFY, so the build must be clean
 // @verify     cd app && npm run build
 // └── END CONTRACT ───────────────────────────────────────────────────────────
 

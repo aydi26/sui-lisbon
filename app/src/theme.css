@@ -1,10 +1,10 @@
 /* ┌── APHOTIC CONTRACT ────────────────────────────────────────────────────────
-   @task       T0.4
+   @task       X.app
    @phase      0
    @status     DONE
-   @spec       docs/APP.md §1 (stack/layout)
+   @spec       docs/BUILD-PLAN.md "Cross-cutting units" (X.app — the app shell)
    @spec       docs/RECON.md R13 (landing source palette + mandatory Cravelo face)
-   @rules      G8
+   @rules      G2
    @depends    app/public/fonts/cravelo.otf (landing-page unit) · Inter via Google Fonts
    @facts      PALETTE (abyssal / "dark vault"):
    @facts        bg #000 · surface #04080d · accent #16c8d9 (cyan) · btc #F7931A
@@ -21,7 +21,6 @@
    @invariant  1. Every colour a component uses resolves to a token declared here.
    @invariant  2. No token name is renamed after the landing port (the landing CSS
                   consumes --accent / --btc / --bg-* / --text-*).
-   @ac         docs/APP.md §7 A11
    @verify     cd app && npm run build
    └── END CONTRACT ─────────────────────────────────────────────────────────── */
 
@@ -64,8 +63,8 @@
   --red: #ef4444;
   --amber: #fbbf24;
 
-  /* Semantic aliases used by the lifecycle steppers (docs/APP.md §2.2/§3.2). */
-  --time-bitcoin: var(--btc); /* slow leg: ~70 min in / ~1.5-2 h out (G1/G6) */
+  /* Semantic aliases used by the lifecycle steppers (components/LifecycleStepper.tsx). */
+  --time-bitcoin: var(--btc); /* slow leg: ~70 min in / ~1.5-2 h out (G1)   */
   --time-sui: var(--accent); /* instant leg: one checkpoint (G1)            */
 
   /* ── typography ─────────────────────────────────────────────────────────── */

@@ -3,13 +3,14 @@
 // @phase      0
 // @status     DONE
 // @spec       docs/RECON.md R1 (transport), R12 (pinned package versions)
-// @rules      G6 G7 G9
+// @spec       docs/FACTS.md#rpc-transport
+// @rules      G7
 // @facts      ⚠⚠ VITE_* IS INLINED AT BUILD TIME, so a var missing from the CI
 // @facts        environment ships as "" and throws nothing. configProblems() is
 // @facts        logged here on every load — that console line is what makes a
 // @facts        broken deploy visible in a bug report. The shell renders the same
 // @facts        list on every app route.
-// @depends    ./routes.tsx (T0.4) · ./config.ts (T0.4) · ./lib/suiClient.ts (T0.4)
+// @depends    ./routes.tsx (X.app) · ./config.ts (X.app) · ./lib/suiClient.ts (X.app)
 // @facts      Provider order (outer → inner): QueryClientProvider →
 // @facts        SuiClientProvider → WalletProvider → BrowserRouter → AppRoutes.
 // @facts        dapp-kit's providers both depend on React Query being above them.
@@ -27,8 +28,9 @@
 // @forbidden  a canonical id or endpoint literal here — G7
 // @invariant  1. ./theme.css is imported after the dapp-kit stylesheet.
 // @invariant  2. React Query defaults do not auto-refetch on window focus (a demo
-//                must not fire network on alt-tab, G6).
-// @ac         docs/APP.md §7 A11
+//                must not fire network on alt-tab).
+// @ac         docs/DEPLOY.md "Environment variables" — VITE_DEMO_MODE=mock renders
+//             every screen from fixtures with zero network
 // @verify     cd app && npm run build
 // └── END CONTRACT ───────────────────────────────────────────────────────────
 

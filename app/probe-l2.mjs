@@ -1,10 +1,10 @@
 // ┌── APHOTIC CONTRACT ────────────────────────────────────────────────────────
-// @task       T5.3
+// @task       ops — no BUILD-PLAN unit id
 // @phase      5
 // @status     DONE
 // @spec       docs/RECON.md R10 (the hosted DeepBook indexer does not list this pool)
-// @spec       docs/APP.md ERRATA E-A7 (an empty book is a DEFINED state)
-// @rules      G4 G7 G9
+// @spec       docs/FACTS.md#deepbook-venue (an empty book is a DEFINED state)
+// @rules      G7
 // @depends    app/.env.local (the ids of record) · @mysten/sui 2.22.1
 // @facts      Ops probe: what the hBTC/DBUSDC book actually holds, straight off
 // @facts        pool::get_level2_range by devInspect. On an EMPTY side the call

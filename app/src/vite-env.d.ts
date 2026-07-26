@@ -1,12 +1,13 @@
 /// <reference types="vite/client" />
 
 // ┌── APHOTIC CONTRACT ────────────────────────────────────────────────────────
-// @task       T0.4
+// @task       X.app
 // @phase      0
 // @status     DONE
-// @spec       docs/APP.md §6 (env table)
+// @spec       docs/DEPLOY.md "Environment variables — the thing that silently breaks"
+//             (the VITE_* table, and the build-time-inlining trap)
 // @rules      G7
-// @depends    ../.env.example (T0.6)
+// @depends    ../.env.example (X.app)
 // @facts      Every var here MUST also exist in app/.env.example, and is read in
 // @facts        EXACTLY one place: src/config.ts.
 // @implements interface ImportMetaEnv

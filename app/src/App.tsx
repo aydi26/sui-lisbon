@@ -29,10 +29,19 @@
 // @facts        inside the wallet. An EMPTY chains list means the wallet declined
 // @facts        to say — we do not guess.
 // @implements export function App(): JSX.Element
-// @forbidden  omitting <TrustModelDisclosure/> on any route — G8
 // @forbidden  a canonical id literal here — G7
 // @forbidden  app chrome over the landing route — it is full-bleed by design
-// @invariant  1. <TrustModelDisclosure/> renders on every route.
+// @facts      The hBTC trust-model disclosure is NOT in this frame. It used to be
+// @facts        a one-line footer under every route, including the landing page,
+// @facts        where it sat as flat text beneath a full-bleed design. It now lives
+// @facts        where a reader actually meets it: <LimitationsPanel/> on /vault,
+// @facts        /batch and /verify (its FIRST entry, asserted by
+// @facts        test/limitations.test.tsx), plus FAQ answer 4 and the BeamSection
+// @facts        paragraph on the landing itself. Moved, not dropped — if you are
+// @facts        about to remove one of THOSE, this is the note that says you would
+// @facts        be removing the last copy.
+// @invariant  1. Every route reaches the custodial-threshold statement in at most
+//                one interaction — no route may state it nowhere.
 // @invariant  2. A blocking config problem is stated on screen before any screen
 //                offers a control that depends on it.
 // @invariant  3. A screen that throws never blanks the app — the nav survives.
@@ -44,7 +53,7 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 
-import { EpochClock, TrustModelDisclosure, WalletBar } from './components';
+import { EpochClock, WalletBar } from './components';
 import { config, configProblems } from './config';
 import { useAphoticSession } from './session';
 
@@ -197,8 +206,6 @@ export function App() {
           <Outlet />
         </ScreenBoundary>
       </main>
-
-      <TrustModelDisclosure variant="line" />
     </div>
   );
 }

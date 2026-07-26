@@ -371,9 +371,14 @@ export function BatchScreen() {
         </ul>
       </section>
 
+      {/* 'custodial' leads deliberately. The app frame used to carry a one-line
+          hBTC trust-model footer on every route; it is gone, so a screen that
+          filters this panel is now the ONLY place that route states the trust
+          model. Dropping it here would leave /batch — the screen that talks most
+          about privacy — silent on what it is built upon. */}
       <LimitationsPanel
         title="What this auction does not do"
-        only={['linkable', 'seal-threshold', 'anonymity-set']}
+        only={['custodial', 'linkable', 'seal-threshold', 'anonymity-set']}
       />
     </div>
   );

@@ -159,20 +159,25 @@ body:has(.landing) {
 }
 
 .landing .footer-title-inner {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   gap: 1vw;
 }
 
 .landing .big-title {
   font-family: 'Cravelo', sans-serif;
-  font-size: 44vw;
+  /* 44vw was the upstream size, chosen for a SHORTER wordmark: at 7 glyphs
+     "APHOTIC" ran off the right edge and .footer-title's overflow:hidden simply
+     clipped it, so the last letters were never visible. 20vw fits the whole word
+     inside the viewport with room to spare. If the wordmark ever changes length,
+     this is the number to retune — the horizontal overflow is silent. */
+  font-size: 20vw;
   font-weight: normal;
   letter-spacing: 0.02em;
   white-space: nowrap;
   color: #fff;
-  margin-left: 0.3125rem;
+  margin-left: 0;
   -webkit-mask-image: linear-gradient(to bottom, white 40%, transparent 100%);
   mask-image: linear-gradient(to bottom, white 40%, transparent 100%);
   opacity: 0.9;

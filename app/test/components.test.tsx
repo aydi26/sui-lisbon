@@ -7,7 +7,7 @@
 //             §9 (liveness is not privileged), §13
 // @spec       docs/DESIGN-V2.md §7 (KeeperCap · INV-C1)
 // @rules      G2 G8
-// @depends    ../src/components/{PinningExplainer,AddressPill,TrustModelDisclosure,
+// @depends    ../src/components/{PinningExplainer,AddressPill,LimitationsPanel,
 //             KeeperCapabilityBadge,PendingCall}.tsx
 // @facts      THE CLAIM THIS FILE POLICES: the custody pin is enforced AT SIGNING
 // @facts        by a 2-of-2 multisig, NOT by Move. Hashi's create_withdrawal sets
@@ -32,7 +32,7 @@ import { AddressPill } from '../src/components/AddressPill';
 import { KeeperCapabilityBadge } from '../src/components/KeeperCapabilityBadge';
 import { PendingCall } from '../src/components/PendingCall';
 import { PinningExplainer } from '../src/components/PinningExplainer';
-import { TRUST_MODEL_LINE, TrustModelDisclosure } from '../src/components/TrustModelDisclosure';
+import { LimitationsPanel } from '../src/components/LimitationsPanel';
 
 afterEach(cleanup);
 
@@ -137,20 +137,24 @@ describe('<AddressPill/>', () => {
   });
 });
 
-describe('<TrustModelDisclosure/> — honesty', () => {
-  it('states plainly that hBTC is custodial-threshold wrapped BTC', () => {
-    const text = render(<TrustModelDisclosure />).container.textContent ?? '';
-    expect(TRUST_MODEL_LINE.toLowerCase()).toMatch(/custodial/);
-    expect(text.toLowerCase()).toMatch(/custodial/);
-    // Never the opposite claim.
+// <TrustModelDisclosure/> is gone. It was a one-line footer repeated under every
+// route, including the landing page, where it read as flat text under a full-bleed
+// design and was the kind of disclosure people scroll past.
+//
+// The claims it carried did NOT go with it, and these are the tests that now own
+// them, so a future deletion cannot quietly take the last copy:
+//   · 'hBTC is custodial-threshold wrapped BTC' → test/limitations.test.tsx
+//     ("calls hBTC custodial-threshold wrapped BTC and never the opposite"),
+//     against <LimitationsPanel/>, which is mounted on /vault, /batch and /verify.
+//   · the two-PARTIES NAV split and 'no keeper call takes an address' → the
+//     assertions below, moved off the deleted component and onto the panel that
+//     users actually see.
+describe('<LimitationsPanel/> — the claims the deleted disclosure used to carry', () => {
+  it('names two parties rather than two scopes, and the address-free keeper', () => {
+    const text = render(<LimitationsPanel />).container.textContent ?? '';
+    expect(text).toMatch(/custodial-threshold wrapped BTC/i);
+    // Never the opposite claim, in any wording.
     expect(text).not.toMatch(/hBTC is trustless/i);
     expect(text).not.toMatch(/hBTC is non-custodial/i);
-  });
-
-  it('the expander names two parties rather than two scopes', () => {
-    const text = render(<TrustModelDisclosure variant="expander" />).container.textContent ?? '';
-    expect(text).toMatch(/two parties/i);
-    expect(text).toMatch(/admin multisig/i);
-    expect(text).toMatch(/no keeper call can send assets anywhere but the pinned allowlist/i);
   });
 });

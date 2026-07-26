@@ -39,14 +39,14 @@ const CARDS = [
     title: "CARRY",
     counter: "01 / 03",
     className: "p1",
-    text: "Redemption through the bridge is queued, rate-limited and paused during every reconfiguration, so hBTC trades below par. That discount is the market price of the wait. The vault buys the claim below par, redeems it one-for-one, and captures the spread — while idle capital earns lending yield between carries. Valuation is split across two parties: the keeper proposes a NAV, an admin multisig approves it.",
+    text: "Exiting the bridge is queued and rate-limited, so hBTC trades below par. The vault buys that discount and redeems at par. Idle capital lends in between. The keeper proposes a NAV; an admin multisig approves it.",
     icon: <img src="/logos/aphotic-mark.svg" alt="Aphotic" />,
   },
   {
     title: "SEALED",
     counter: "02 / 03",
     className: "p2",
-    text: "The withdrawal queue is a public Move object: every pending request shows who, how much, where to, and since when. A desk unwinding is watched forming in real time. Aphotic crosses that flow before it reaches the queue — orders encrypted client-side under a Seal time-lock, cleared at one uniform price at 06:00 and 18:00 UTC. Front-running is not made hard, it is made meaningless.",
+    text: "The withdrawal queue is public: who, how much, where to. A desk unwinding is watched forming. Aphotic crosses that flow before it gets there — orders sealed until close, cleared at one price at 06:00 and 18:00 UTC. Front-running isn't made hard, it's made meaningless.",
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="#16c8d9" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="65%" height="65%">
         <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
@@ -58,7 +58,7 @@ const CARDS = [
     title: "VERIFY",
     counter: "03 / 03",
     className: "p3",
-    text: "Same order set, same price, always. Clearing runs on-chain in Move with every tie broken, so anyone can recompute it and compare byte-for-byte — a divergence between implementations is a release blocker, not a warning. Fills are provable against a published Merkle root, and the bridge's own rate limiter is re-derived from its event stream rather than taken on faith.",
+    text: "Same orders in, same price out — every tie broken. Clearing runs on-chain in Move, so anyone can recompute it and prove their fill against a published root. The bridge's rate limiter is re-derived from its own events, not taken on faith.",
     icon: <img src="/logos/globe.svg" alt="" />,
   },
 ];
