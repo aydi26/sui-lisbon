@@ -2,11 +2,79 @@
 
 > Purpose: the record of what we actually published on chain, and the receipts.
 > These are the ids `keeper/.env` and `app/.env.local` are wired to. When the
-> package is upgraded, add a row — never overwrite one, so an old journal entry
+> package is upgraded, add a row — **never overwrite one**, so an old journal entry
 > stays resolvable.
 > Read after: `docs/RECON.md` (which records the ids we depend on but did not deploy).
+>
+> ⚠ **Two numbering schemes live in this file, and they are not the same thing.**
+> The sections labelled **v1 / v2 / v3** below are *publish generations of the **old**
+> `aphotic` package* (the v1 product — the DeepBook market-making vault). The section
+> immediately below, **APHOTIC v2**, is the **product** pivot of 2026-07-26. Nothing was
+> overwritten to make room for it.
 
-## v3 — 2026-07-25 (fresh publish) — **THE CURRENT DEPLOYMENT**
+---
+
+## APHOTIC v2 — the 2026-07-26 product pivot — **NOT YET PUBLISHED**
+
+**Nothing has been deployed for the v2 product.** No package id, no shared objects, no
+digests. Recorded here as a section so that when the publish happens there is one place
+it goes, and so nobody mistakes the v1 ids below for a v2 deployment.
+
+### What changed, and why every id below is stale
+
+The product pivoted from a private market-making vault to a **redemption-carry vault plus a
+sealed-order batch auction**. The Move modules `gateway`, `router`, `journal`, `envelope`
+and the v1 `vault` are **deleted**; the v2 package is ten different modules
+(`caps` `vault` `notes` `balance` `batch` `clearing` `allocate` `carry` `oracle` `events`).
+A module set that different is a **fresh publish, not an upgrade** — Move's `compatible`
+policy forbids removing a public function, and every v1 public function is gone.
+
+### What to fill in when it lands
+
+| What | Id |
+|---|---|
+| `aphotic` package (published-at) | *TBD* |
+| `aphotic` original-id (type origin) | *TBD* |
+| shared `Vault<hBTC, …>` | *TBD* (Shared, isv *TBD*) |
+| shared `BalanceBook<hBTC>` | *TBD* |
+| shared `NoteTree` · `NullifierSet` | *TBD* |
+| shared `BatchRegistry` | *TBD* |
+| shared `AdapterRegistry` | *TBD* |
+| `AdminCap` (→ **admin multisig**, not an EOA) | *TBD* |
+| `KeeperCap` (→ keeper address) | *TBD* |
+| `UpgradeCap` | *TBD* |
+| `aphotic_lending` package (`lending/`) | *TBD* |
+| shared lending market object | *TBD* |
+| Seal committee — 5 operators, t = 3, **excludes Enoki** | *TBD* |
+| Custody multisig (2-of-2) + pinned Bitcoin redemption address | *TBD* |
+| publish digest / `create_vault` digest | *TBD* |
+
+**Record both ids at publish, always.** A `moveCall` targets **published-at**; type
+arguments, type-string checks and events emitted by an earlier generation resolve against
+**original-id**. Checking a vault's type against published-at instead starts failing the
+moment you upgrade — that lesson is written up in the v2-generation section below and cost
+us a debugging session.
+
+### Before publishing v2, these must be true
+
+- `docs/STATUS.md` shows `vault.move`, `batch.move` and `clearing.move` **existing and
+  green** — as of 2026-07-26 none of them exists.
+- `scripts/measure-clearing.mjs` has run and `docs/LIMITS.md` exists, so `MAX_BATCH_SIZE`
+  is a **measured** default and not a reasoned one.
+- The `AdminCap` goes to a **multisig**, not to the deployer EOA. The two-party NAV split
+  is the entire governance claim; handing both caps to one address silently voids it.
+- The Seal committee is health-probed and **at least `t = 3` operators are live.**
+
+---
+
+## LEGACY — the v1 product's publish generations
+
+⚠ **Everything from here down deployed the old product.** Those packages still exist on
+chain and still contain `gateway`, `router`, `journal` and the v1 `vault`. Nothing of ours
+points at them any more. They are kept so old journal entries, digests and event type
+strings stay resolvable — **do not wire anything new to them.**
+
+## v3 — 2026-07-25 (fresh publish) — the last v1-product deployment
 
 | What | Id |
 |---|---|

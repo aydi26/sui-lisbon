@@ -1,6 +1,18 @@
 # DAY-ONE.md — pre-code verification checklist (RUN BEFORE feature code)
 
-> Purpose: resolve every `UNKNOWN` before writing feature code. This is the named owner of `docs/FACTS.md#unknowns` (U1–U9) plus the `docs/KEEPER.md` §10 items. It is a checklist you literally execute.
+> # ⛔ SUPERSEDED — 2026-07-26. ARCHIVE ONLY. DO NOT EXECUTE.
+>
+> This checklist was written for the **v1 product** (the private market-making vault that quoted
+> `hBTC/DBUSDC` on DeepBook). That product is dead: `gateway.move`, `router.move`, `journal.move`
+> and the v1 `vault.move` are deleted, and so is `docs/KEEPER.md`, which several items below cite.
+> **Nothing here is a v2 work item.**
+>
+> It is kept for one reason: it names the D1–D10 probes whose outputs are the `[D<n>]` receipts
+> cited throughout `docs/FACTS.md` and `docs/RECON.md`. The outputs themselves are in
+> `docs/DAY-ONE-RESULTS.md`. If you need to know *how* a fact was established, read this; if you
+> need to know *what to do*, read `docs/BUILD-PLAN.md`.
+
+> Purpose (as written, 2026-07-25): resolve every `UNKNOWN` before writing feature code. This is the named owner of `docs/FACTS.md#unknowns` (U1–U9) plus the `docs/KEEPER.md` §10 items. It is a checklist you literally execute.
 > Read after: `docs/FACTS.md`.
 
 ---

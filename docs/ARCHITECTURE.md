@@ -1,329 +1,409 @@
-# ARCHITECTURE.md
+# ARCHITECTURE.md — Aphotic system model
 
-Purpose: the authoritative system model for Aphotic × Hashi — component map, object/capability graph, and the four end-to-end data flows — so the coding agent builds the right boundaries the first time.
-Read after: docs/FACTS.md (all exact IDs/types live there; this file references them by anchor, never re-states them as new truth).
-
-> All object IDs, coin types, Move signatures, and latencies are canonical in **docs/FACTS.md**. When this file needs one it links `docs/FACTS.md#<anchor>`. If a value appears here inline it is illustrative shape only — the number of record is FACTS.md.
-
----
-
-## 0. Golden rules this document encodes (front-loaded)
-
-| # | Rule | Where enforced in this model |
-|---|------|------------------------------|
-| G1 | hBTC is a fungible `Coin<BTC>`; on-Sui movement is instant (1 checkpoint). BTC/Guardian latency exists ONLY at mint(deposit)/burn(withdraw). | §4 flows: Sui legs are synchronous; only the two Bitcoin boundaries are async. |
-| G2 | Keeper holds ONLY DeepBook `TradeCap` — never `WithdrawCap`/`DepositCap`. Exits composed in Move to an on-chain-pinned address. | §2 capability model; §3 object graph; Flow 3. |
-| G3 | You cannot buy priority in Hashi's global withdrawal queue; over-capacity batches are REJECTED, not queued. | §5 trust table; envelope treats limiter as a *buffer input*, never a priority lever. |
-| G4 | No Cetus hBTC pool. Router = DeepBook maker `POST_ONLY` + IOC sweep on the same book. | §1 diagram (no Cetus node for BTC vault); Flow 2. |
-| G5 | Guardian limiter state is TRUSTLESSLY replayable via `project_capacity()` over the `WithdrawalSigned` event stream — not a trusted SDK read. | §5 trust table row "limiter"; Flow 4 verify. |
-| G6 | The BTC leg (deposit ~70 min, withdraw ~1.5–2 h) is NEVER live-demoable. Pre-stage; Sui side is instant. | §4 latency column; §6 demo boundary. |
-| G7 | Isolate the entire Hashi surface behind an adapter with a deterministic MOCK from line one; on-chain Hashi calls confined to `gateway.move`; all IDs configurable. | §1 boundary box; §2 module table; §7. |
-| G8 | Honesty: hBTC IS custodial-threshold wrapped BTC. Differentiation = composing the bridge's on-chain machinery, not the token trust model. | §5 trust table header + Hashi-custody row. |
-| G9 | Pin Pyth versions, use Beta feed on testnet, value NAV at DeepBook mid (depeg defence), staleness guards. | §3 oracle node; Flow 2 NAV. |
-| G10 | Move 2024 edition idioms throughout. | All Move modules in §2. |
+> Purpose: the component map, the object/capability graph, the end-to-end flows, and the
+> trust-boundary table. This document says **where a thing lives and who may touch it**; it does
+> not restate constants (those are `docs/FACTS.md`) or module signatures (those are
+> `docs/MOVE-PACKAGE.md`).
+> Read after: `aphotic.md`, `docs/GOVERNANCE.md`, `docs/DESIGN-V2.md`, `docs/RECON.md`, `docs/FACTS.md`.
+>
+> **Rewritten 2026-07-26 for the v2 product.** The v1 architecture (a market-making vault quoting
+> `hBTC/DBUSDC` maker-first on DeepBook, with a `TradeCap`-only keeper and Move-composed exits to an
+> address pinned at deposit) is dead. If you find a diagram with `gateway`, `router` or `journal` in
+> it, it is v1 and it is wrong.
 
 ---
 
-## 1. Component diagram (system map)
+## 1. The one-paragraph model
 
-Left edge = Bitcoin/signet is the ONLY asynchronous boundary. Everything from `gateway.move` rightward is on-Sui and synchronous per checkpoint (G1).
-
-```
-  ══════════════ ASYNC (Bitcoin latency lives here ONLY — G1/G6) ══════════════
-  ┌──────────────┐        ┌───────────────────────────────────────────────┐
-  │ BITCOIN      │  UTXO  │ HASHI  (MystenLabs native-BTC orchestrator)   │
-  │ signet       │◄──────►│  • MPC threshold-Schnorr (validator subset)   │
-  │ P2TR deposit │        │  • Guardian enclave (2-of-2 co-sign)          │
-  │ P2WPKH/P2TR  │        │  • OFF-CHAIN token-bucket rate limiter        │
-  │ payout addr  │        │      (LocalLimiter; replayable — G5)          │
-  └──────────────┘        │  Hashi shared object  (see FACTS.md#hashi)    │
-     ~70min deposit       │  emits: Minted/Burned, Deposit*, Withdrawal*  │
-     ~1.5-2h withdraw     └───────────────┬───────────────────────────────┘
-  ═══════════════════════════════════════ │ ══════════ SYNC below (on-Sui) ═══
-                                           │  request_withdrawal(Balance<BTC>, addr)
-                                           │  deposit / confirm_deposit (PTB)
-                                           │  Coin<BTC> mint→recipient
-                     ┌─────────────────────▼─────────────────────┐
-   ┌───── APP ─────┐ │  gateway.move   (ONLY module touching     │
-   │ React+Vite    │ │  Hashi on-chain — G7)                     │
-   │ zkLogin       │ │  register_exit_address · exit_to_bitcoin  │
-   │ generate-     │ │  reclaim_stalled_exit · small-exit pool   │
-   │ DepositAddr   │ └─────────────────────┬─────────────────────┘
-   │ deposit/exit/ │                       │ split/merge Balance<BTC>, shares
-   │ transparency  │       ┌───────────────▼───────────────────────────┐
-   └──────┬────────┘       │  VAULT  (Sui SHARED object)                │
-          │ zkLogin +      │   • share accounting, sats-denominated NAV │
-          │ sponsored tx   │   • btc_exit_address pinned per depositor  │
-          ▼                │   • strategy ciphertext + Walrus blob id   │
-   ┌─────────────┐         │   • DeepBook BalanceManager (owns caps)    │
-   │ SEAL        │◄──seal_ │   • envelope.move: constraint checks       │
-   │ t-of-n key  │  approve│       incl. redemption buffer (G3)         │
-   │ servers     │   gate  │   • journal.move: decision blob ids on-ch. │
-   └─────────────┘         └──────┬───────────────────────┬────────────┘
-          ▲                       │ issues TradeCap ONLY  │ router.move
-          │ ciphertext            │ (G2)                  │ maker+IOC
-   ┌──────┴───────┐        ┌───────▼─────────┐   ┌─────────▼──────────────────┐
-   │ WALRUS       │◄──log──│ KEEPER          │   │ DeepBook v3                │
-   │ decision log │        │ off-chain,      │   │ Pool<hBTC, DBUSDC>         │
-   │ + strategy   │──get──►│ deterministic   │──►│ (see FACTS.md#deepbook)    │
-   │ ciphertext   │        │ TradeCap only   │   │ POST_ONLY maker + IOC (G4) │
-   └──────────────┘        │ evaluate/route  │   │ NO Cetus leg (G4)          │
-                           │ confirm_deposit │   └────────────────────────────┘
-                           │ crank; exit PTB │            ▲
-                           └────────┬────────┘            │ divergence breaker (G9)
-                                    │ oracle read   ┌──────┴──────────────────┐
-                                    └──────────────►│ Pyth BTC/USD (Beta feed)│
-                                                    │ vs DeepBook TWAP        │
-                                                    └─────────────────────────┘
-```
-
-Node responsibilities (one line each; identifiers in docs/FACTS.md):
-
-| Node | Role | Trust (see §5) |
-|------|------|----------------|
-| Bitcoin/signet | Native BTC in/out; deposit P2TR + payout P2WPKH/P2TR. | external chain |
-| Hashi (MPC+Guardian) | Wraps/unwraps BTC↔`Coin<BTC>`; custody = threshold + Guardian; runs the off-chain limiter. | custodial-threshold (G8) |
-| `gateway.move` | The ONLY on-chain caller of Hashi; composes pinned exits, reclaim, small-exit pooling (G7). | trustless-on-chain |
-| Vault (shared) | Share/NAV accounting, exit-address pinning, seal_approve, BalanceManager custody, envelope, journal. | trustless-on-chain |
-| DeepBook v3 | Sole execution venue; maker + IOC on `Pool<hBTC,DBUSDC>` (G4). | trustless-on-chain |
-| Keeper | Off-chain deterministic strategy exec; TradeCap only; runs crank; builds exit PTBs. | keeper-attested (bounded by envelope) |
-| Seal | seal_approve gate; identity = vault object + version epoch. | trustless gate + threshold assumption |
-| Walrus | Decision log + versioned strategy ciphertext; blob ids emitted on-chain. | content-addressed (self-certifying) |
-| App | zkLogin onboarding, deposit-address derivation, lifecycle UI, transparency. | client, untrusted |
-| Pyth + TWAP | NAV/divergence circuit breaker; value NAV at DeepBook mid (G9). | oracle (pinned + staleness-guarded) |
+Aphotic is **two strategies sharing one balance sheet, and two Move balance sheets sharing one
+product**. A **redemption-carry vault** buys `hBTC` below par, redeems it 1:1 through the Hashi
+withdrawal queue and lends idle capital between carries; a **sealed-order batch auction** clears
+`hBTC` at a uniform price twice daily so opposing flow crosses **before** it reaches that queue. The
+vault's assets are valued in a two-party NAV cycle (keeper proposes, admin multisig approves) and
+the auction's escrow is custodied **separately** so a settlement can never land between the two
+halves of that cycle. Everything on the auction's critical path is permissionless; the keeper is an
+optimisation, never a gatekeeper.
 
 ---
 
-## 2. Capability model (who can do what)
+## 2. Component map
 
-The whole security thesis: **a fully compromised keeper can trade but can NEVER move funds out or redirect an exit** (G2). This is achieved by capability partitioning + Move-composed pinned exits.
+```mermaid
+flowchart TB
+    DEP["Depositors / allocators"]
+    TRADER["Traders"]
 
-| Cap / authority | Holder | Grants | Explicitly CANNOT |
-|-----------------|--------|--------|-------------------|
-| DeepBook `TradeCap` | Keeper | place/cancel orders on `Pool<hBTC,DBUSDC>` | move funds out of BalanceManager; withdraw; deposit |
-| DeepBook `WithdrawCap` | Vault (held in-object; never delegated) | move funds out of BalanceManager | reachable by keeper key |
-| DeepBook `DepositCap` | Vault (in-object) | credit BalanceManager | reachable by keeper key |
-| Vault owner authority | Owner key | create vault, global pause, emergency withdraw (never keeper-gated), rotate keeper (bumps version epoch) | read plaintext strategy is NOT special — Seal threshold governs that |
-| `seal_approve` gate | Move code in `vault.move` | authorizes a Seal key-share release iff caller/context matches vault + version epoch | be bypassed by keeper alone (needs t-of-n servers to agree) |
-| Exit composition | `gateway.move` ONLY (G7) | `request_withdrawal(Balance<BTC>, pinned_addr)` inside the burn PTB | send to any address other than the on-chain-pinned `btc_exit_address` |
-| Hashi `confirm_deposit` | ANYONE (permissionless) | mint pending `Coin<BTC>` to the UTXO-derivation recipient | choose a different recipient (fixed by derivation path) |
+    subgraph onchain["Sui — Move package `aphotic`"]
+        CAPS["caps<br/>AdminCap · KeeperCap · VaultCap<br/>CapRegistry, epochs, allowlist"]
+        VAULT["vault<br/>async request/settle · LP shares<br/>propose_nav then approve_nav<br/>committed_supply · solvency"]
+        ALLOC["allocate<br/>pinned adapter allowlist<br/>(adapter type A, venue ID)"]
+        CARRY["carry<br/>INTERFACE ONLY (Phase 2 not built)<br/>value floor · pinned address · hurdle"]
+        ORACLE["oracle<br/>limiter replay · attested queue<br/>wait-time DISTRIBUTION"]
+        BAL["balance<br/>BalanceBook&lt;T&gt;<br/>ESCROW CUSTODY, not vault NAV"]
+        NOTES["notes<br/>DenomLadder · NoteTree(20)<br/>NullifierSet"]
+        BATCH["batch<br/>OPEN-SEALED-CLEARING-SETTLED<br/>next_boundary · seal_approve"]
+        CLEAR["clearing<br/>uniform price · cursor steps<br/>fills_root · verify_fill"]
+        EV["events — the package LEAF"]
+    end
 
-Move modules (package name `aphotic`, Move 2024 — G10). Emit an event on every externally-visible state transition; error constants `E<Reason>`; amounts in sats (`u64`):
+    subgraph lending["Sui — Move package `aphotic_lending` (OURS, see H3)"]
+        LEND["lending<br/>hBTC supply/borrow market<br/>disclosure() on-chain"]
+    end
 
-| Module | Responsibility | Touches Hashi? |
-|--------|----------------|----------------|
-| `vault` | shared `Vault` object; share/NAV accounting (sats); `seal_approve`; holds BalanceManager + Withdraw/DepositCap; pins `btc_exit_address` per depositor (immutable after first set). | no |
-| `gateway` | Hashi boundary: `register_exit_address`, `exit_to_bitcoin`, `reclaim_stalled_exit`, small-exit pooling under 30,000-sat minimum. | YES — the only one |
-| `envelope` | constraint checks incl. redemption buffer (deployable hBTC ≤ f(idle, pending exit demand)); trustless limiter-replay hooks (G3/G5). | reads Hashi shared object getters if present; else static buffer |
-| `router` | DeepBook maker `POST_ONLY` + IOC sweep entrypoints (G4). | no |
-| `journal` | emits decision-log Walrus blob ids on-chain (self-certifying pointers). | no |
+    subgraph offchain["Off-chain"]
+        SDK["sdk/ — the SINGLE implementation<br/>clearing · Merkle · seal identity · limiter"]
+        KEEPER["keeper — TypeScript, one process<br/>NAV · schedule · Seal decrypt · allocate<br/>devInspect-before-send · fail-soft"]
+        APP["app — React 19 + Vite<br/>encrypt client-side · prove a fill"]
+        SEAL["Seal committee — 5 operators, t=3<br/>time-lock policy · NO Enoki"]
+        WALRUS["Walrus — encrypted order blobs"]
+    end
 
-Keeper directories (TypeScript, ESM) — Hashi surface isolated behind an adapter with a deterministic MOCK from line one (G7):
+    subgraph ext["External, read-mostly"]
+        HASHI["Hashi — public WithdrawalRequestQueue<br/>THE LEAK APHOTIC ROUTES AROUND"]
+        DEEP["DeepBook Pool&lt;hBTC,DBUSDC&gt;<br/>reference mid only — empty today"]
+        PYTH["Pyth BTC/USD (Beta feed)"]
+    end
 
-`hashi/` (adapter iface + mock + real; mock mirrors `project_capacity()` exactly) · `strategy/` (Seal encrypt/decrypt, deterministic `evaluate()`/`route()`, padded serializer) · `routing/` (DeepBook L2 book, maker/IOC split) · `execution/` (PTB build, `confirm_deposit` crank, `exit_to_bitcoin`, sponsored deposit sweep) · `oracle/` (Pyth Beta + DeepBook TWAP divergence breaker) · `storage/` (Walrus put/get + lifetime renewal) · `journal/` (decision records) · `verify/` (replay engine incl. trustless limiter re-derivation) · `privacy/` (Seal session keys, version-epoch rotation).
+    CUSTODY["Custody multisig 2-of-2<br/>keeper + independent policy co-signer<br/>THE ONE NON-MOVE BOUNDARY"]
 
----
+    DEP -->|request_deposit / request_redeem / claim| VAULT
+    TRADER -->|top_up · deposit_note| BAL
+    TRADER -->|encrypted blob| WALRUS
+    TRADER -->|commitment + ct_hash + blob_id| BATCH
 
-## 3. Object graph
+    NOTES --- BAL
+    BAL --- CLEAR
+    BATCH --- CLEAR
+    CAPS --- VAULT
+    CAPS --- BATCH
+    VAULT --- ALLOC
+    ALLOC --> LEND
+    VAULT --- ORACLE
+    CARRY -.->|priced by, never calls| ORACLE
+    EV -.-> VAULT
+    EV -.-> BATCH
+    EV -.-> BAL
 
-```
-Vault (shared object)  ──owns──►  DeepBook BalanceManager
-   │                                  ├─ WithdrawCap  (in-object, NEVER delegated)
-   │                                  ├─ DepositCap   (in-object)
-   │                                  └─ TradeCap     ──delegated──► KEEPER key
-   ├─ field: btc_exit_address[depositor] : vector<u8>   (20B P2WPKH | 32B P2TR; immutable)
-   ├─ field: strategy_ciphertext + walrus_blob_id
-   ├─ field: version_epoch  (Seal identity component; ++ on keeper rotation / revocation)
-   └─ field: NAV accounting (sats, u64) valued at live DeepBook mid (G9)
-
-Seal identity  =  namespace(Vault object id, version_epoch)      // rotation/revocation lever
-   seal_approve(vault, ctx)  → dry-run gate; t-of-n servers release shares only if it passes
-
-Hashi shared object (external)   see FACTS.md#hashi
-   Coin<BTC> (fungible; 8 decimals; sats)   see FACTS.md#hbtc     // standard coin, freely split/merged
-   Pool<hBTC, DBUSDC> (external)             see FACTS.md#deepbook
-
-Walrus blobs (content-addressed; ids emitted on-chain by journal.move)
-   ├─ strategy ciphertext (versioned; encrypt-before-upload always)
-   └─ decision-log segments (oracle read, book snapshot, hashi fields, ruleset hash, decision)
-
-Pyth BTC/USD state + Wormhole state (external; PIN versions, Beta feed on testnet)  see FACTS.md#oracle
+    SDK --- KEEPER
+    SDK --- APP
+    APP -->|encrypt under time-lock id| SEAL
+    SEAL -->|key shares at or after close_ms| KEEPER
+    SEAL -->|key shares at or after close_ms| APP
+    KEEPER -->|KeeperCap: propose_nav, allocate| VAULT
+    KEEPER -->|PERMISSIONLESS: close/reveal/clear/settle| BATCH
+    KEEPER -->|reads events, never trusts an SDK| HASHI
+    KEEPER -->|reads mid via get_level2_range| DEEP
+    KEEPER -->|reads, staleness-guarded| PYTH
+    KEEPER -->|co-signs| CUSTODY
+    CUSTODY -->|request_withdrawal| HASHI
 ```
 
-Key invariants of the graph:
-- The keeper key appears in exactly ONE edge: `TradeCap`. No path from the keeper key reaches `WithdrawCap` or `request_withdrawal` (G2).
-- `btc_exit_address` is set once per depositor (`register_exit_address`) and is immutable; `exit_to_bitcoin` reads it as the withdrawal destination — the keeper never supplies a destination (G2).
-- Seal identity binds to `version_epoch`; bumping it invalidates all previously derived key shares — the correct revocation primitive (a bare `set_keeper` would not do this).
+**Read the diagram for one thing above all:** there is **no arrow from the keeper to anything that
+moves value to an address**. Every keeper edge lands on a function that either records a number, or
+routes to a pre-pinned allowlist entry, or is permissionless anyway. That is not a convention; §5
+explains how it is enforced.
 
 ---
 
-## 4. End-to-end data flows
+## 3. The object and capability graph
 
-Latency legend: **[SYNC]** = one Sui checkpoint (instant, G1). **[ASYNC-BTC]** = Bitcoin/Guardian latency, pre-stage for demo (G6).
+### 3.1 Objects
 
-### Flow 1 — Deposit → hBTC mint → sponsored sweep to shares
+| Object | Kind | Holds | Notes |
+|---|---|---|---|
+| `Vault` | **shared** | `Balance<BTC>` idle · `Balance<USDC>` idle · `CapRegistry` (by value) · `VaultCap` (by value) · LP `TreasuryCap` · pending counters · `epoch_prices` | the only object whose NAV is proposed and approved |
+| `BalanceBook<T>` | **shared** | custodied escrow: `total_base`, `note_backed_base`, per-participant `Table<address, Account>` | **NOT part of vault NAV** — see §7 / `docs/GOVERNANCE.md` §9 D-G1 |
+| `NoteTree` | **shared** | `filled_subtrees` (depth 20, in-object), a root ring | an append is 20 hashes and **zero** dynamic-field entries |
+| `NullifierSet` | **shared** | `Table<vector<u8>, bool>` | **one** store entry per spend |
+| `DenomLadder` | in-object | the append-only ladder | repricing a tier would revalue live notes |
+| `BatchRegistry` | **shared** | `policy_version`, `cadence_ms`, `offset_ms`, `MAX_BATCH_SIZE`, `emit_per_fill` | the second argument to `seal_approve` |
+| `Batch` | **shared** | `state`, `close_ms`, `orders`, `revealed`, `perm`, cursors, `fills_root` | one per window; state is monotonic |
+| `AdapterRegistry` | **shared** | the pinned `(adapter type A, venue ID)` allowlist with per-venue caps | `allocate.move` imports no lending package |
+| `AdminCap` | owned by the admin multisig | — | `key` only |
+| `KeeperCap` | owned by the keeper address | — | `key` only |
+| `VaultCap` | **inside the Vault** | — | `store` only ⇒ **can never be a top-level owned object** |
 
-| Step | Actor | Action | Latency |
-|------|-------|--------|---------|
-| 1 | App (client) | zkLogin → Sui address; `generateDepositAddress({suiAddress})` derives personal P2TR client-side (no server). | [SYNC] |
-| 2 | User | Sends BTC (≥ 30,000 sats) to the derived P2TR from any wallet. | [ASYNC-BTC] |
-| 3 | Keeper (`hashi/`+`execution/`) | PTB `deposit(utxo)` registration; then Hashi committee approve after 6 confs + sanctions + 10-min delay. | [ASYNC-BTC] ~70 min total |
-| 4 | Keeper (crank) | Permissionless `confirm_deposit(request_id)` — runs for ALL Hashi users (public good). Mints `Coin<BTC>` to the derivation-encoded recipient. | [SYNC] once eligible |
-| 5 | Keeper (sponsored PTB) | Sweeps minted hBTC into Vault shares; owner never needs SUI for gas (sponsored tx). | [SYNC] |
-| 6 | App | `view.depositStatus` / `waitForDeposit` walks the six-stage lifecycle in the UI. | UI polling |
+### 3.2 Capabilities — the ability choices *are* the enforcement
 
-Pin: exit-address registration (`register_exit_address`, Flow 3 step 0) SHOULD happen at/near deposit so the pinned destination exists before any exit. Stretch: derivation keyed to a per-user "deposit ticket" object id → mint lands via transfer-to-object, vault claims with `public_receive` (gated by day-one check; see docs/FACTS.md).
+```mermaid
+flowchart LR
+    ADMIN["Admin multisig"] -->|holds| AC["AdminCap<br/>key only"]
+    KEEPERADDR["Keeper address"] -->|holds| KC["KeeperCap<br/>key only"]
+    V["Vault (shared)"] -->|embeds by value| VC["VaultCap<br/>store only"]
+    V -->|embeds by value| REG["CapRegistry<br/>store only"]
 
-### Flow 2 — Strategy evaluate → route → maker/IOC on DeepBook
+    AC -->|approve_nav · set_fees · set_denominations<br/>set_cadence · rotate_keeper_cap<br/>pause / arm_unpause + unpause<br/>set_adapter_allowlist| V
+    KC -->|propose_nav · attest_limiter<br/>allocate / deallocate<br/>place_carry_bid / cancel_carry_bid<br/>settle_step budget hint| V
+    VC -->|internal escrow custody + settlement| BAL["BalanceBook"]
+    ANY["ANYONE"] -->|open_batch · close_batch · reveal_order<br/>begin_clearing · sort_step · price_step<br/>settle_step · claim_deposit · claim_redeem| B["Batch / Vault"]
+```
 
-| Step | Actor | Action | Notes |
-|------|-------|--------|-------|
-| 1 | Keeper (`privacy/`) | Seal session key + `seal_approve` gate → decrypt strategy (identity = vault + version_epoch). | threshold t-of-n |
-| 2 | Keeper (`oracle/`) | Read Pyth BTC/USD (Beta feed, pinned) + DeepBook TWAP; if divergence > threshold → REFUSE (circuit breaker, G9). | staleness-guarded |
-| 3 | Keeper (`strategy/`) | Deterministic `evaluate()` over: book snapshot, pending mint/burn queue (Hashi events), limiter status, encrypted params (spread/skew/flow-sensitivity/buffer). | peg-flow maker |
-| 4 | `envelope.move` | On-chain constraint check incl. redemption buffer: deployable hBTC ≤ f(idle, pending exit demand) (G3). Rejects over-deployment. | Move-enforced |
-| 5 | Keeper (`routing/`) | `route()` splits into maker `POST_ONLY` leg + IOC sweep residual on the SAME `Pool<hBTC,DBUSDC>` (G4 — no Cetus). | maker-first |
-| 6 | Keeper (`execution/`) | Build PTB using `TradeCap` ONLY; place/cancel orders. | cannot move funds (G2) |
-| 7 | `journal.move` | Emit decision-log blob id after Walrus write (Flow 4). | self-certifying |
+| Cap | Abilities | What that structurally prevents |
+|---|---|---|
+| `AdminCap` | `key` only — no `store` | can never be `public_transfer`d and can never be wrapped ⇒ the **two-step handover with explicit acceptance is unbypassable** |
+| `KeeperCap` | `key` only | only `rotate_keeper_cap` can deliver one ⇒ the registry's `keeper` address is **always** the address that holds it |
+| `VaultCap` | `store` only — no `key` | can never be a top-level owned object; it lives only inside the vault ⇒ **no address can ever hold it** |
+| `CapRegistry` | `store` only | embedded by value in the Vault, not shareable ⇒ two registries can never claim the same `vault_id` |
 
-NAV is always valued at the live DeepBook mid, not oracle, because hBTC can depeg below BTC on the thin book precisely when exits throttle (G9).
-
-### Flow 3 — Exit → burn shares → `gateway.exit_to_bitcoin` → `request_withdrawal` to pinned address
-
-| Step | Actor | Action | Latency |
-|------|-------|--------|---------|
-| 0 | Depositor (once) | `register_exit_address(addr)` — 20B P2WPKH or 32B P2TR — pinned immutable in Vault. | [SYNC] |
-| 1 | Depositor → `gateway.exit_to_bitcoin` | ONE atomic PTB: burn shares → split `Balance<BTC>` from vault → `request_withdrawal(hashi, clock, balance, pinned_addr, ctx)`. Keeper cannot participate in this path. | [SYNC] on Sui |
-| 2 | Hashi | Emits `WithdrawalRequested`; batches (~10 min or threshold); Guardian+MPC sign; broadcast; 6 confs. | [ASYNC-BTC] ~1.5–2 h |
-| 3 | App | Sui-side confirmation instant; signet txid surfaced when broadcast (`waitForWithdrawal`). | UI |
-| Alt | `gateway.reclaim_stalled_exit` | Wraps `cancel_withdrawal` (requester-only, pre-commit Requested/Approved, 1h cooldown) → returns `Balance<BTC>` to vault, re-credits shares. | [SYNC] |
-| Small | `gateway` small-exit pool | Exits < 30,000 sats accumulate per-user until they clear the Hashi minimum, or user opts to take hBTC directly. | — |
-
-Hard constraints baked into this flow: min withdrawal 30,000 sats; Bitcoin dust floor 546 sats; over-capacity limiter batches are REJECTED (`RateLimitExceeded`), NOT queued, and priority CANNOT be bought (G3). The destination is the on-chain-pinned address only — a compromised keeper or frontend cannot redirect (G2).
-
-### Flow 4 — journal → Walrus → verify replay (incl. trustless limiter re-derivation)
-
-| Step | Actor | Action |
-|------|-------|--------|
-| 1 | Keeper (`journal/`) | Build decision record: oracle read (Pyth id+seq), L2 book snapshot, `strategy_blob` id in force, ruleset content hash, decision (range/δ/maker-IOC split or no-op cause), result (digest/reason), + Hashi fields (limiter reading, queue depths, pending-mint total). |
-| 2 | Keeper (`storage/`) | Encrypt-before-upload where needed; write segment to Walrus with explicit `WALRUS_EPOCHS`; renewal task extends lifetime before expiry. |
-| 3 | `journal.move` | Emit the Walrus blob id on-chain (content-addressed → self-certifying pointer). |
-| 4 | Verifier (`verify/`) | Fetch segments; re-run published decision function against recorded inputs; report any non-reproducing decision. |
-| 5 | Verifier (limiter) | **Re-derive limiter trajectory TRUSTLESSLY**: replay `project_capacity() = min(cap, tokens + elapsed·refill_rate)` over the on-chain `WithdrawalRequested / PickedForProcessing / Signed` event stream — NOT a trusted SDK read (G5). Confirms "the bridge was tightening when we pulled quotes." Only `refill_rate` + `max_bucket_capacity` are trust anchors, both observationally boundable. |
-
-Two verification tiers (honest): routing-correctness is publicly checkable from δ + book snapshot without plaintext; trigger-correctness needs the strategy plaintext (owner or granted). Version epoch lets an owner disclose ONE historical version without exposing the live one.
+`admin_epoch` and `keeper_epoch` are monotonically increasing; a cap minted before the last rotation
+carries the old epoch and is rejected. `MAX_ALLOWLIST = 32` — the allowlist is a governance
+artefact, not a routing table.
 
 ---
 
-## 5. Trust-boundary table
+## 4. The flows
 
-Header truth (G8): **hBTC IS custodial-threshold wrapped BTC.** Aphotic's differentiation is composing the bridge's on-chain machinery (pinned exits, trustless envelope, permissionless crank, peg-flow signal), NOT the token's trust model.
+### 4.1 Vault — deposit request → NAV approval → claim
 
-| Component / claim | Trustless on-chain | Keeper-attested (bounded) | Off-chain / external trust |
-|-------------------|:------------------:|:-------------------------:|:--------------------------:|
-| Share/NAV accounting (`vault.move`) | ✅ (NAV at DeepBook mid) | — | — |
-| Exit destination pinning (`btc_exit_address`) | ✅ immutable, Move-read | — | — |
-| Exit composition (`gateway.exit_to_bitcoin`) | ✅ atomic PTB, `public fun` | — | — |
-| Keeper order placement | — | ✅ TradeCap only; can't move funds (G2) | — |
-| Constraint envelope incl. redemption buffer | ✅ Move-enforced | — | reads Hashi getters if present, else static buffer |
-| Decision log integrity | ✅ blob id on-chain, content-addressed | log *contents* attested by keeper | Walrus storage liveness |
-| Routing correctness | ✅ publicly replayable from δ+book | — | — |
-| Trigger correctness | — | needs plaintext (owner/granted) | Seal threshold assumption |
-| **Guardian rate limiter** | ⚠️ state lives OFF-CHAIN (no on-chain limiter state) **BUT** ✅ TRUSTLESSLY REPLAYABLE via `project_capacity()` over on-chain `WithdrawalSigned` stream (G5) | — | 2 genesis scalars (`refill_rate`, `max_bucket_capacity`) — observationally boundable |
-| BTC custody (mint/burn) | — | — | Hashi MPC threshold-Schnorr + Guardian 2-of-2 (G8) |
-| Bitcoin settlement | — | — | signet network, 6 confs |
-| Pyth oracle | ✅ on-chain read, pinned versions | — | Pyth publishers + Beta feed (staleness-guarded, G9) |
-| zkLogin onboarding | — | — | Google OIDC + salt/prover service |
-| App frontend | — | — | untrusted client; cannot redirect exits (G2) |
+```mermaid
+sequenceDiagram
+    participant U as Depositor
+    participant V as vault (shared)
+    participant K as Keeper (KeeperCap)
+    participant A as Admin multisig (AdminCap)
 
-The single most important row: the limiter is off-chain state, but its trajectory is NOT a trusted SDK read — it is independently re-derivable from Hashi's own on-chain event stream (G5). Frame it that way everywhere.
+    U->>V: request_deposit(Coin BTC)
+    Note over V: assets escrowed, receipt issued, epoch e recorded<br/>pending_deposit_assets += amount — NO shares minted yet
+    K->>K: re-derive the FULL backing from on-chain state (never cached)
+    K->>V: propose_nav(nav_assets, nav_supply, native_btc_sats, clearing_price, proposed_ms)
+    Note over V: RECORDS ONLY. Commits nothing.<br/>digest = blake2b256(bcs(proposal))
+    A->>V: approve_nav(expected_digest)
+    Note over V: 1 digest · 2 age · 3 jump bps · 4 price deviation<br/>5 native leg <= on-Sui claims · 6 epoch_prices[e]<br/>7 mul_div ROUND DOWN · 8 committed_supply<br/>9 epoch += 1 · 10 assert_solvent()
+    U->>V: claim_deposit(receipt) — PERMISSIONLESS
+    Note over V: recomputes the SAME mul_div per receipt<br/>round-down is subadditive so dust stays with the vault
+    V-->>U: Coin APHOTIC_LP
+```
+
+Redemption is the mirror: `request_redeem(shares)` → `approve_nav` prices the epoch →
+`claim_redeem(receipt)` releases assets. **Neither `request_redeem` nor `claim_redeem` checks the
+pause flag** — a paused vault still lets holders leave.
+
+The two-party split is the point: **the keeper proposes and the admin approves, and neither can move
+the share price alone.** The digest check exists so a keeper cannot swap the proposal in a race
+after the multisig has signed the numbers.
+
+`approve_nav` is **O(1)** — it never iterates requests, because a per-request loop against the
+1 000-entry store ceiling is a liveness bug waiting to happen.
+
+### 4.2 Auction — note deposit → submit → close → reveal → clear → settle
+
+```mermaid
+sequenceDiagram
+    participant T as Trader (app, client-side)
+    participant N as notes / balance
+    participant W as Walrus
+    participant B as batch (shared)
+    participant S as Seal committee (t=3 of 5 operators)
+    participant C as clearing
+    participant ANY as Anyone
+
+    T->>N: top_up(Coin BTC) and/or deposit_note(commitment)
+    Note over N: escrow is FIXED-DENOMINATION notes + a persistent<br/>internal balance. NO amount field on a Note.<br/>Topping up is decoupled in time from trading.
+    T->>T: build Order, commitment = blake2b256(bcs(Order))
+    T->>S: encrypt under inner id = close_ms(LE) || policy_version(LE) || batch_id
+    T->>W: PUT ciphertext, get blob_id
+    T->>B: submit_order(commitment, ct_hash, blob_id)
+    Note over B: state OPEN. No amount, no side, no price on chain.<br/>Rejected within SUBMIT_CUTOFF_MS (60s) of close.<br/>A FULL batch rejects submits and still closes on the boundary.
+    ANY->>B: close_batch() — PERMISSIONLESS, reverts before close_ms
+    Note over B: state SEALED. The BalanceBook snapshot FREEZES here.
+    S-->>ANY: key shares become derivable (time-lock satisfiable by ANYONE)
+    ANY->>B: reveal_order(order) / reveal_many(orders)
+    Note over B: asserts blake2b256(bcs(order)) == the stored commitment
+    ANY->>C: begin_clearing() then sort_step(budget) then price_step(budget)
+    Note over C: canonical order · candidate prices · max volume<br/>tie-break |demand-supply| then lowest p<br/>INTEGER ONLY, no floats
+    ANY->>C: settle_step(budget) — cursor-driven, resumable
+    Note over C: PUSH, not claim. Under-funded fills TRUNCATE to<br/>min(fill, frozen balance); counterparty recomputed symmetrically.<br/>sum(debits) == sum(credits) + fee.
+    C-->>B: state SETTLED, fills_root published
+    T->>C: verify_fill(leaf, path) — the transparency surface
+```
+
+**Nothing on that path requires the keeper.** `KeeperCap` appears exactly once, on `settle_step`,
+and only as a gas-priority hint on a function that is permissionless anyway. If the keeper is down,
+anyone finishes the batch.
+
+### 4.3 Idle allocation
+
+```mermaid
+sequenceDiagram
+    participant K as Keeper (KeeperCap)
+    participant AR as allocate::AdapterRegistry
+    participant L as aphotic_lending::lending (OURS)
+    participant V as vault
+
+    K->>AR: allocate A (venue_id, sats)
+    Note over AR: asserts the PAIR (adapter type A, venue ID) is allowlisted,<br/>enabled, and under its cap. NO address parameter exists.
+    AR-->>K: DepositTicket
+    K->>L: deposit(venue, Coin BTC) returns Coin S
+    K->>AR: mark(...) — the ONLY way yield enters the book
+    V->>L: convert_to_assets(shares) — read for the NAV leg
+```
+
+`allocate.move` is a **leaf**: it imports no other `aphotic` module and no lending package, so it can
+neither cycle nor pin a venue at compile time. Recall (`deallocate`) is **never** gated by pause or
+by disabling an adapter — lowering a cap blocks new deployment without trapping capital.
+
+### 4.4 The carry — designed, priced, deliberately not executed
+
+```mermaid
+flowchart LR
+    O["oracle<br/>limiter replay + attested queue<br/>gives a wait-time DISTRIBUTION"] --> H["carry hurdle<br/>expected latency x cost of capital<br/>+ gas + latency-model error"]
+    H --> DEC{"discount > hurdle?"}
+    DEC -->|Phase 2, NOT BUILT| ENTRY["ENTRY: buy hBTC below par on DeepBook"]
+    ENTRY -.-> EXIT["EXIT: request_withdrawal via the 2-of-2 custody multisig"]
+    EXIT -.-> BTC["native BTC at the pinned address"]
+```
+
+`carry.move` ships as **interface only**: the three pure predicates that guard the leg
+(value-preservation floor, pinned-address equality, carry hurdle) are real and tested, and there is
+deliberately **no execution path** — nothing in the module touches DeepBook, Hashi, a `Balance<BTC>`
+or any shared object. Three independent reasons, each sufficient: `aphotic.md` §11 says not to
+attempt Phase 2 in this window; the `Pool<hBTC,DBUSDC>` book is empty on both sides with no
+observable mid; and the exit leg cannot be composed from a shared object at all (§5.3).
+
+**Do not size the carry off a point estimate. The tail is the risk** — which is why `oracle.move`
+returns a distribution and an explicit "unbounded" sentinel for a quantile that lands in the open
+tail.
 
 ---
 
-## 6. Demo/latency boundary (build implication)
+## 5. What the keeper can and cannot do
 
-The vertical ASYNC line in §1 is the pre-staging boundary. Everything RIGHT of it (gateway → vault → DeepBook → keeper → Seal/Walrus) is live-demoable and instant. Everything LEFT of it (Bitcoin confirmations, deposit ~70 min, withdrawal ~1.5–2 h) is pre-staged; the demo shows an EARLIER confirmed signet tx and runs the permissionless `confirm_deposit` crank live as the only real on-chain BTC-side transition (G6). Keep 2–3 confirmed hBTC deposits and one broadcast withdrawal warm at all times.
+### 5.1 The complete keeper-callable list
+
+There are **five** entries, and nothing may be added without a written decision
+(`docs/DESIGN-V2.md` §7, mirrored in `docs/FACTS.md#keeper-callable`):
+
+| Module | Function | Why it is safe |
+|---|---|---|
+| `vault` | `propose_nav` | records only; commits nothing |
+| `vault` | `attest_limiter` | bounded reading; cannot exceed admin-set bounds |
+| `allocate` | `allocate` / `deallocate` | destination restricted to the pinned allowlist |
+| `carry` | `place_carry_bid` / `cancel_carry_bid` | value-preservation floor asserted in Move (interface only today) |
+| `clearing` | `settle_step` (budget hint) | permissionless anyway; the cap only prioritises gas |
+
+### 5.2 The invariant is structural, not a runtime check
+
+> **Every keeper-gated function takes NO `address` parameter at all.**
+
+This is the enforcement. A permission check can be bypassed by a bug; a **missing parameter cannot
+be supplied**. A keeper that is fully compromised still has no way to *name* a destination — the
+only destinations that exist are the ones the `AdminCap` holder pinned in advance.
+`gates.ps1 keepercap` fails the build if an `address` parameter appears on any of them, and
+`caps_tests::keeper_functions_take_no_address_param` asserts the same thing from inside the suite.
+
+⚠ **Do not trust a gate you have not seen fail.** Writing `keepercap` revealed that the older `g2`
+gate — guarding this same invariant — passed a function taking `bitcoin_address: vector<u8>`,
+because a word-bounded `address` match misses the underscore. Every gate must be proved against a
+deliberately-violating fixture tree as well as a compliant one.
+
+The keeper therefore **cannot**: transfer assets to an arbitrary address · rotate its own capability
+· mint or burn shares outside settlement · change any parameter · choose when a batch closes · read
+an order before close · call anything outside the five rows above.
+
+### 5.3 The one boundary Move cannot enforce
+
+`hashi::withdraw` sets `sender: ctx.sender()`, which on Sui is the **transaction signer**, never the
+calling module. Consequences, all verified against source:
+
+- a **shared object can never hold a queue position**;
+- `cancel_withdrawal` asserts `request_sender() == ctx.sender()`, so only the original signer can
+  cancel;
+- the destination `bitcoin_address` is fixed at request time and the escrowed `Balance<BTC>` is
+  burned on commit, leaving **no on-chain claim**;
+- a `WithdrawalRequest` lives inside an `ObjectBag` on the queue, not in the user's account — it is
+  not transferable, so **positions cannot be bought or traded**.
+
+⇒ **The redemption leg cannot be made non-custodial in Move.** The mitigation mirrors Hashi's own
+Guardian: the custody address is a **Sui 2-of-2 multisig** (keeper + an independent policy
+co-signer); the co-signer signs `request_withdrawal` only when `bitcoin_address` equals the pinned
+vault address and only within a rate limit; the pinned Bitcoin address is published so redemptions
+are auditable on Bitcoin. **Enforced at signing, not by Move — say so plainly in all external
+material.** It is the same trust shape the venue already asks users to accept.
+
+### 5.4 Required keeper behaviours
+
+- **`devInspect`-before-send.** Simulate every transaction; catch reverts off-chain and never
+  broadcast them.
+- **Fail-soft.** Exponential backoff, no crash on transient errors, and specifically **no crash
+  across Hashi reconfiguration windows**, during which withdrawals are paused by the protocol at
+  every Sui epoch boundary.
+- **Re-derive, never cache.** Recompute the full backing each pass from on-chain state.
+- **Clearing parity.** A divergence from the Move implementation is a **release blocker**.
+- **Liveness is not privileged.** If the keeper is down, anyone triggers `close_batch` and the
+  settlement steps at or after the scheduled time.
+- **Never fall back to plaintext** if fewer than `t` Seal servers are live — refuse to open the
+  batch.
 
 ---
 
-## 7. Boundary discipline (do this from line one)
+## 6. Where the boundaries of honesty are
 
-1. Entire Hashi surface behind `hashi/` adapter interface + deterministic MOCK; mock mirrors `project_capacity()` exactly (G5/G7).
-2. On-chain Hashi calls confined to `gateway.move` — no other module imports Hashi (G7).
-3. All object IDs / coin types / feed ids configurable via env/config, NEVER hardcoded in logic (G7). Values of record: docs/FACTS.md.
-4. Keeper key touches only `TradeCap`; owner key holds emergency/pause; verify no code path lets the keeper key reach `WithdrawCap` or `request_withdrawal` (G2).
-5. Pin Pyth package/state versions; use Beta feed on testnet; NAV at DeepBook mid; staleness guards (G9).
+Four places where the architecture is weaker than a diagram makes it look. Each must be stated
+wherever the corresponding number or claim appears.
+
+| # | The gap | Where it lives |
+|---|---|---|
+| **H1** | **`hBTC` is custodial-threshold wrapped BTC.** Aphotic inherits every Hashi trust assumption: committee attestation instead of an on-chain light client, a Guardian enclave in a 2-of-2, and a ~60-day CSV recovery leaf that is MPC-only afterwards while coin selection has no age criterion. Validator collusion: **protocol floor 7, live testnet today 32 — always both, always labelled.** | the whole product |
+| **H2** | **v1 note spends are LINKABLE.** The Merkle path is supplied in the clear, so `path_index` names the leaf. **v1 delivers uniformity, not unlinkability.** The commitment/nullifier machinery earns its keep by making Phase 4 a verifier swap — not by hiding anything today. | `notes.move`, the app's limitations panel |
+| **H3** | **The hBTC lending counterparty is ours.** No hBTC lending market exists on Sui testnet, so we deployed one (`lending/`). A yield figure from it is a figure from ourselves. It is uncollateralised and has no liquidations, both on purpose and both returned by `disclosure()` on-chain so a front-end cannot render the APY without them. | `allocate.move` → `aphotic_lending::lending` |
+| **H4** | **One NAV leg is not Sui-verifiable.** Native BTC at the redemption address lives in the Bitcoin UTXO set, and Sui has no Bitcoin light client. Mitigations, in order of strength: publish and pin the address; **cap the leg at the sum of on-Sui-readable `WithdrawalRequest.btc_amount` values that produced it** (asserted in `approve_nav`); a Move header relay as roadmap, not dependency. **Never present the NAV as fully reconstructible.** | `vault::approve_nav` step 5 |
+
+Plus the one confidentiality limit that is a property of the design rather than a gap:
+**after close, nothing is hidden — including unfilled orders**, which become visible and are
+exploitable in the next batch. Both that and the `t`-of-`n` pre-close limit close with the same
+upgrade: replace the time-lock policy with a **PCR-gated policy** so only an attested Nautilus
+enclave ever decrypts. Order format, Seal integration and settlement contract are unchanged, which
+is exactly why it is deferred rather than designed around.
 
 ---
 
-## Cross-references
+## 7. Trust boundaries
 
-- Exact IDs/types/signatures/latencies → **docs/FACTS.md** (`#hbtc`, `#hashi`, `#deepbook`, `#oracle`, `#seal`, `#walrus`, `#latencies`, `#limiter`).
-- Design rationale / mechanisms / demo script → `HASHI_INTEGRATION.md` (mechanism #2 is the trustless-replay envelope; §8 demo).
-- Base Aphotic (Seal/Walrus/DeepBook/zkLogin/keeper/envelope) → `README (8).md`.
-- Shelved alternative (NOT the build) → `BTC_FIXED_INCOME.md` (Meridian bond) — reference only.
-- Module-level contracts / signatures for `vault`/`gateway`/`envelope`/`router`/`journal` → see the Move-spec doc when authored (resolve exact spec anchor in DAY-ONE.md; owner: Move lead).
+| # | Boundary | Enforced by | What a total compromise of the left side buys |
+|---|---|---|---|
+| T1 | Depositor → `vault` | Move | nothing beyond that depositor's own shares. Requests are escrowed and priced at an approved epoch price. |
+| T2 | Keeper → `vault` / `allocate` | **Move, structurally**: no `address` parameter on any keeper-gated function; `KeeperCap` is `key`-only and epoch-bound | a proposed NAV the admin has not approved, and routing to an already-pinned venue up to its cap. **No value movement to any address of the attacker's choosing.** |
+| T3 | Keeper → `batch` / `clearing` | **nothing — deliberately.** These are permissionless | nothing. The schedule and the commitments are the authorization. A malicious keeper can only do what any member of the public can do. |
+| T4 | Admin multisig → `vault` | Move + the off-chain multisig policy | parameter changes and NAV approval. It **cannot** propose a NAV (`admin_cannot_propose_nav`) and cannot reach the LP treasury outside settlement. Pause is cheap; unpause needs `arm_unpause` in an earlier transaction plus a delay. |
+| T5 | **Custody multisig → Hashi queue** | **signing policy, NOT Move** (§5.3) | ⚠ **this is the custodial boundary.** A 2-of-2 compromise redirects a redemption. Mitigated by the co-signer's pinned-address + rate-limit policy and by publishing the Bitcoin address. Stated plainly, never minimised. |
+| T6 | Seal committee → order confidentiality | threshold cryptography, `t = 3` of 5 **operators** | a colluding quorum decrypts **before** close. Counted by operator, not by server, because two servers from one operator are one failure domain. Enoki is excluded because it is also a zkLogin salt provider. |
+| T7 | Hashi committee → `hBTC` itself | Hashi's own threshold Schnorr + Guardian | the backing. **This is H1** and it is not ours to fix; it is ours to state. |
+| T8 | `oracle::QueueObservation` → NAV inputs | **keeper attestation**, checked for internal consistency at construction | a lie about queue depth. Acceptable **only** because the claim is independently falsifiable off-chain against the public queue object — and it would **not** be acceptable for custody. |
+| T9 | Walrus / the app → order plaintext | client-side encryption before the blob leaves the browser | nothing: blobs are public and discoverable **by design**, which is why they are encrypted before upload, always. |
 
 ---
 
-## ERRATA (2026-07-25)
+## 8. Why `sdk/` is structural, not cosmetic
 
-> Source: `docs/DAY-ONE-RESULTS.md` (live probes) + `docs/RECON.md`. Canonical values live in `docs/FACTS.md`.
-> **Where this section conflicts with the body of ARCHITECTURE.md above, this section wins.** Each item is WAS / IS / WHY.
+Four algorithms must be byte-identical across languages:
 
-### E-R1 — §5 trust-boundary table: reclaim is DEPOSITOR-ONLY (missing row)
+| Algorithm | Move | TypeScript |
+|---|---|---|
+| **clearing** | `clearing.move` | keeper (settle driver) + app (verifier) |
+| **the Merkle tree** | `notes.move` | app (prover) + keeper (root check) |
+| **the Seal inner id** | `batch.move` decoder | app encoder + keeper encoder |
+| **the limiter** | `oracle.move` | `keeper/src/hashi/limiter.ts` |
 
-- **WAS:** the table has no row for the reclaim path, and §2's capability model does not state who may cancel a withdrawal.
-- **IS:** add this row, and treat it as a first-class trust-boundary fact rather than an implementation detail:
+`keeper/src/hashi/limiter.ts`'s banner already carries the rule — *"@forbidden a SECOND copy of this
+algorithm anywhere"* — and `keeper/test/limiter.cross.test.ts` exists precisely because a duplicate
+drifted once. Duplicating clearing across keeper and app would reintroduce that failure in the one
+place where a divergence is a **release blocker**.
 
-  | Component / claim | Trustless on-chain | Keeper-attested (bounded) | Off-chain / external trust |
-  |-------------------|:------------------:|:-------------------------:|:--------------------------:|
-  | **Exit reclaim (`gateway.reclaim_stalled_exit`)** | ✅ **DEPOSITOR-ONLY, enforced by Hashi itself** — `cancel_withdrawal` asserts `request.sender == ctx.sender()`; the keeper **cannot** call it, and neither can the app on the user's behalf | — | — |
+`sdk/` needs no build step: `"exports": { "./*": "./src/*.ts" }`, consumed via
+`keeper/tsconfig.json` `paths` and `app/vite.config.ts` `resolve.alias`.
 
-- **WHY:** `hashi::withdraw::cancel_withdrawal` is sender-bound; the request sender is whoever signed the `request_withdrawal` PTB. This **strengthens** the G2 thesis — it is not merely that the keeper won't redirect funds, it is that the keeper cannot even *unwind* a user's exit. It also imposes an architectural constraint that must be visible here, not buried in the Move spec: **any pooled small-exit flush must assert `who == ctx.sender()`**, otherwise the flusher becomes the sole party able to reclaim. Source- and bytecode-verified: `docs/FACTS.md#hashi-move-api`, `docs/RECON.md` R7.3.
+---
 
-### E-R2 — §5 "reads Hashi getters if present, else static buffer" — no getters exist
+## 9. Demo boundary
 
-- **WAS:** the constraint-envelope row's external-trust cell reads "reads Hashi getters if present, else static buffer", leaving the branch open.
-- **IS:** **there are no getters.** All 46 `hashi::withdrawal_queue` accessors and all 15 `hashi::btc_config` accessors are `public(package)` on the deployed bytecode (only `withdrawal_queue::output_utxo` is `Public`). The cell should read: *"static redemption-buffer ratio + off-chain event replay — unconditional; no on-chain Hashi read is possible."*
-- **WHY:** `docs/DAY-ONE-RESULTS.md` §D2. Note this **improves** the architecture's honesty: there is no hidden dependency on a bridge getter, and `envelope.move` has one code path instead of two.
+| Leg | Live? | Why |
+|---|---|---|
+| Deposit / redeem request, NAV propose→approve, claim | **LIVE** | pure Sui, instant |
+| Note deposit, order submit (encrypted), close, reveal, clear, settle, verify a fill | **LIVE** | pure Sui + Seal; the clearing **is** the demo |
+| Idle allocation to the lending market | **LIVE** — with H3 said out loud | our own counterparty |
+| Move ↔ TypeScript clearing parity, via `devInspect` | **LIVE** | the strongest thing to show |
+| **BTC in (deposit)** | ❌ **~70+ min** | pre-stage; show an earlier confirmed signet tx |
+| **BTC out (withdrawal)** | ❌ **~1.5–2 h** | pre-stage; show an earlier confirmed signet tx |
+| The carry itself | ❌ **not built** | D2 / D3 / D6 — say so; do not mime it |
 
-### E-R3 — §5 limiter row: the two genesis scalars are no longer unknown
-
-- **WAS:** "2 genesis scalars (`refill_rate`, `max_bucket_capacity`) — observationally boundable" as an open external-trust item.
-- **IS:** both are **read live** from the guardian's read-only `GET {guardian_url}/info` — `refill_rate = 115_740` sats/s, `max_bucket_capacity = 10_000_000_000` sats (**100 BTC**). They remain the only trust anchors of the replay, and they remain observationally boundable; they are simply no longer *unknown*. The endpoint is **HTTP/2 only** (HTTP/1.1 returns 464), and it reports the **raw last-consume state**, not a projected balance — the caller runs `project_capacity` itself, which is exactly the shape §4 Flow 4 assumes.
-- **WHY:** `docs/DAY-ONE-RESULTS.md` §D4, `docs/FACTS.md#guardian-limiter`.
-  ⚠ **Narrative adjustment for the pitch (G8).** A 100 BTC bucket refilling ~100 BTC/day means an Aphotic-sized exit will **never** be rate-limited on testnet. Do not frame the bridge-aware envelope as protecting against congestion we would actually hit. The claim that survives scrutiny is the one this table already makes: the limiter's trajectory is **independently re-derivable from Hashi's own on-chain events**, and that is checkable by anyone. Keep the row; change the story around it.
-
-### E-R4 — §4 Flow 4: `WithdrawalSigned` cannot advance the bucket on its own
-
-- **WAS:** Flow 4 / §5 describe the replay as driven by the `WithdrawalSigned` stream.
-- **IS:** correct in spirit, incomplete in fact. `WithdrawalSigned { guardian_signatures, request_ids, signatures, withdrawal_txn_id }` carries **no amount and no timestamp**. The replay is a **join**: sats come from `WithdrawalRequested.btc_amount` matched on `request_ids` (use the *requested* amount — `withdrawal_outputs[i].amount` is net of the Bitcoin network fee), and the timestamp comes from the **Sui event envelope** `timestampMs`. Flow 4 therefore consumes **two** event streams, not one.
-- **WHY:** `docs/DAY-ONE-RESULTS.md` §D10b, `docs/FACTS.md#events`. This is a component-diagram-level fact: the `verify/` box needs an index built from `WithdrawalRequested` before it can walk `Signed`.
-
-### E-R5 — §1/§3 transport: the fullnode is gRPC-only
-
-- **WAS:** the component diagram implies a generic "Sui RPC" edge.
-- **IS:** `https://fullnode.testnet.sui.io:443` serves **gRPC v2 only** and returns **HTTP 404** for JSON-RPC. `SuiGrpcClient` is the default transport, constructed in exactly one place (`keeper/src/sui/client.ts`); JSON-RPC mirrors (`https://rpc-testnet.suiscan.xyz:443`) are probe-only. Separately, the Hashi guardian requires **HTTP/2**.
-- **WHY:** `docs/FACTS.md#rpc-transport`, `docs/RECON.md` R1. Worth showing on the diagram because it is the kind of thing that silently costs an afternoon.
-
-### E-R6 — §2 capability model: the DeepBook cap split is verified, and `confirm_deposit` is PTB-only
-
-- **WAS:** the capability model asserts the `TradeCap`-only keeper (G2) and lists `confirm_deposit` among the Hashi touchpoints.
-- **IS:** two confirmations and one correction.
-  - **Confirmed on-chain:** `balance_manager::{new, mint_trade_cap, mint_deposit_cap, mint_withdraw_cap, revoke_trade_cap}` and `generate_proof_as_trader(&mut BalanceManager, &TradeCap, &TxContext): TradeProof` all exist and are independent. A shared `BalanceManager` + owned `TradeCap` dry-runs green. G2 is implementable exactly as drawn.
-  - **Correction:** `hashi::deposit::{deposit, confirm_deposit, approve_deposit, delete_expired_deposit}` are `visibility=Private, isEntry=true` — **PTB commands, not Move-callable.** The permissionless crank is an arrow from the *keeper/app* to Hashi, never from `gateway.move` to Hashi. The **entire** Move-composable Hashi surface is two functions: `request_withdrawal` and `cancel_withdrawal`. The G7 boundary is therefore narrower — and easier to hold — than the diagram implies.
-- **WHY:** `docs/DAY-ONE-RESULTS.md` §D2/§D3c, `docs/FACTS.md#hashi-move-api`, `#deepbook-venue`.
-
-### E-R7 — §6 demo/latency boundary: measured numbers, unchanged conclusion
-
-- **WAS:** "deposit ~70 min, withdrawal ~1.5–2 h" as the pre-staging boundary.
-- **IS:** one real observed withdrawal: `Requested → Approved` +10 s, `→ PickedForProcessing` +5.1 min, `→ Signed` **+5.4 min**, `→ Confirmed` **+57.9 min**. Keep the conservative planning figures (single quiet-signet sample), but the warm-inventory window is likely tighter than feared.
-- **WHY:** `docs/DAY-ONE-RESULTS.md` §D10e. **G6 stands unchanged** — 58 minutes is still far outside a 3-minute demo; the boundary does not move.
-- **New hard dependency to draw on the diagram:** the hBTC/DBUSDC book is **empty on both sides** and hBTC **cannot be minted by us** (`treasury::mint` is `public(package)`). The scripted book-seeder account is therefore a **required component**, not a demo convenience — NAV, the router, and the transparency panel all have nothing to read without it, and seeding it depends on the signet faucet drip completing first.
-
-### E-R8 — doc hygiene: a stray unmatched code fence was removed
-
-- **WAS:** the last line of the §Cross-references list was a bare `````` with no opening fence.
-- **IS:** removed.
-- **WHY:** it opened a code block that swallowed everything appended after it (including this ERRATA section) in any markdown renderer. One-line fix; no content changed.
+`docs/DEMO.md` carries the minute-by-minute script and the fallback.

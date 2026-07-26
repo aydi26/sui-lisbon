@@ -1,176 +1,246 @@
-# CLAUDE.md — Aphotic × Hashi ("The Bitcoin Dark Vault")
+# CLAUDE.md — Aphotic
 
-> Coding-agent entrypoint. Auto-loaded every session. High-signal only. Facts of record live in `docs/FACTS.md` — never re-derive an ID/type/signature; cite it by anchor.
+> Coding-agent entrypoint. Auto-loaded every session. High-signal only.
+> Facts of record live in `docs/FACTS.md` — never re-derive an ID, a type or a signature; cite it by anchor.
+>
+> **⚠ THE PRODUCT PIVOTED ON 2026-07-26.** If you have seen this repo before: the private
+> market-making vault that quoted `hBTC/DBUSDC` on DeepBook **is dead**. `gateway.move`,
+> `router.move`, `journal.move` and the v1 `vault.move` are gone, and so are
+> `keeper/src/{strategy,routing,execution,journal}`. Anything that describes a maker/IOC router,
+> a `TradeCap`-only keeper, a `btc_exit_address` pinned at deposit, or a Seal-encrypted *strategy*
+> is describing the **old** product. Do not implement it. See "SUPERSEDED" below.
 
 ## Project (4 sentences)
 
-Aphotic × Hashi is a NON-CUSTODIAL, PRIVATE market-making vault on Sui **testnet** (Bitcoin side = **signet**): a Seal-encrypted strategy is executed maker-first on the `hBTC/DBUSDC` DeepBook v3 order book by a deterministic off-chain keeper that holds ONLY a DeepBook `TradeCap`. Native BTC enters/exits through Hashi (MystenLabs' native-BTC orchestrator); exits are composed in Move via `hashi::withdraw::request_withdrawal` to a Bitcoin address pinned on-chain at deposit, so a fully compromised keeper can neither steal nor redirect funds. Onboarding is zkLogin + sponsored transactions + a permissionless `confirm_deposit` crank; NAV is sats-denominated; every keeper decision is written to Walrus and is replayable. The differentiator is composing the bridge's ON-CHAIN machinery (pinned exits, a trustlessly-replayable limiter-aware risk envelope, the permissionless deposit crank, a peg-flow signal) — NOT the token's trust model (hBTC IS custodial-threshold wrapped BTC — always state this honestly).
+Aphotic is **two strategies sharing one balance sheet**: a **redemption-carry vault** that buys
+`hBTC` below par, redeems it one-for-one through the Hashi withdrawal queue and captures the
+spread — lending idle capital between carries — and a **sealed-order batch auction** that clears
+`hBTC` at a uniform price twice daily, with orders Seal-encrypted client-side under a time-lock
+policy so nothing is readable before the batch closes. The clearing is computed **on-chain in
+Move**, deterministically, on a fixed order set; escrow runs through **fixed-denomination notes**
+with a Merkle commitment tree and nullifiers, so escrow leaks no size; vault semantics are async
+request/settle, and NAV is **proposed by the keeper and approved by an admin multisig** — a
+two-**party** split, not two-scope. The differentiator is the leak Aphotic exists to route around:
+Hashi's `WithdrawalRequestQueue` is a **public Move object** whose every pending request exposes
+`sender`, `btc_amount`, `bitcoin_address` and `created_timestamp_ms`, so a desk unwinding is
+watched forming in real time — Aphotic crosses that flow **before** it reaches the queue. The
+vault ships first because it does not depend on two-sided flow; the auction is the differentiator
+but needs a market.
 
 ## READ ORDER (a fresh coding agent reads these, in order)
 
-1. **`docs/GOLDEN-RULES.md`** — the 10 hard rules (RULE / WHY / NEVER) + common mistakes to avoid + pitch-honesty lines. **Read FIRST; re-check before any Hashi/DeepBook/oracle claim or code.**
-2. **`docs/RECON.md`** — VERIFIED GROUND TRUTH from live reconnaissance (R1–**R14**: transport, toolchain, deps, on-chain ids, Hashi Move surface, events, limiter algorithm, venue reality, Pyth, npm versions, landing page, **deposit registration**). **NEVER re-derive anything in it. Where it contradicts another doc, RECON wins.** (Two known arithmetic slips: see the errata digest.)
-3. **`docs/CONVENTIONS.md`** — the APHOTIC CONTRACT banner every source file carries, plus the progress-census greps. Follow the grammar EXACTLY.
-4. **`docs/FACTS.md`** — canonical single source of truth (all IDs, coin types, signatures, latencies, limiter mechanics, SDK, venue, oracle, events, unknowns). **FACTS.md wins over the layer-spec bodies; the layer-spec ERRATA sections win over FACTS.**
-5. **`docs/DEPLOYED.md`** — what we actually published on testnet: package, shared `Vault`, shared `BalanceManager`, caps, digests, envelope parameters, and what is known-incomplete at v1. These are the ids `keeper/.env` and `app/.env.local` are wired to.
-6. **`docs/ARCHITECTURE.md`** — component map, object/capability graph, the four end-to-end flows, trust-boundary table.
-7. **Layer spec for the task at hand** — `docs/MOVE-PACKAGE.md` (Move package `aphotic`), `docs/KEEPER.md` (TypeScript keeper), or `docs/APP.md` (React+Vite app). **Read each one's `ERRATA (2026-07-25)` section FIRST — it wins over the body above it.**
-8. **`docs/STATUS.md`** — the per-task ledger: what is DONE vs STUB vs BLOCKED, the environment of record, the known blockers, and the verbatim run log.
-9. **`docs/ULTRACODE-BRIEF.md`** — the entry document for an implementation run: work-remaining census, full VERIFY matrix, the complete errata digest, and the prohibitions.
-10. **`docs/DEMO.md`** — the runbook: the four differentiators, the live-vs-pre-staged boundary, the minute-by-minute script with exact commands, the fallback, and the things we must never say.
-11. **`docs/BUILD-PLAN.md`** — the ordered, phase-by-phase task list (T0.x…T5.x) with acceptance criteria + VERIFY commands and the CUT LINE. Execute top-to-bottom.
-12. **`docs/DEPLOY.md`** — shipping `app/` to Vercel: `vercel.json`, the `VITE_*` build-time inlining trap, and the Enoki/Google origin registration.
-13. **`docs/DAY-ONE.md` + `docs/DAY-ONE-RESULTS.md`** — the pre-code verification checklist (D1–D10) and its execution record. **Already run** (2026-07-25); RESULTS is the receipt behind every resolved UNKNOWN.
-14. Design rationale only if needed: **`HASHI_INTEGRATION.md`** (authoritative Aphotic × Hashi design — 5 mechanisms, deltas, demo §8, Q&A §10) and **`README (8).md`** (base Aphotic product design).
+1. **`aphotic.md`** — **the spec of record.** Read all of it, and specifically §2 hard constraints,
+   §3 rejected designs (settled — do not relitigate), §5 module layout, §7 mechanisms, §10
+   invariants, §11 build sequence, §13 known limitations, and **§22 the naming rule** (below).
+2. **`docs/GOVERNANCE.md`** — the operations note: capabilities, the two-party NAV split, the one
+   custody boundary Move cannot enforce, the confidential-clearing section, fees. Carries a
+   **DEVIATIONS** section recording where the build knowingly differs from it.
+3. **`docs/DESIGN-V2.md`** — **the reconciliation reference. DO NOT EDIT.** Three findings that
+   change the design (F1 the Seal endianness trap, F2 no sender check, F3 escrow out of NAV), the
+   measured ceilings, the exact `seal_approve`, the clearing rules, the O(1) `approve_nav`, the
+   complete keeper-callable list, decisions D1–D12, and every §10 invariant as a named test.
+4. **`docs/RECON.md`** — **VERIFIED GROUND TRUTH from live reconnaissance. DO NOT EDIT.**
+   R1–R14: transport, toolchain, Move deps, on-chain ids, live Hashi config, the Hashi Move
+   surface, event names, the exact limiter algorithm, DeepBook reality, Pyth, npm versions,
+   deposit registration. **Never re-derive anything in it. Where it contradicts another doc,
+   RECON wins.**
+5. **`docs/FACTS.md`** — canonical single source of truth: ids, coin types, signatures, the
+   ceilings table, the Seal identity byte layout, the cadence constants, the denomination ladder,
+   the limiter, Pyth, events, venue reality, unknowns.
+6. **`docs/ARCHITECTURE.md`** — component map, object/capability graph, the flows, and the
+   trust-boundary table (precisely what the keeper can and cannot do).
+7. **`docs/MOVE-PACKAGE.md`** — the build-exact spec for the ten Move modules.
+8. **`docs/CONVENTIONS.md`** — the APHOTIC CONTRACT banner every source file carries, and the
+   progress-census greps. Follow the grammar exactly.
+9. **`docs/BUILD-PLAN.md`** — the ordered work units with acceptance criteria and VERIFY commands,
+   and the CUT LINE.
+10. **`docs/STATUS.md`** — the per-unit ledger: DONE vs IN FLIGHT vs NOT STARTED, what was actually
+    observed and when, and the known blockers.
+11. **`docs/DEPLOYED.md`** — what we published on testnet. **Never overwrite a row — add one**, so
+    old journal entries and digests stay resolvable.
+12. **`docs/DEMO.md`** — the runbook, the live-vs-pre-staged boundary, the fallback, the never-say
+    list.
+13. **`docs/DEPLOY.md`** — shipping `app/` to Vercel: the `VITE_*` build-time inlining trap and the
+    Enoki/Google origin registration.
 
-> **Conflict resolution:** layer-spec ERRATA > `docs/RECON.md` > `docs/FACTS.md` > layer-spec body > `HASHI_INTEGRATION.md` > `README (8).md`.
-> The 10 golden rules also appear condensed below and in the first table of `docs/FACTS.md`; `docs/GOLDEN-RULES.md` is the expanded, authoritative guardrail doc. Every UNKNOWN (U1–U9) is now **resolved or logged** — see `docs/DAY-ONE-RESULTS.md` and `docs/STATUS.md` § Known blockers.
+> **Conflict resolution.**
+> - On **what the world is** (ids, upstream signatures, on-chain config, byte orders): `docs/RECON.md` wins, then `docs/FACTS.md`.
+> - On **what we are building and why**: `aphotic.md` wins, then `docs/GOVERNANCE.md`.
+> - On **deltas, traps and already-taken decisions**: `docs/DESIGN-V2.md` wins over the layer docs. Where it contradicts a module that was already written, resolve it **explicitly and in writing** — never silently.
+> - On **what the code actually does**: the shipped code and its passing tests win over every document, and the document must then be corrected. The documents still win on what the code *should* do; when the two disagree, one of them is a bug — say which.
+
+### ⚠ SUPERSEDED — the v1 product. Read only as history; never implement.
+
+| File | What it is |
+|---|---|
+| `HASHI_INTEGRATION.md` | The v1 "Bitcoin Dark Vault" design (maker-first DeepBook market making, pinned exits, peg-flow signal). **Dead.** |
+| `README (8).md` | The v1 base product design (SUI/USDC lineage). **Dead.** |
+| `BTC_FIXED_INCOME.md` | A shelved alternative ("Meridian" bond). Never was the build. |
+| `docs/DAY-ONE.md` · `docs/DAY-ONE-RESULTS.md` | The v1 pre-code verification checklist and its execution record. The **plan** is superseded; the **RESULTS are still the receipts** behind the `[D<n>]` citations in `docs/FACTS.md` and `docs/RECON.md`. Read as evidence, not as instructions. |
+
+`docs/GOLDEN-RULES.md`, `docs/KEEPER.md`, `docs/APP.md` and `docs/ULTRACODE-BRIEF.md` **were
+deleted** in the pivot. The surviving rules are the ten below.
+
+## THE NAMING RULE — non-negotiable (`aphotic.md` §22)
+
+`aphotic.md` §22 lists five names — two firms, two protocols and one token — that **must never
+appear** in this project: not in code, comments, commit messages, documentation, tests, the
+front-end, or any external material. **Open §22 and read the list; it is deliberately not repeated
+here, because repeating it is itself a violation.** Where an operational pattern needs describing,
+describe the **pattern** generically ("the common two-scope keeper pattern", "a single-chain
+vault"). This applies to generated content exactly as it applies to hand-written content.
 
 ## REPO MAP
 
 ### Docs (all under `docs/`)
 
-| File | Purpose |
-|---|---|
-| `docs/RECON.md` | **VERIFIED GROUND TRUTH** (R1–**R14**) from live recon passes: transport, toolchain, Move deps, on-chain ids, live Hashi config, Hashi Move surface, event names, the exact limiter algorithm, DeepBook venue reality, Pyth, npm versions, landing-page source, **deposit registration**. **Never re-derive; RECON wins over other docs.** |
-| `docs/CONVENTIONS.md` | The APHOTIC CONTRACT banner grammar (`@task`/`@status`/`@spec`/`@facts`/`@implements`/`@forbidden`/`@invariant`/`@verify`) + the `TODO(Tx.y)` progress-census greps. |
-| `docs/DEPLOYED.md` | **The record of what we published on Sui testnet**: package, shared `Vault`, shared `BalanceManager`, `VaultCap`/`UpgradeCap`, tx digests, envelope parameters, known-incomplete list. Never overwrite a row — add one, so old journal entries stay resolvable. |
-| `docs/STATUS.md` | **Per-task ledger** T0.1…T5.3: status · files · VERIFY · note, plus the environment of record, the known blockers, and the verbatim run log. Regenerated by inspecting the tree and running every command. |
-| `docs/DEMO.md` | **The runbook.** The four differentiators, the live-vs-pre-staged boundary table, pre-flight, the minute-by-minute script with exact commands, the fallback if the signet leg is not ready, the Q&A, and the never-say list. |
-| `docs/DEPLOY.md` | Shipping `app/` to Vercel: `vercel.json`, `.vercelignore`, the `VITE_*` build-time-inlining trap, Enoki/Google origin registration, deploy verification. |
-| `docs/ULTRACODE-BRIEF.md` | **Entry document for an implementation run:** 60-second start, banner grammar, work-remaining census with the CUT LINE, the full VERIFY matrix, the complete ERRATA digest (incl. R14), and the G-rule NEVERs. |
-| `docs/DAY-ONE-RESULTS.md` | Execution record for DAY-ONE (D1–D10): exact commands, real output, PASS/FAIL, decisions. The **receipt** behind every resolved UNKNOWN. |
-| `docs/FACTS.md` | CANONICAL truth: IDs, coin types, Move/SDK signatures, latencies, limiter, venue, oracle, events, conventions, UNKNOWNS. Everything links here. |
-| `docs/ARCHITECTURE.md` | System model: component diagram, capability/object graph, 4 flows, trust-boundary table, demo boundary. |
-| `docs/MOVE-PACKAGE.md` | Build-exact Move 2024 spec for package `aphotic`: `Move.toml`, per-module structs/fns/events/errors/invariants + tests + verification (V1–V6). |
-| `docs/KEEPER.md` | TypeScript ESM keeper spec: `hashi/` adapter+mock, strategy/routing/execution/oracle/storage/journal/verify/privacy, env vars, acceptance (A1–A10). |
-| `docs/APP.md` | React+Vite 3-screen app spec: Deposit / Exit / Transparency; components, lifecycle, demo staging, `VITE_` env, acceptance (A1–A11). |
-| `docs/BUILD-PLAN.md` | Ordered agent-executable tasks (Phase 0→5), dependency ids, AC, VERIFY, the CUT LINE. START HERE for execution order. |
-| `HASHI_INTEGRATION.md` | Authoritative design rationale (5 mechanisms, deltas, phased plan, demo §8, Q&A §10). Not a build spec. |
-| `README (8).md` | Base Aphotic product design (Seal/Walrus/DeepBook/zkLogin/keeper/constraint envelope). Filename has a space + parens. |
-| `BTC_FIXED_INCOME.md` | **SHELVED ALTERNATIVE ("Meridian" bond). NOT the build. Do NOT implement its mechanics.** |
-| `docs/DAY-ONE.md` | Runnable pre-code verification checklist (D1–D10) resolving every UNKNOWN (U1–U9 + KEEPER §10). Run BEFORE feature code; owner of all UNKNOWNS. |
-| `docs/GOLDEN-RULES.md` | The 10 golden rules expanded (RULE / WHY / NEVER) + common mistakes to avoid + pitch-honesty lines. **Read FIRST.** |
-
-### Source tree (BUILT — the Move package is published; **4 `TODO`s remain, in 2 files**)
-
-Status legend: **DONE** = implemented AND covered by a test or gate someone ran and saw pass · **PARTIAL** = some bodies real, `TODO(Tx.y)` markers remain · **STUB** = banner + `TODO`, bodies throw/empty. Per-task detail, with the verbatim run log, in `docs/STATUS.md`.
-
-| Path | Purpose | State |
+| File | Purpose | Editable? |
 |---|---|---|
-| `move/Move.toml` · `move/Move.lock` | Package `aphotic`, `edition = "2024.beta"`. **Exactly two git deps** (`hashi`, `deepbook`) — no `Sui` line, no `[addresses]`, no `[dep-replacements]`, no Pyth, **no `[environments]`** (sui 1.76.0 rejects overriding system envs). ⚠ the lock records Windows backslash subdirs. | DONE |
-| `move/sources/vault.move` | Shared `Vault<phantom B, phantom Q>` (**generic** over the asset pair — naming hBTC here would break G7): sats share/NAV accounting, `seal_approve` gate, DeepBook `BalanceManager` reference, write-once `btc_exit_address`, version-epoch rotation. | DONE (T1.1/T1.2) — 42 tests |
-| `move/sources/gateway.move` | **THE ONLY Hashi boundary (G7)**: `register_exit_address`, `exit_to_bitcoin` (**no address parameter**), depositor-only `reclaim_stalled_exit`, small-exit pooling with a self-only flush. | DONE (T1.3/T1.4) — 26 tests |
-| `move/sources/envelope.move` | Intra-package **LEAF** (takes primitives, never `&Vault` — Move forbids the cycle). Redemption buffer, `deployable_sats`, `check_action`, and the `project_capacity()` trustless limiter replay (G3/G5). | DONE (T4.1) — 34 tests |
-| `move/sources/router.move` | DeepBook maker `POST_ONLY` (via `place_limit_order`, order_type 3 — E-M6) + IOC sweep, granularity gate before the book is touched, `try_book_mid` → `none` on a one-sided book. | DONE (T1.5) — 25 tests |
-| `move/sources/journal.move` | Emits decision-log Walrus blob ids on-chain (self-certifying), monotonic-seq guard. | DONE (T4.2) — 12 tests |
-| `move/tests/*_tests.move` | Per-module tests **at the package root, NOT `sources/tests/`** — otherwise `gateway_tests.move` breaks the G7 grep gate. | DONE — **139 total, 0 failures** |
-| `move/tests/mock_hashi.move` | Working bridge stand-in replicating `request_withdrawal`/`cancel_withdrawal` with all five upstream asserts. | DONE |
-| `keeper/src/config.ts` · `types.ts` | Pure `loadConfig(env)` (nested groups, `redactSecrets`, `assertRealModeComplete`); shared domain types. One of the four id-bearing files. | DONE |
-| `keeper/src/sui/client.ts` | **The only** Sui client factory (`SuiGrpcClient`; `SuiJsonRpcClient` for probes). Enforced by the `transport` gate. | DONE |
-| `keeper/src/util/` | `bigint` / `bytes` / `env` / `errors` / `rng` (seeded). | DONE |
-| `keeper/src/hashi/` | Adapter interface + deterministic MOCK (logical clock, no I/O) + **REAL adapter** over `HashiClient` + raw `moveCall`s + event polling; `watcher.ts`; `limiter.ts` `projectCapacity()`/`consume()` — the **single** G5 implementation, shared by mock, strategy and `verify/`; `normalize.ts` does the `WithdrawalSigned` join; `eventTypes.ts` the event union. | DONE (T0.5/T2.1/T2.2) |
-| `keeper/src/strategy/` | Pure deterministic `evaluate()`, padded serializer, params, peg-flow. The `purity` gate forbids `Date.now()`/`Math.random()` here. | DONE (T2.6/T5.1) |
-| `keeper/src/privacy/` | Seal encrypt/decrypt, session keys, version-epoch rotation. **Every body is real; the concrete `SealBackend` port is not bound** — the vault's ciphertext is still a placeholder. | PARTIAL (T2.6) |
-| `keeper/src/routing/` | DeepBook L2 book read via `get_level2_range` (never `mid_price`), maker/IOC split on the same book (G4). | DONE (T2.7) |
-| `keeper/src/execution/` | PTB build (TradeCap only), `confirm_deposit` crank, sponsored sweep, `exit_to_bitcoin`, **unsigned-only** reclaim builder. | DONE (T2.3–T2.5) |
-| `keeper/src/oracle/` | Pyth **Beta** feed + DeepBook TWAP divergence breaker, staleness guards (G9). | DONE (T2.8) |
-| `keeper/src/storage/` + `keeper/src/journal/` | Walrus put/get + lifetime renewal; decision records → blob ids. | DONE (T2.9/T4.2) |
-| `keeper/src/verify/` | Replay engine incl. the trustless limiter re-derivation over on-chain events (G5). | DONE (T4.3) |
-| `keeper/src/index.ts` | The seven-command CLI (`create-vault` `run` `crank` `sweep` `exit` `reclaim` `verify`), fully dispatched to the modules above. `reclaim` **prints an unsigned PTB and never signs** (E-K7). | DONE (T2.10) |
-| `keeper/test/` | **481 green tests across 19 files**: limiter golden vectors + consume + Move↔TS cross-parity, mock & real adapters, watcher, crank, sweep, exit, strategy, pegflow, routing, oracle, storage, journal, verify, privacy, config, **e2e.mock**. | DONE |
-| `app/src/config.ts` · `.env.example` | Typed from `import.meta.env`. One of the four id-bearing files. | DONE |
-| `app/src/lib/` | `suiClient.ts` (the app's single Sui client factory), `bech32.ts`, `explorer.ts`, `format.ts`. | DONE |
-| `app/src/hashi/depositAddress.ts` | The app's **only** Hashi boundary — offline client-side Taproot derivation (G7). | DONE |
-| `app/src/screens/deposit/` · `transparency/` | Deposit (zkLogin → derived address + QR + lifecycle) and Transparency (decision log, encrypted-strategy panel, bridge column, verify client). | DONE (T3.1/T5.2) |
-| `app/src/screens/exit/` | `RegisterExitAddress`, `ptb.ts`, `vaultRead.ts`, `model.ts`, `CallPreview`, `ExitTimeline` are all real. ⚠ `ExitScreen.tsx` still renders a placeholder amount form — 3 of the 12 remaining TODOs. | PARTIAL (T3.2) |
-| `app/src/components/` · `fixtures/` · `session/` · `landing/` | Shared components (pinning explainer, lifecycle stepper, trust disclosure, keeper-capability badge…), offline fixtures, Enoki zkLogin session, and the ported React 19 landing page (`/`). ⚠ 1 TODO left in `landing/stats.js`. | DONE except `stats.js` |
-| `app/vitest.config.ts` · `app/test/` | The app's own **offline** suite — 6 files, **84 tests** (bech32, components, depositAddress, enoki, format, hashiAdapter). `test.env` pins every `VITE_*` so a developer's `.env.local` cannot change a result. Vitest 3 loads this **instead of** `vite.config.ts`. | DONE |
-| `scripts/gates.{ps1,sh}` | 8 invariant gates: `g7` `g4` `g2` `ids` `sdk` `purity` `transport` `todo`. | DONE |
-| `scripts/verify-all.ps1` | **Master gate** — runs 8 build/test/gate steps. Today: `7 PASS · 1 FAIL`. ⚠ does **not** yet run `app npm test`. | PARTIAL |
-| `scripts/seed-book.{mjs,ps1}` | Ops tooling for **B2**: reads live pool params by devInspect, prints what inventory is *obtainable* with evidence, dry-run by default, refuses off-market bids against the Pyth Beta feed. | DONE |
-| `scripts/verify-onchain.mjs` | Live testnet assertions: ids (incl. **our own deployment**), config scalars, event streams, Pyth Beta feed. `28 PASS · 0 FAIL`. | DONE |
-| `scripts/register-deposit.ps1` | Registers a signet UTXO with Hashi. **Reverses the txid for you** (R14.2) and refuses below 6 confirmations (R14.3). ⚠ hardcodes two Hashi ids ⇒ **trips the `ids` gate**. | PARTIAL |
-| `scripts/check-enoki.mjs` | Verifies a deployed origin is registered with Enoki/Google so zkLogin will not 403. | DONE |
+| `docs/DESIGN-V2.md` | Reconciliation reference: F1–F3, the ceilings, `seal_approve`, clearing, `approve_nav`, the keeper-callable list, D1–D12, the invariant→test matrix. | **NO** |
+| `docs/RECON.md` | Verified ground truth R1–R14. Never re-derive; RECON wins. | **NO** |
+| `docs/GOVERNANCE.md` | The operations note (moved from `aphotic-governance.md`) + a **DEVIATIONS** section recording F3/D7 and D1. | yes |
+| `docs/FACTS.md` | Canonical ids, types, signatures, ceilings, seal identity layout, cadence, ladder, limiter, events, unknowns. | yes |
+| `docs/ARCHITECTURE.md` | Component map, capability graph, the four flows, trust boundaries. | yes |
+| `docs/MOVE-PACKAGE.md` | Build-exact spec for the ten modules. The code and its tests win over it. | yes |
+| `docs/CONVENTIONS.md` | The APHOTIC CONTRACT banner grammar + progress greps. | yes |
+| `docs/BUILD-PLAN.md` | Ordered work units, AC, VERIFY, the CUT LINE. | yes |
+| `docs/STATUS.md` | Per-unit ledger + observed run log + blockers. | yes |
+| `docs/DEPLOYED.md` | On-chain receipts. **Append-only.** | append |
+| `docs/DEMO.md` | The runbook and the fallback. | yes |
+| `docs/DEPLOY.md` | Vercel deploy of `app/`. | yes |
+| `docs/LIMITS.md` | The measured clearing ceilings. **Generated** — copy `scripts/LIMITS.generated.md` over it; do not hand-edit. Today its Measurements section says *"NOTHING WAS MEASURED"*. | generated |
+| `docs/DAY-ONE.md` · `docs/DAY-ONE-RESULTS.md` | v1 archive; RESULTS is still the `[D<n>]` evidence. | archive |
 
-## THE 10 GOLDEN RULES (condensed — full text + enforcement points in `docs/FACTS.md` top table)
+### Source tree — **observed 2026-07-26 01:52 local, mid-build**
+
+Other agents are writing `move/`, `keeper/`, `sdk/`, `app/` and `scripts/` **right now**. This
+table is a snapshot, not a contract. `docs/STATUS.md` carries the per-unit detail and the
+verbatim run log.
+
+| Path | Purpose | Observed state |
+|---|---|---|
+| `move/Move.toml` · `move/Move.lock` | Package `aphotic`, `edition = "2024.beta"`. **Exactly two git deps** (`hashi`, `deepbook`) — no `Sui` line, no `[addresses]`, no `[dep-replacements]`, no Pyth, no Seal/Walrus, **no `[environments]`** (sui 1.76.0 rejects overriding system envs). ⚠ the lock records Windows backslash subdirs (**B8**). | present |
+| `move/sources/events.move` | Package leaf. One emitter per externally-visible transition; carries the ceilings as `@facts`. | present, `@status DONE` |
+| `move/sources/caps.move` | `AdminCap` (key only) · `KeeperCap` (key only) · `VaultCap` (store only) · `CapRegistry`; two-step admin handover, keeper rotation by epoch, action allowlist. | present, `@status DONE` |
+| `move/sources/notes.move` | `DenomLadder` · `NoteTree` (depth 20, `filled_subtrees` in-object) · `NullifierSet`; blake2b256 domain-separated; **leaf index LITTLE-ENDIAN**. | present, `@status DONE` |
+| `move/sources/balance.move` | `BalanceBook<T>` — the persistent per-participant internal balance and the escrow custodian (**DESIGN-V2 F3/D7**: escrow is NOT vault NAV). | present, `@status DONE` |
+| `move/sources/allocate.move` | Pinned lending-adapter allowlist keyed on `(adapter type A, venue ID)`. Leaf: imports no lending package. | present, `@status DONE` |
+| `move/sources/oracle.move` | The Guardian limiter replay (`project_capacity`/`consume`), the keeper-attested queue observation, and a wait-time **distribution**. Leaf, no imports. | present, `@status DONE` |
+| `move/sources/carry.move` | **Interface only, by design** (D6 / `aphotic.md` §11): the three pure guard predicates are real and tested; there is deliberately **no execution path**. | present, `@status PARTIAL` |
+| `move/sources/vault.move` | **NOT PRESENT YET.** Async request/settle, `propose_nav`/`approve_nav`, `committed_supply`, `claim_deposit`/`claim_redeem`, `assert_solvent`. | missing |
+| `move/sources/batch.move` | **NOT PRESENT YET.** `BatchRegistry`, the OPEN→SEALED→CLEARING→SETTLED machine, `next_boundary`, `seal_approve`. | missing |
+| `move/sources/clearing.move` | **NOT PRESENT YET.** Uniform-price match, cursor-driven `sort_step`/`price_step`/`settle_step`, `fills_root`, `verify_fill`, `compute_for_inspect`. | missing |
+| `move/tests/*_tests.move` | Tests live at the **package root**, not `sources/tests/`. Present: `allocate_tests`, `caps_tests`, `oracle_tests`, `mock_hashi`. | 122 tests, all green |
+| `lending/` | A **second** Move package, `aphotic_lending` — our own hBTC lending counterparty, because **none exists on testnet** (D3). Its module banner carries the honesty disclosure and `disclosure()` returns it on-chain. | present, `@status DONE` |
+| `sdk/` | **NOT PRESENT YET.** The single home of every algorithm that must be byte-identical in three places: clearing, the Merkle tree, the Seal inner id, the limiter (DESIGN-V2 §9). No build step — `"exports": { "./*": "./src/*.ts" }`. | missing |
+| `keeper/src/` | TypeScript, one process (D1). **Still contains the v1 directories** `strategy/ routing/ execution/ journal/ privacy/ storage/ verify/` — those are the dead product and are pending deletion. Surviving and still useful: `sui/client.ts` (the one client factory), `hashi/limiter.ts` (the single G-rule limiter), `util/` (incl. the seeded `rng.ts`), `config.ts`. | mid-rewrite |
+| `app/src/` | React 19 + Vite 6. **Still the v1 three screens** (deposit / exit / transparency) plus the ported landing page at `/`. Pending rewrite. | mid-rewrite |
+| `scripts/gates.{ps1,sh}` | **13 invariant gates** (`g7 g4 g2 ids sdk purity transport notes batchstate keepercap send seal_le todo`), reworked for v2 at 02:13. **8 PASS · 0 FAIL · 4 SKIP** — and **a SKIP is not a PASS**: `batchstate` and `seal_le` guard `batch.move`, which does not exist. | reworked |
+| `scripts/verify-all.ps1` | Master gate, 12 steps, now including `app npm test`. | reworked |
+| `scripts/verify-onchain.mjs` | Live testnet assertions against ids we depend on. | present |
+| `scripts/register-deposit.ps1` | Registers a signet UTXO with Hashi. Reverses the txid for you (R14.2), refuses below 6 confirmations **and when the depth is unknown** (R14.3). Ids now resolve from env/config, so the `ids` gate is **green for the first time**. | present |
+| `scripts/measure-clearing.mjs` · `scripts/LIMITS.generated.md` · `docs/LIMITS.md` | devInspects `sort_step`/`price_step` at n ∈ {16…512}, threshold 3 500 000 units. ⚠ **it has measured nothing yet** — the published package exposes no `clearing` module, so `MAX_BATCH_SIZE = 256` is a *reasoned*, not a *measured*, default. | present, unmeasured |
+
+## THE 10 GOLDEN RULES
+
+Enforcement points and the full text of every fact cited here are in `docs/FACTS.md`.
 
 | # | Rule (one line) |
 |---|---|
-| G1 | hBTC is a fungible `Coin<BTC>`; on-Sui movement is INSTANT (1 checkpoint). BTC/Guardian latency exists ONLY at mint(deposit)/burn(withdraw). |
-| G2 | Keeper holds ONLY DeepBook `TradeCap`, never `WithdrawCap`/`DepositCap`. Exits are Move-composed to an on-chain-pinned address; a compromised keeper cannot steal or redirect. |
-| G3 | You CANNOT buy priority in Hashi's global withdrawal queue; over-capacity batches are REJECTED (`RateLimitExceeded`), not queued. Never design around jumping the queue. |
-| G4 | NO Cetus hBTC pool. Router = DeepBook maker `POST_ONLY` + IOC sweep on the SAME book only. No Cetus taker leg, no CLMM ranges. |
-| G5 | Guardian limiter state is TRUSTLESSLY replayable via `project_capacity() = min(cap, tokens + elapsed*refill_rate)` over the on-chain `WithdrawalSigned` stream — `verify/` re-derives it; NOT a trusted SDK read. |
-| G6 | The BTC leg (deposit ~70 min, withdraw ~1.5–2 h) is NEVER live-demoable. Pre-stage; Sui side is instant; show an earlier confirmed signet tx. |
-| G7 | Isolate the ENTIRE Hashi surface behind an adapter + deterministic MOCK from line one (mirror `project_capacity` exactly); confine on-chain Hashi calls to `gateway.move`; all IDs configurable (env/config), never hardcoded in logic. |
-| G8 | Honesty: hBTC IS custodial-threshold wrapped BTC. The differentiation is composing the bridge's on-chain machinery, NOT the token's trust model. |
-| G9 | Pin Pyth versions + use the Beta feed on testnet; value NAV/collateral at DeepBook mid (depeg defence); add staleness guards. |
-| G10 | Move 2024 edition idioms throughout. Amounts in sats (`u64`). Emit an event for every externally-visible state transition. Error constants named `E<Reason>`. |
+| **G1** | **hBTC is a plain fungible `Coin<BTC>`, 8 decimals, sats — no `DenyCap`, no deny list, no freeze anywhere in the Hashi package.** On-Sui movement is instant. Bitcoin latency exists ONLY at mint (deposit, ~70 min) and burn (withdrawal, ~1.5–2 h), so **the BTC leg is never live-demoable — pre-stage it** and show an earlier confirmed signet tx. You cannot buy priority in the queue: over-capacity is **REJECTED** (`RateLimitExceeded`), never queued. |
+| **G2** | **Honesty is a hard requirement, not a tone.** `hBTC` **is** custodial-threshold wrapped BTC. **v1 note spends are LINKABLE** — the Merkle path is public, so the leaf index names the note; v1 delivers **uniformity, not unlinkability**. We **deploy the hBTC lending counterparty ourselves** because none exists on testnet — never present its APY as a market rate. Validator collusion: **protocol floor 7, live testnet today 32 — always both, always labelled.** The native-BTC NAV leg is not Sui-verifiable and is **capped** at the on-Sui claims behind it. And never name the parties in §22. |
+| **G3** | **The keeper holds no discretion, and it is enforced structurally.** The complete keeper-callable list is `docs/DESIGN-V2.md` §7 and nothing may be added to it without a written decision. Those functions take **no `address` parameter at all**, so a keeper cannot name a destination — that is the enforcement, not a comment. NAV is **two PARTIES** (`propose_nav` keeper, `approve_nav` admin multisig, digest-bound), never two scopes. |
+| **G4** | **Liveness is never a privilege.** `open_batch`, `close_batch`, `reveal_order`, `begin_clearing`, `sort_step`, `price_step`, `settle_step`, `claim_deposit`, `claim_redeem` are **permissionless** — the schedule and the commitments are the authorization. If the keeper is down, anyone finishes the batch. A **paused vault still lets holders leave**: `request_redeem` and `claim_redeem` do not check the pause. |
+| **G5** | **Timing is mechanical; an operator can never choose when a batch closes.** `close_ms` is derived by `next_boundary(now, 43_200_000, 21_600_000)` → 06:00 / 18:00 UTC; `open_batch` takes **no timestamp parameter**; `close_batch` reverts before `close_ms` and succeeds at exactly `close_ms`. **A full batch does not close early** — it rejects further submits and still closes on the boundary. `SUBMIT_CUTOFF_MS = 60_000`, `REVEAL_GRACE_MS = 600_000`. |
+| **G6** | **The Seal identity is LITTLE-ENDIAN.** `bcs::peel_u64` reads LE; the deleted v1 vault decoded it **big-endian** and would have produced a policy that never opens, **silently**. One file owns the encoding (`sdk/src/seal/identity.ts`); both sides import it; a golden vector pins it in **both** languages — the LE id must open and the **BE encoding of the same timestamp must abort**. `seal_approve` is a non-`public` `entry`, denies **by abort**, mutates nothing, emits nothing, asserts `leftovers.length() == 0` and `policy_version`, and **has NO sender check** (a time-lock must be satisfiable by anyone after `T`, which is what kills grief-by-non-revelation). |
+| **G7** | **One implementation of every algorithm that must agree across languages — and clearing must be bit-identical.** `sdk/` owns clearing, the Merkle tree, the Seal inner id and the limiter; a second copy anywhere is the bug (it happened once — blocker B6). Parity is asserted at three levels: shared golden fixtures, a 10 000-case seeded property test, and a `devInspect` byte-for-byte comparison against Move. **A Move↔TS divergence is a release blocker.** The same rule governs Hashi: the entire bridge surface stays behind an adapter with a deterministic mock, and every on-chain id arrives as config — never hardcoded in logic. |
+| **G8** | **The batch-size ceiling is store entries and events, not the gas budget.** `object_runtime_max_num_store_entries = 1_000`/tx, `max_num_event_emit = 1_024`, `max_gas_computation_bucket = 5_000_000` — **none can be raised by paying more gas**. `MAX_BATCH_SIZE` is a **governed parameter, default 256**, `HARD_MAX_BATCH_SIZE = 512` asserted in the setter. `sort_step`/`settle_step` take a `budget` and advance an on-chain cursor **from day one** — retrofitting resumption changes the state machine, the events and the tests. `emit_per_fill: bool` is the event escape hatch. **Measure the 5 M cap, do not assume it.** |
+| **G9** | **Escrow must not leak order size.** Fixed denominations only — `1_000_000 / 10_000_000 / 100_000_000 / 1_000_000_000` sats — and **no `Note` carries an amount field**. No margin, no reserve and no lock at submit time: a reservation would publish the size, so orders draw on a **persistent internal balance** topped up independently of trading, and `settle_step` **deterministically truncates** an under-funded fill to `min(fill, balance)` from the frozen snapshot. Denominations create **uniformity, not privacy**; privacy comes from the crowd. Denominations are **append-only** — repricing a tier would revalue live notes. |
+| **G10** | **Move 2024 edition idioms throughout.** Amounts in sats (`u64`); money is `bigint` in TypeScript and `number` for sats is forbidden. Error constants named `E<Reason>`. Emit an event for every externally-visible state transition. **Integer arithmetic only — no floats anywhere in clearing**, and `u64` add/mul **abort** on overflow, so saturation is emulated explicitly (widen to `u128` before the `min`). |
 
 ## BUILD & TEST COMMANDS
 
-Every result below was observed on 2026-07-25 by running the command, not quoted from a summary.
+⚠ **`sui` is not reliably on `PATH` in agent shells.** Prepend it:
+`$env:PATH = "$env:LOCALAPPDATA\sui;$env:PATH"` (PowerShell) / `export PATH="$LOCALAPPDATA/sui:$PATH"` (bash).
 
 ```bash
-# ── THE MASTER GATE — run this first, and again before you claim anything is done ──
-powershell -NoProfile -File scripts/verify-all.ps1     # → 7 PASS · 1 FAIL · 0 SKIP  (SKIP is NOT green)
-                                                       # the FAIL is `gates`/`ids` — see the ⚠ below
+# ── Move package (from move/) ─────────────────────────────────────────────────
+cd move && sui move build          # OBSERVED 2026-07-26 01:52: exit 0, zero warnings
+cd move && sui move test           # OBSERVED 2026-07-26 01:52: Total tests: 122; passed: 122; failed: 0
+cd move && sui move test caps      # per-module filter
+#   ⚠ the filter is POSITIONAL. `--filter` is NOT a flag in sui 1.76.0.
+#   ⚠ 122 green covers only the SEVEN modules that exist. vault / batch / clearing are
+#     still being written; DESIGN-V2 §10 targets >= 320 Move tests.
 
-# Move package (from move/) — PUBLISHED on testnet, see docs/DEPLOYED.md
-cd move   && sui move build          # compiles clean, edition 2024.beta, ZERO warnings
-cd move   && sui move test           # → Total tests: 139; passed: 139; failed: 0
-cd move   && sui move test gateway   # per-module: vault(42) gateway(26) envelope(34) router(25) journal(12)
-                                     # ⚠ the filter is POSITIONAL. `--filter` is NOT a flag in sui 1.76.0.
+# ── The lending counterparty (a SECOND package, from lending/) ────────────────
+cd lending && sui move build && sui move test    # not run by this session — see docs/STATUS.md
 
-# Keeper (from keeper/) — ESM, "type":"module"
+# ── Keeper (from keeper/) — ESM, "type":"module" ─────────────────────────────
 cd keeper && npm install && npm run typecheck && npm run build
-cd keeper && npm test                              # → 19 files · 481 tests passed
-cd keeper && npm run test -- hashi.mock            # T0.5 acceptance: full loop, NO live Hashi (24)
-cd keeper && npm run test -- limiter.cross         # G5 acceptance: TS replay == the Move twin (5)
-cd keeper && npm run test -- e2e.mock              # cut-line: no wall clock, no socket (13)
-cd keeper && node dist/index.js --help             # exit 0, prints the seven commands
+cd keeper && npm test
+#   ⚠ mid-rewrite. The v1 suites for strategy/routing/execution/journal test deleted product
+#     surface; do not treat a v1 green as evidence for v2.
 
-# App (from app/) — React 19 + Vite 6
-cd app    && npm install && npm run build          # tsc --noEmit && vite build
-cd app    && npm test                              # → 6 files · 84 tests passed (fully offline)
-cd app    && npm run dev                           # 4 routes: / (landing) /deposit /exit /transparency
+# ── App (from app/) — React 19 + Vite 6 ──────────────────────────────────────
+cd app && npm install && npm run build && npm test && npm run dev
 
-# Invariant gates (either shell) — g7 g4 g2 ids sdk purity transport todo
-powershell -NoProfile -File scripts/gates.ps1      # → 6 PASS · 1 FAIL + the TODO census (4 markers)
-bash scripts/gates.sh
+# ── Invariant gates (either shell) — 13 gates, identical verdicts in both ────
+powershell -NoProfile -File scripts/gates.ps1      # reported 8 PASS / 0 FAIL / 4 SKIP at 02:13
+bash scripts/gates.sh                              #   A SKIP IS NOT A PASS.
+powershell -NoProfile -File scripts/verify-all.ps1 # master gate, 12 steps (incl. app npm test)
 
-# Live testnet assertions (needs network)
-node scripts/verify-onchain.mjs                    # → 28 PASS · 0 FAIL · 0 WARN · 7 INFO
-node scripts/seed-book.mjs                         # what book inventory is OBTAINABLE (dry-run by default)
-
-# CUT-LINE VERIFY — all three green:
-cd move && sui move build && sui move test              # PASS (139)
-cd keeper && npm run build && npm run test -- e2e.mock  # PASS (13)
-cd app && npm run build                                 # PASS
+# ── Live testnet assertions (needs network) ──────────────────────────────────
+node scripts/verify-onchain.mjs
 ```
 
-⚠ **Three live caveats, all tracked in `docs/STATUS.md` § Known blockers:**
-1. **The `ids` gate FAILS** — `scripts/register-deposit.ps1:48-49` hardcodes two Hashi ids (**B11**). Until it is fixed, `verify-all.ps1` is `7 PASS · 1 FAIL` and **we cannot claim a clean master gate**.
-2. **`verify-all.ps1` does not run `cd app && npm test`** (**B14**) — the app suite is new, so an app regression can still pass the master gate. Add it as a ninth step.
-3. **The `hBTC/DBUSDC` book is empty and we cannot create inventory** (**B2**): `treasury::mint` is `public(package)` (no hBTC) *and* the DBUSDC `TreasuryCap` is `AddressOwner`, not shared (no quote asset). `mid_price` asserts **both** sides. Handled everywhere as a defined state; there is simply no price to show.
+**Everything above that is annotated "OBSERVED" was run in this session and the output is quoted
+verbatim. Everything else was not run — do not report an output you did not see.**
 
-**Toolchain of record.** `sui` **1.76.0-6effb4523834** at `%LOCALAPPDATA%\sui\sui.exe`; `sui client active-env` = `testnet` (chain id `4c78adac`). Node 24.13.0 / npm 11.6.2. Deployer/keeper address `0xd41b0cd8…f333d`, ~21.8 SUI. ⚠ `sui` is **not reliably on `PATH`** in agent shells — prepend it: `$env:PATH = "$env:LOCALAPPDATA\sui;$env:PATH"`.
+**Toolchain of record.** `sui` **1.76.0-6effb4523834** at `%LOCALAPPDATA%\sui\sui.exe`;
+`sui client active-env` = `testnet` (chain id `4c78adac`). Node 24.13.0 / npm 11.6.2.
+Deployer/keeper address `0xd41b0cd8…f333d`.
 
-**Deployed (v1, 2026-07-25).** package `0xbe433a2726fc61391d180ce55cdb8177f9647760b23a7704d42e3b5b9bb72d66` · shared `Vault<hBTC,DBUSDC>` `0xf03832c92d4bf745ac720c52fe9198fc928028ce51991059bfe59c0e4ef374e8` (isv 947353676) · shared DeepBook `BalanceManager` `0x5766ed0b5e3fd310da9ccd723912198450872d9e2c83a473ed59cd5ab51990e2` (isv 947353675). Full receipts in **`docs/DEPLOYED.md`**.
+**Transport.** `https://fullnode.testnet.sui.io:443` serves **gRPC v2 only — JSON-RPC returns
+HTTP 404**; the `sui` CLI speaks gRPC to it and works normally. In code the default client is
+`SuiGrpcClient` (`@mysten/sui/grpc`), constructed in exactly **one** place per package
+(`keeper/src/sui/client.ts`, `app/src/lib/suiClient.ts`) — enforced by the `transport` gate.
+`SuiClient` no longer exists in `@mysten/sui@2.22.1`; `SuiJsonRpcClient` against the mirror
+`https://rpc-testnet.suiscan.xyz:443` is for probes only. The Hashi guardian's `/info` requires
+**HTTP/2** (HTTP/1.1 → 464).
 
-**Transport.** `https://fullnode.testnet.sui.io:443` serves **gRPC v2 only — JSON-RPC returns HTTP 404**; the `sui` CLI speaks gRPC to it and works normally. In code the default client is `SuiGrpcClient` (`@mysten/sui/grpc`), constructed in exactly one place per package (`keeper/src/sui/client.ts`, `app/src/lib/suiClient.ts`) — enforced by the `transport` gate. `SuiClient` no longer exists in `@mysten/sui@2.22.1`; `SuiJsonRpcClient` against the mirror `https://rpc-testnet.suiscan.xyz:443` is for probes only. The Hashi guardian's `/info` requires **HTTP/2** (HTTP/1.1 → 464).
-
-⚠ **Windows:** never rewrite a `.move` file with PowerShell `Set-Content -Encoding utf8` — PS 5.1 writes a UTF-8 BOM and the Move compiler rejects it (`E01001`). Use `[System.IO.File]::WriteAllText` with `New-Object System.Text.UTF8Encoding($false)`.
+⚠ **Windows:** never rewrite a `.move` file with PowerShell `Set-Content -Encoding utf8` — PS 5.1
+writes a UTF-8 BOM and the Move compiler rejects it (`E01001`). Use
+`[System.IO.File]::WriteAllText` with `New-Object System.Text.UTF8Encoding($false)`.
 
 ## CUT LINE (one line)
 
-Minimum demoable product = **BTC in** (pre-staged deposit advanced by the LIVE permissionless `confirm_deposit` crank + sponsored sweep) → **encrypted strategy** quoting maker-side on `Pool<hBTC,DBUSDC>` (scripted taker fills) → **BTC out** (LIVE `gateway::exit_to_bitcoin` PTB to the pinned address; earlier exit's signet txid shown confirming).
+Minimum demoable product = **`aphotic.md` §11 Phase 1 (the vault: `caps` + `vault` + `allocate`,
+deposit → `propose_nav` → `approve_nav` → `claim`) plus a mocked Phase 3 (`notes` + `balance` +
+`batch` + `clearing`: Seal-encrypted submit → mechanical close → reveal → on-chain uniform-price
+clear → push settlement, with the Move↔TS parity shown live).** Phase 2 (the carry) is
+**deliberately out** — `aphotic.md` §11 says so, and D2/D3/D6 each independently confirm it.
 
-**Where we actually stand:** **the cut line is met in code.** All three legs are green with real coverage — 139 Move + 481 keeper + 84 app tests — and the named acceptance test `e2e.mock` exists and asserts determinism and offline-ness rather than assuming them. What sits outside the cut line and cannot be coded around: the `hBTC/DBUSDC` book is empty on both sides and **we can mint neither asset** (hBTC's `treasury::mint` is `public(package)`; DBUSDC's `TreasuryCap` is address-owned), and the signet deposit had not yet cleared 6 confirmations, so the vault holds no hBTC. **`docs/DEMO.md` §5 carries the fallback script for exactly that case** — read it before deciding anything at the venue. The SUI/USDC fallback vault (`HASHI_INTEGRATION.md` §6) remains the last resort; decide AT the cut line, not at the venue.
+**Where we stand (observed, not asserted).** `sui move build` is green and 122 Move tests pass
+across the seven modules that exist. `vault.move`, `batch.move` and `clearing.move` — the three
+modules the cut line is actually about — **are not written yet**, and neither is `sdk/`. The
+keeper and app still contain the v1 product. Nothing about the cut line is proven today.
 
 ## SCOPE NOTES (do not get this wrong)
 
-- **`BTC_FIXED_INCOME.md` is a SHELVED alternative ("Meridian" bond). DO NOT build it.** Reference it only as the option not taken. Never import its bond mechanics.
-- **`README (8).md` is the base product design** (the SUI/USDC lineage that Aphotic × Hashi extends). `HASHI_INTEGRATION.md` holds the authoritative deltas; where the two differ, HASHI_INTEGRATION.md and `docs/FACTS.md` win.
-- On any conflict between docs, **`docs/FACTS.md` is authoritative.** If a value is unknown, it is marked "UNKNOWN — resolve in DAY-ONE.md"; treat it as blocking for `real`-mode work and log the owner (build lead).
+- **Do not attempt Phase 2 (the carry).** `aphotic.md` §11 is explicit; the `Pool<hBTC,DBUSDC>`
+  book is **empty on both sides** and we can mint neither leg (`treasury::mint` is
+  `public(package)`; the DBUSDC `TreasuryCap` is `AddressOwner`), so there is nothing to buy and no
+  mid to buy it at; and the exit leg needs a 2-of-2 custody multisig, which is an ops project.
+  `carry.move` lands as a compiling interface with real, tested guard predicates — nothing more.
+- **The one boundary Move cannot enforce.** `request_withdrawal` sets `sender: ctx.sender()`, which
+  on Sui is the **transaction signer**, never the calling module. A shared object can therefore
+  never hold a queue position, and `cancel_withdrawal` asserts `request_sender() == ctx.sender()`.
+  The redemption leg is gated by a **Sui 2-of-2 multisig** (keeper + independent policy co-signer)
+  at **signing time, not by Move**. Say so plainly everywhere.
+- **Do not put Enoki in the Seal committee.** Enoki is both a zkLogin salt provider and a Seal key
+  server; using it for both hands one party identity linkage **and** a decryption share. Committee
+  is `n = 5` across **5 distinct operators**, `t = 3` (count operators, not servers). Never fall
+  back to plaintext.
+- **`BTC_FIXED_INCOME.md` is a shelved alternative. Do not build it.**
+- On any conflict, apply the resolution order at the top of this file. If a value is unknown, mark
+  it and log the owner; never invent one.

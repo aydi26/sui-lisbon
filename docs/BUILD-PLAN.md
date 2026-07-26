@@ -1,180 +1,176 @@
-# BUILD-PLAN.md — ordered, agent-executable task list for the Opus "ultracode" build
+# BUILD-PLAN.md — ordered work units for Aphotic v2
 
-Purpose: the exact sequence of TASK units to build Aphotic × Hashi ("The Bitcoin Dark Vault"). Execute top-to-bottom; each task has dependency ids, files, acceptance criteria (AC), and a verification command (VERIFY). Do not reorder across the CUT LINE without cause.
-Read after: docs/FACTS.md, docs/DAY-ONE.md, docs/MOVE-PACKAGE.md, docs/KEEPER.md, docs/APP.md.
-
----
-
-## GOLDEN RULES (never violate — re-read before every task)
-
-| # | Rule |
-|---|---|
-| G1 | hBTC is a fungible `Coin<BTC>`. On-Sui hBTC movement is INSTANT (one checkpoint). Bitcoin/Guardian latency exists ONLY at mint(deposit)/burn(withdraw). |
-| G2 | Keeper holds ONLY DeepBook `TradeCap` — never `WithdrawCap`/`DepositCap`. It can place/cancel orders; it can NEVER move funds out. Exits composed in Move to an on-chain-pinned address. |
-| G3 | You CANNOT buy priority in Hashi's global withdrawal queue; over-capacity batches are REJECTED (`RateLimitExceeded`), not queued. Never design around jumping the queue. |
-| G4 | No Cetus hBTC pool. Router = DeepBook maker `POST_ONLY` + IOC sweep on the same book. No Cetus taker leg, no CLMM ranges for the BTC vault. |
-| G5 | Guardian limiter is TRUSTLESSLY replayable via `project_capacity() = min(cap, tokens + elapsed*refill_rate)` over the `WithdrawalRequested/PickedForProcessing/Signed` event stream. `verify/` re-derives it — NOT a trusted SDK read. |
-| G6 | The BTC leg (deposit ~70min, withdraw ~1.5–2h) is NEVER live-demoable. Pre-stage. Sui side is instant. |
-| G7 | Isolate ALL Hashi surface behind an adapter interface with a deterministic MOCK from line one (mirror `project_capacity` exactly). On-chain Hashi calls live ONLY in `gateway.move`. All IDs configurable (env/config), never hardcoded in logic. |
-| G8 | Honesty: hBTC IS custodial-threshold wrapped BTC. Differentiation = composing the bridge's on-chain machinery, not the token's trust model. |
-| G9 | Pin Pyth versions + use the Beta feed on testnet; value collateral/NAV at DeepBook mid (depeg defence); add staleness guards. |
-| G10 | Move 2024 edition idioms throughout. Amounts in sats (u64). Emit an event for every externally-visible state transition. Error constants named `E<Reason>`. |
+> Purpose: the sequence in which the v2 product gets built, with dependencies, acceptance criteria
+> and an exact VERIFY command per unit. Execute top-to-bottom; do not reorder across the CUT LINE
+> without a written reason.
+> Read after: `aphotic.md` §11, `docs/DESIGN-V2.md`, `docs/MOVE-PACKAGE.md`, `docs/FACTS.md`.
+> Current state of each unit: **`docs/STATUS.md`** — this file says what to do, that file says what
+> is done.
+>
+> **Rewritten 2026-07-26 for the v2 product.** The v1 plan (T0.x–T5.3, the DeepBook market-making
+> vault) is void. Its task ids appear in this repo only inside `scripts/` banners that have not been
+> reworked yet.
 
 ---
 
-## Canonical identifiers (mirror of docs/FACTS.md — pull from config, never inline in logic)
+## 0. The ordering principle, and the unit-id scheme
 
-| Key | Value |
-|---|---|
-| hBTC coin type | `0xfcea10cadbb553c4874201584abf68771592678952efd957b2e82c010c7f4360::btc::BTC` |
-| Hashi package (testnet) | `0xfcea10cadbb553c4874201584abf68771592678952efd957b2e82c010c7f4360` |
-| Hashi shared object (testnet) | `0x22c0ce66ce09df2dc88a31bd320d4177b766518b9b88010368cfbdcd724528f8` |
-| DeepBook `Pool<hBTC, DBUSDC>` | `0x5cdaebf264f8b0db4233098cb4cca33d11e4d8c179d5fbd36a5bed361a55ced6` |
-| DBUSDC coin type | `0xf7152c05930480cd740d7311b5b8b45c6f488e3a53a11c3f74a6fac36a52e0d7::DBUSDC::DBUSDC` |
-| DeepBook callable pkg (testnet) | `0x22be4cade64bf2d02412c7e8d0e8beea2f78828b948118d46735315409371a3c` |
-| Pyth State | `0x243759059f4c3111179da5878c12f68d612c21a8d54d85edc86164bb18be1c7c` |
-| Pyth package | `0xabf837e98c26087cba0883c0a7a28326b1fa3c5e1e2c5abdb486f9e8f594c837` |
-| Wormhole State | `0x31358d198147da50db32eda2562951d53973a0c0ad5ed738e9b17d88b213d790` |
-| BTC/USD feed id | `0xe62df6c8b4a85fe1a67db44dc12de5db330f7ac66b72dc658afedf0f4a415b43` (testnet REQUIRES BETA channel — verify via Hermes before hardcoding) |
-| Withdrawal min | 30,000 sats · Bitcoin dust floor 546 sats · pinned addr = 20 bytes (P2WPKH) or 32 bytes (P2TR) |
+`aphotic.md` §11 fixes the order and the reason: **each step de-risks the next.** The vault does
+not depend on two-sided flow, so it ships first and is a product on its own; the auction is the
+differentiator but needs a market.
 
-If any value above conflicts with docs/FACTS.md, docs/FACTS.md wins — resolve there.
+**Unit ids are `P<phase>.<module>`** — `P1.vault`, `P3.batch`, `X.sdk` for cross-cutting work.
+
+⚠ **The banners already on disk are inconsistent** with each other: `caps.move` says `@task T1.1`,
+`notes.move` says `T3.1`, `allocate.move` says `P1.allocate`, `lending.move` says `P1.lending`.
+Both forms are accepted; the mapping is in the tables below. **New files use `P<phase>.<module>`.**
+Normalising the existing banners is unit `X.banners` and is low priority — a banner that is
+internally correct and cites the right spec anchors is doing its job whichever id form it uses.
 
 ---
 
-## Toolchain preflight (run before Phase 0; failures block everything)
+## Phase 0 — validation (no Move)
 
-| Check | VERIFY |
-|---|---|
-| Sui CLI on testnet | `sui client active-env` prints `testnet`; `sui client active-address` set + gas-funded |
-| Node ESM | `node -v` ≥ 18; keeper `package.json` has `"type": "module"` |
-| Move 2024 | `Move.toml` `[package]` `edition = "2024.beta"` |
+| Unit | What | Status |
+|---|---|---|
+| `P0.demand` | Confirm with liquidity partners that intent leakage on `hBTC` blocks is a real cost. | **not a coding task.** Owner: build lead. |
+| `P0.discount` | Measure the `hBTC`/BTC discount once mainnet liquidity exists. **If the discount is persistently below the hurdle, the carry does not work and the auction has no anchor.** | **cannot be done on testnet** — the book is empty on both sides. Logged, not blocking. |
 
----
-
-# PHASE 0 — Scaffold + Day-One gate
-
-Definition of done: repo builds empty Move package and an ESM keeper + Vite app that both start; the Hashi adapter interface + deterministic mock compile and pass a unit test; every canonical ID is read from config (not literal); docs/DAY-ONE.md checklist executed and its unknowns resolved or logged.
-
-| Task | id | Depends | Files created/edited | Acceptance criteria | VERIFY |
-|---|---|---|---|---|---|
-| Run day-one gate | T0.1 | — | (none — ops) | Every item in docs/DAY-ONE.md is checked; each UNKNOWN is either resolved and written into docs/FACTS.md or explicitly logged with owner. Faucet drip started (both signet faucets). One manual end-to-end Hashi deposit initiated via testnet.hashi.sui.io to learn real timings. | Manual: docs/DAY-ONE.md fully checked; `sui client objects` shows Hashi/pool IDs resolve on fullnode |
-| Move scaffold | T0.2 | — | `move/Move.toml`, `move/sources/vault.move` (empty module `aphotic::vault`) | `sui move new aphotic` layout under `move/`; edition `2024.beta`; package name `aphotic`; builds empty. | `cd move && sui move build` |
-| Keeper scaffold | T0.3 | — | `keeper/package.json` (ESM), `keeper/tsconfig.json`, `keeper/src/index.ts`, `keeper/src/config.ts` | ESM TS project; `config.ts` loads ALL canonical IDs from env/`.env` (per docs/FACTS.md); `@mysten/sui` ^2.22.1 + `@mysten/hashi` 0.6.0 pinned in deps; no ID literal anywhere but `config.ts` defaults. | `cd keeper && npm install && npm run build` |
-| App scaffold | T0.4 | — | `app/` (React + Vite), `app/src/config.ts` | `npm run dev` serves; three empty routes: `/deposit`, `/exit`, `/transparency`; IDs from env. | `cd app && npm install && npm run build` |
-| Hashi adapter interface + MOCK | T0.5 | T0.3 | `keeper/src/hashi/adapter.ts` (interface), `keeper/src/hashi/mock.ts`, `keeper/src/hashi/limiter.ts` (`projectCapacity()`), `keeper/test/hashi.mock.test.ts` | Adapter interface covers: `generateDepositAddress`, `deposit`, `requestWithdrawal`, `cancelWithdrawal`, `view.{balance,depositStatus,withdrawalStatus,all}`, `waitForDeposit`, `waitForWithdrawal`, `guardian.{limiterStatus,canWithdraw}`, and an event stream `subscribeEvents`. MOCK is deterministic (seeded), needs no network, and `limiter.ts` `projectCapacity(tokens, refillRate, cap, elapsedMs) = min(cap, tokens + elapsed*refillRate)` (CANONICAL arg order, per `docs/KEEPER.md` §2.4 — the SAME function imported by mock and `verify/`) matches Hashi `project_capacity` EXACTLY (G5). Real adapter stub throws `NotImplemented`. | `cd keeper && npm run test -- hashi.mock` |
-| Config wiring proof | T0.6 | T0.3,T0.4,T0.5 | `keeper/.env.example`, `app/.env.example` | Grepping the codebase for any canonical ID literal returns hits ONLY in `config.ts`/`.env.example` (G7). | `git grep -n 0x5cdaebf264 keeper app` returns only config files |
-
-Cross-ref: docs/FACTS.md (all IDs), docs/DAY-ONE.md (T0.1 items).
+Phase 0 is stated because `aphotic.md` §11 states it, and because pretending it is done would be
+the exact dishonesty G2 forbids. It does not gate the code.
 
 ---
 
-# PHASE 1 — Move package (mirrors docs/MOVE-PACKAGE.md) — CUT-LINE CRITICAL
+## Phase 1 — the vault
 
-Definition of done: `aphotic` package builds and all tests pass; a shared `Vault` over `Coin<BTC>` with sats share math; `gateway::exit_to_bitcoin` composes `hashi::withdraw::request_withdrawal` in one PTB from a per-depositor pinned address; `reclaim_stalled_exit` wraps `cancel_withdrawal`; small-exit pooling below 30,000 sats; keeper holds only `TradeCap`; every state transition emits an event.
+**AC for the phase:** deposits, shares, the two-party NAV cycle and idle allocation work end to
+end, with no carry and no auction. This alone is a shippable product.
 
-| Task | id | Depends | Files | Acceptance criteria | VERIFY |
-|---|---|---|---|---|---|
-| Vault object + share math | T1.1 | T0.2 | `move/sources/vault.move` | Shared `Vault` generic over asset pair, holds DeepBook `BalanceManager`, strategy ciphertext + Walrus blob id, share ledger in sats (u64). `deposit`/`redeem` share accounting; NAV valued at DeepBook mid (G9). Captures immutable `btc_exit_address: vector<u8>` (20 or 32 bytes) per depositor at first deposit (G2). Error consts `E<Reason>`. Events on deposit/redeem/share-mint. | `cd move && sui move build` |
-| `seal_approve` gate | T1.2 | T1.1 | `move/sources/vault.move` | `seal_approve` gates decryption; identity namespaced to vault object + version epoch (rotation/revocation). `rotate_keeper` increments epoch. | `cd move && sui move test` |
-| Gateway: register + composed exit | T1.3 | T1.1 | `move/sources/gateway.move` | `register_exit_address` (validates 20/32-byte, immutable-once-set). `exit_to_bitcoin`: burn shares → split `Balance<BTC>` → call `hashi::withdraw::request_withdrawal(hashi, clock, btc, pinned_addr, ctx)` in ONE atomic PTB using the PINNED address (never a caller-supplied one) (G2). Asserts amount ≥ 30,000 sats. Emits `ExitRequested` before the Hashi call. ALL Hashi imports confined to this module (G7). | `cd move && sui move test` |
-| Gateway: reclaim + small-exit pool | T1.4 | T1.3 | `move/sources/gateway.move` | `reclaim_stalled_exit` wraps `hashi::withdraw::cancel_withdrawal(...) : Balance<BTC>`, returns balance to vault, re-credits shares (respect 1h cooldown / pre-commit-only). Small-exit pooling: exits < 30,000 sats accumulate in a per-user pending balance until they clear the Hashi minimum or the user opts to take hBTC (G3 — never assume queue priority). | `cd move && sui move test` |
-| Router: maker + IOC | T1.5 | T1.1 | `move/sources/router.move` | DeepBook-only entrypoints against `Pool<hBTC, DBUSDC>`: maker `POST_ONLY` place/cancel + IOC sweep on the SAME book. NO Cetus, NO CLMM (G4). Self-match prevention enabled. Keeper path gated to `TradeCap` capability only (G2). | `cd move && sui move test` |
-| Gateway unit tests | T1.6 | T1.3,T1.4 | `move/sources/tests/gateway_tests.move` | Tests: exit below 30,000 sats pools not requests; exit to a NON-pinned address is impossible (no code path accepts one); reclaim re-credits exactly; events emitted. | `cd move && sui move test gateway` |
+| Unit | Files | Depends on | Acceptance criteria | VERIFY |
+|---|---|---|---|---|
+| `P1.events` (banner `T1.0`) | `move/sources/events.move` | — | package leaf; one emitter per externally-visible transition; the three ceilings recorded in `@facts`; per-fill emission deliberately absent and justified | `cd move && sui move build` |
+| `P1.caps` (banner `T1.1`) | `move/sources/caps.move`, `move/tests/caps_tests.move` | `P1.events` | three caps and no fourth; `AdminCap`/`KeeperCap` `key`-only, `VaultCap` `store`-only, `CapRegistry` `store`-only; two-step admin handover; epoch-bound rotation; `assert_keeper_action` exhaustive; `MAX_ALLOWLIST = 32`; **`arm_unpause` + delay** | `cd move && sui move test caps` |
+| `P1.allocate` | `move/sources/allocate.move`, `move/tests/allocate_tests.move` | `P1.events` | leaf — imports no `aphotic` module and no lending package; adapter identified by the **pair** `(type A, venue ID)`; per-venue caps; **recall never gated by pause or disable**; `mark` the only path for yield | `cd move && sui move test allocate` |
+| `P1.lending` | `lending/sources/lending.move` + tests | `hashi` (type only) | supply/borrow market for hBTC; `disclosure()` returns the honesty text **on-chain**; `is_collateralised()` and `has_liquidations()` both `false`; **zero borrowers ⇒ `accrue` provably adds zero**; reserve factor cuts interest, never principal | `cd lending && sui move test` |
+| **`P1.vault`** | `move/sources/vault.move`, `move/tests/vault_tests.move` | `P1.caps`, `P1.allocate`, `P3.balance` | async request/settle; `Coin<APHOTIC_LP>` fungible shares; **`approve_nav` in the O(1) 10-step form**, digest-bound, never iterating requests; `committed_supply` as the solvency denominator; round-DOWN `mul_div` recomputed per receipt; **`request_redeem`/`claim_redeem` ignore the pause** | `cd move && sui move test vault` |
 
-Cross-ref: docs/MOVE-PACKAGE.md (module specs), docs/FACTS.md#hashi (signatures), HASHI_INTEGRATION.md §4 (deltas), §3 mechanism #1 (composed pinned exit).
-
----
-
-# PHASE 2 — Keeper (mirrors docs/KEEPER.md) — CUT-LINE CRITICAL
-
-Definition of done: keeper watches Hashi events, runs the permissionless `confirm_deposit` crank, sponsored-sweeps minted hBTC into shares, tracks withdrawals surfacing the signet txid, quotes maker-first on the hBTC book from a Seal-encrypted strategy; the deterministic mock backs every Hashi call so all of this runs offline in CI.
-
-| Task | id | Depends | Files | Acceptance criteria | VERIFY |
-|---|---|---|---|---|---|
-| Real Hashi adapter | T2.1 | T0.5 | `keeper/src/hashi/real.ts` | Implements the T0.5 interface via `@mysten/hashi` (`client.$extend(hashi())`); network IDs auto-resolve; still swappable for the mock behind the same interface (G7). | `cd keeper && npm run test -- hashi.real --network=mock` (contract test against mock parity) |
-| Event watcher | T2.2 | T2.1 | `keeper/src/hashi/watcher.ts` | Subscribes to the six Hashi event families (`treasury::Minted/Burned`, `deposit::*`, `withdrawal_queue::*`, `utxo_pool::UtxoSpent`); normalized event log; deterministic under the mock. | `cd keeper && npm run test -- watcher` |
-| `confirm_deposit` crank | T2.3 | T2.2 | `keeper/src/execution/crank.ts` | Runs the PERMISSIONLESS `confirm_deposit` for pending Hashi deposits (for all users, not only ours). Idempotent; skips not-yet-eligible (respects 10-min delay). | `cd keeper && npm run test -- crank` |
-| Sponsored deposit sweep | T2.4 | T2.3 | `keeper/src/execution/sweep.ts` | Sponsored PTB sweeps freshly-minted hBTC into vault shares; user needs no SUI (zkLogin path). | `cd keeper && npm run test -- sweep` |
-| Withdrawal tracker | T2.5 | T2.2 | `keeper/src/execution/exit.ts` | Builds the `exit_to_bitcoin` PTB (calls `gateway`), drives `waitForWithdrawal`, surfaces the signet txid. Keeper NEVER holds `WithdrawCap` (G2). | `cd keeper && npm run test -- exit` |
-| Strategy: Seal + deterministic evaluate/route | T2.6 | T0.5 | `keeper/src/strategy/`, `keeper/src/privacy/` | Padded fixed-length serializer; Seal encrypt/decrypt with version-epoch identity; `evaluate()`/`route()` PURE + deterministic (same inputs → same output). Maker-first quoting on the hBTC book. | `cd keeper && npm run test -- strategy` |
-| Routing: L2 book + maker/IOC split | T2.7 | T2.6 | `keeper/src/routing/` | Reads DeepBook L2 book for `Pool<hBTC, DBUSDC>`; computes maker `POST_ONLY` leg + IOC residual on the SAME book (G4). No Cetus. | `cd keeper && npm run test -- routing` |
-| Oracle divergence breaker | T2.8 | T2.6 | `keeper/src/oracle/` | Pyth BETA BTC/USD feed (pinned versions, staleness guard, G9) vs DeepBook TWAP; refuses evaluation on divergence beyond threshold. NAV valued at DeepBook mid. | `cd keeper && npm run test -- oracle` |
-| Storage: Walrus put/get | T2.9 | T2.6 | `keeper/src/storage/` | Walrus put/get for strategy ciphertext + decision segments; `WALRUS_EPOCHS` set EXPLICITLY (never default); lifetime-renewal task. Encrypt-before-upload always. | `cd keeper && npm run test -- storage` |
-| End-to-end run loop (mock) | T2.10 | T2.4,T2.5,T2.7,T2.8,T2.9 | `keeper/src/index.ts` (`run` cmd) | `run --vault <ID>` executes full loop against the MOCK adapter offline: watch → crank → sweep → evaluate → route (maker post) → journal stub. Deterministic, no network. | `cd keeper && npm run test -- e2e.mock` |
-
-Cross-ref: docs/KEEPER.md (module specs), docs/FACTS.md (SDK API, event names), HASHI_INTEGRATION.md §4 (keeper deltas), mechanism #3/#4.
+**`P1.vault` is the largest single unit in the plan and the one with the most traps.** Read
+`docs/DESIGN-V2.md` §6 and `docs/MOVE-PACKAGE.md` §10 before writing a line of it. The three that
+bite: the digest check (a keeper must not be able to swap the proposal in a race), `committed_supply`
+(not `coin::total_supply` — it undercounts owed-but-unminted shares and would let an over-mint
+pass), and step 4's price-deviation check, which **must tolerate "no mid exists" as a defined
+state** because the book is empty.
 
 ---
 
-# PHASE 3 — App (mirrors docs/APP.md) — CUT-LINE CRITICAL
+## Phase 2 — the carry: **DELIBERATELY NOT EXECUTED**
 
-Definition of done: deposit screen does zkLogin + client-side `generateDepositAddress` + lifecycle; exit screen shows the immutable pinned address + Move-pinning explanation + resulting signet txid; the whole BTC-in → quote → BTC-out story is demoable (BTC leg pre-staged per G6).
+`aphotic.md` §11 is explicit: *"Do not attempt Phase 2 in that window — the multisig and the latency
+model are where the time goes."* `docs/DESIGN-V2.md` **D6** agrees, and D2 and D3 each independently
+confirm it.
 
-| Task | id | Depends | Files | Acceptance criteria | VERIFY |
-|---|---|---|---|---|---|
-| Deposit screen | T3.1 | T0.4,T2.4 | `app/src/deposit/` | zkLogin (Google) → Sui address → CLIENT-SIDE `generateDepositAddress({suiAddress})` + QR (no server). Live status via `view.depositStatus`/`waitForDeposit` walking the six-stage lifecycle. | `cd app && npm run build`; manual: address derives, QR renders |
-| Exit screen | T3.2 | T0.4,T2.5 | `app/src/exit/` | Shows the registered pinned BTC address (immutable) WITH the Move-pinning explanation (G2). Exit → instant Sui-side confirmation → then signet txid when broadcast. Pre-stage an earlier confirmed signet tx to show live (G6). | `cd app && npm run build`; manual: pinned addr shown, txid surfaces |
-| zkLogin + sponsored path | T3.3 | T3.1 | `app/src/deposit/`, `app/src/lib/` | First deposit needs no SUI (sponsored); custody stays with depositor. | manual: login → deposit flow with zero user SUI |
+| Unit | Files | What lands | What does NOT land |
+|---|---|---|---|
+| `P2.oracle` (banner `T2.1`) | `move/sources/oracle.move`, `move/tests/oracle_tests.move` | **the full model**: byte-exact limiter replay, the attested queue observation with its consistency checks, and a wait-time **distribution** with an explicit `unbounded_ms()` sentinel | — it is complete |
+| `P2.carry` | `move/sources/carry.move` | the three pure guard predicates — value-preservation floor, pinned-address equality, carry hurdle — real and tested | **any execution path.** The module touches no DeepBook, no Hashi, no `Balance<BTC>`, no shared object |
+| `P2.custody` | — | — | the 2-of-2 custody multisig and the policy co-signer. An **ops project**, not code |
+| `P2.sim` | — | — | the Rust `sim/` latency calibration against upstream's pool simulator |
 
-Cross-ref: docs/APP.md (screen specs), HASHI_INTEGRATION.md §4 (app deltas), mechanism #4 (one-Bitcoin-transaction onboarding).
+**VERIFY:** `cd move && sui move test oracle` · `cd move && sui move test carry`.
+
+**Do not "finish" Phase 2 because it looks close.** A carry wired against a book with no mid is not
+an implementation; it is an untested branch, and it would be the one branch handling real money.
 
 ---
 
-## ================= CUT LINE =================
+## Phase 3 — the auction
 
-MINIMUM DEMOABLE PRODUCT (must be green before ANY Phase 4+ work):
+**AC for the phase:** an order encrypted client-side under a time-lock policy is submitted with no
+size on chain, the batch closes mechanically, anyone reveals, the uniform price is computed
+**on-chain**, settlement pushes fills, and the TypeScript twin reproduces the result **byte for
+byte**.
 
-1. BTC in — pre-staged deposit (G6) advanced by the LIVE permissionless `confirm_deposit` crank (T2.3) on-screen; sponsored sweep into shares (T2.4).
-2. Encrypted strategy — Seal-encrypted strategy (T2.6) quoting maker-side on `Pool<hBTC, DBUSDC>` via router (T1.5, T2.7); scripted taker fills for the demo.
-3. BTC out — LIVE `gateway.exit_to_bitcoin` PTB (T1.3, T2.5) emitting `WithdrawalRequested` to the on-chain-pinned address; earlier exit's signet txid shown confirming in an explorer.
+| Unit | Files | Depends on | Acceptance criteria | VERIFY |
+|---|---|---|---|---|
+| `P3.notes` (banner `T3.1`) | `move/sources/notes.move`, `move/tests/notes_tests.move` | `P1.caps` | `Note` has **no amount field**; ladder append-only, `MAX_TIERS = 8`; domain-separated blake2b256; **leaf index LITTLE-ENDIAN**; append = 20 in-object hashes / **zero** dynamic-field entries; spend = **one** table entry; `MAX_SPENDS_PER_TX = 800` | `cd move && sui move test notes` + `gates.ps1 notes` |
+| `P3.balance` (banner `T3.2`) | `move/sources/balance.move`, `move/tests/balance_tests.move` | `P1.caps` | escrow custody **separate from vault NAV** (F3/D7); the conservation identity asserted after every op; **no `reserve`/`lock` primitive** — an order draws, it does not reserve; `has_at_least` for the truncation check; debit/credit emit nothing, custody crossings always emit | `cd move && sui move test balance` |
+| **`P3.batch`** | `move/sources/batch.move`, `move/tests/batch_tests.move` | `P3.notes`, `P3.balance`, `X.sdk` | monotonic state machine; `next_boundary` with `cadence 43_200_000` / `offset 21_600_000`; `open_batch` takes **no timestamp**; `close_batch` reverts before `close_ms`, succeeds at exactly `close_ms`; a **full batch does not close early**; `SUBMIT_CUTOFF_MS`/`REVEAL_GRACE_MS`; commitment binds the **plaintext**; **`seal_approve` LITTLE-ENDIAN, leftovers empty, policy_version checked, NO sender check, denies by abort** | `cd move && sui move test batch` + `gates.ps1 batchstate` |
+| **`P3.clearing`** | `move/sources/clearing.move`, `move/tests/clearing_tests.move`, `move/tests/clearing_golden_tests.move` (generated) | `P3.batch`, `X.sdk` | the six clearing rules exactly as `docs/FACTS.md#clearing`; **integer only**; limit safety asserted **per fill**; quote rounding toward the vault; fee an explicit third term; **deterministic truncation of under-funded fills from the frozen snapshot**; push not claim; `verify_fill`; **`compute_for_inspect` pure** | `cd move && sui move test clearing` |
+| `P3.seal` | app + keeper Seal integration | `X.sdk` | encrypt client-side under the inner id; committee of **5 operators, t = 3**, health-probed; **refuse to open a batch below `t` live**; **never fall back to plaintext** | keeper test + a live dry run |
+| `P3.walrus` | app + keeper | — | ciphertext to Walrus; `blob_id` on chain so a third party can *find* it; lifetime set explicitly and long | keeper test |
 
-Cut-line VERIFY (all must pass):
+---
+
+## Phase 4 — hardening. Gate on a spike, not a plan.
+
+| Unit | What | Blocking unknown |
+|---|---|---|
+| `P4.groth16` | replace `MembershipWitness` with a Groth16 verification — **the only thing that changes**; the tree, the commitment, the nullifier and `spend`'s signature all stay | **U-G, unverified.** `sui::groth16` caps public inputs at **8**, takes 32-byte **little-endian** scalars and Arkworks canonical-compressed VKs, and `verify_groth16_proof` returns `bool` — **it does not abort**, so the v1 "deny by abort" habit is wrong there. A SNARK-friendly hash makes blake2b256 → Poseidon a **tree migration** |
+| `P4.pcr` | swap the time-lock policy for a **PCR-gated** policy so only an attested Nautilus enclave ever decrypts. Order format, Seal integration and settlement contract are **unchanged** — this is why it is deferred rather than designed around | — |
+| `P4.relay` | a Bitcoin header relay in Move (permissionless submission, cumulative-work fork choice, Merkle inclusion) to close the H4 NAV gap | roadmap, **not a dependency** |
+
+---
+
+## Cross-cutting units
+
+| Unit | Files | Acceptance criteria | VERIFY |
+|---|---|---|---|
+| **`X.sdk`** | `sdk/src/{clearing,merkle,seal/identity,cadence}.ts`, `sdk/fixtures/clearing.golden.json`, `sdk/package.json` | **the single implementation** of clearing, the Merkle tree, the Seal inner id and the limiter. No build step: `"exports": { "./*": "./src/*.ts" }`, consumed via `keeper/tsconfig.json` `paths` and `app/vite.config.ts` `resolve.alias`. A generator emits `move/tests/clearing_golden_tests.move` from the **same** JSON | `cd keeper && npm test -- clearing` |
+| `X.parity` | `keeper/test/clearing.parity.test.ts`, `keeper/test/clearing.moveparity.test.ts` | L1 fixtures (all 12 named cases incl. **under-funded truncation**) · L2 property test, 10 000 seeded cases · **L3 `devInspect` BCS byte-for-byte**. A mismatch prints the failing set as a new fixture and fails | `cd keeper && npm test -- parity` |
+| `X.measure` | `scripts/measure-clearing.mjs` → `scripts/LIMITS.generated.md` → `docs/LIMITS.md` | **written, but it has measured NOTHING** — the published package exposes no `clearing` module. **Re-run after `P3.clearing` lands and is published**, then copy the report into `docs/LIMITS.md`. It divides `computationCost` by the reference gas price, because the cost is in **MIST** and the 5 M ceiling is in **units** — comparing them directly is wrong by a factor of the gas price. Threshold 3 500 000 units (70 %). If `price_step` at 256 exceeds it: drop the default to 128 and split into `price_scan_step` + `alloc_step` | `node scripts/measure-clearing.mjs` |
+| `X.keeper` | `keeper/src/**` | one TypeScript process; **delete** `strategy/ routing/ execution/ journal/` (v1); keep `sui/client.ts`, `hashi/limiter.ts`, `util/`, `config.ts`; `devInspect`-before-send; fail-soft across reconfiguration; re-derive never cache | `cd keeper && npm run build && npm test` |
+| `X.app` | `app/src/**` | rewrite the screens for v2: vault (request/claim), auction (top up · encrypt · submit · reveal · **prove my fill**), transparency (the published root, the clearing price, the limitations panel carrying H1–H4) | `cd app && npm run build && npm test` |
+| ~~`X.gates`~~ | `scripts/gates.{ps1,sh}` | **DONE 2026-07-26 02:13 (commit `72b12bb`).** 13 gates; `keepercap`, `notes`, `batchstate`, `send`, `seal_le` added, each proved against a **deliberately-violating** fixture tree as well as a compliant one, in both shells. `g2`/`g4`/`g7` repurposed rather than removed. 4 gates **SKIP** until their modules land — **a SKIP is not a PASS** | `powershell -File scripts/gates.ps1` |
+| ~~`X.verifyall`~~ | `scripts/verify-all.ps1` | **DONE, same commit** — 8 → 12 steps, `app npm test` included (**B14 closed**). It immediately exposed **7 app tests still asserting v1 `gateway` error constants** (B23) | `powershell -File scripts/verify-all.ps1` |
+| ~~`X.b11`~~ | `scripts/register-deposit.ps1` | **DONE, same commit** — ids resolve process env → `keeper/.env` → `keeper/src/config.ts`, provenance printed, and a self-test asserts neither watched prefix appears so it cannot silently regress. **`ids` is green for the first time** | `powershell -File scripts/gates.ps1 ids` |
+| `X.banners` | every source file | one APHOTIC CONTRACT banner per file, `@task` in the `P<phase>.<module>` form, `@spec` citing real anchors | `gates.ps1 todo` |
+
+---
+
+## THE CUT LINE
+
+> **Everything above this line is the minimum demoable product. Everything below is upside.**
+
+**Cut line = Phase 1 (`P1.events`, `P1.caps`, `P1.allocate`, `P1.lending`, `P1.vault`) + a mocked
+Phase 3 (`P3.notes`, `P3.balance`, `P3.batch`, `P3.clearing`) + `X.sdk` + `X.parity`.**
+
+That is exactly what `aphotic.md` §11 recommends for a weekend: *"Phase 1 plus a mocked Phase 3
+demonstrates the idea in a weekend."*
+
+### Cut-line VERIFY — all of these green, or the cut line is not met
+
+```bash
+export PATH="$LOCALAPPDATA/sui:$PATH"
+cd move    && sui move build && sui move test        # target >= 320 tests, 0 failures
+cd lending && sui move build && sui move test
+cd keeper  && npm run build && npm test -- parity    # L1 + L2 green
+cd app     && npm run build
+powershell -NoProfile -File scripts/gates.ps1        # incl. keepercap, notes, batchstate
 ```
-cd move   && sui move build && sui move test
-cd keeper && npm run build && npm run test -- e2e.mock
-cd app    && npm run build
-```
-Plus a manual rehearsal of demo steps 2–4 in HASHI_INTEGRATION.md §8. If the BTC leg risks failing at judging, fall back to the SUI/USDC vault per HASHI_INTEGRATION.md §6 — decide AT the cut line, not at the venue.
 
-## ============================================
+L3 (`devInspect` parity) additionally requires a published package — it is the **release** gate, not
+the cut-line gate.
 
----
+### Below the cut line — do not start these before the line is green
 
-# PHASE 4 — Bridge-aware envelope + journal + verify (post-cut-line)
-
-Definition of done: on-chain redemption-buffer constraint; decision records carry Hashi fields; `verify` replay TRUSTLESSLY re-derives limiter state from Hashi's event stream (G5), not from an SDK read.
-
-| Task | id | Depends | Files | Acceptance criteria | VERIFY |
-|---|---|---|---|---|---|
-| Envelope: redemption buffer | T4.1 | T1.1,T1.3 | `move/sources/envelope.move` | Constraint: deployable hBTC ≤ f(idle hBTC, pending exit demand). Reads queue state from the `Hashi` shared object IF getters exist (docs/DAY-ONE.md check #2); FALLBACK = static buffer ratio at vault creation + keeper-attested limiter readings in the (replayable) log. Standard envelope checks too (slippage bps, notional/epoch, venue allowlist, cooldown, Walrus-blob availability, owner pause, owner-only emergency withdraw). | `cd move && sui move test envelope` |
-| Journal: decision records | T4.2 | T2.9 | `keeper/src/journal/`, `move/sources/journal.move` | Decision records include `hashi` fields: limiter reading, queue depths, pending-mint total, plus oracle/book/strategy_blob/ruleset/decision/result. Blob ids emitted on-chain (self-certifying). | `cd keeper && npm run test -- journal` |
-| Verify: trustless limiter replay | T4.3 | T4.2,T0.5 | `keeper/src/verify/` | `verify --vault <ID> --from-epoch <N>` re-runs the published decision fn against recorded inputs AND re-derives the limiter trajectory by replaying `projectCapacity()` over the on-chain `WithdrawalRequested/PickedForProcessing/Signed` stream (G5). Reports any decision that fails to reproduce. Only trust anchors are the two genesis scalars (`refill_rate`, `max_bucket_capacity`). | `cd keeper && npm run test -- verify` and `verify --vault <ID> --from-epoch 0` on the mock stream reproduces the bucket |
-
-Cross-ref: docs/MOVE-PACKAGE.md#envelope, docs/KEEPER.md#verify, HASHI_INTEGRATION.md §3 mechanism #2 (rewritten around trustless replay), §7 phase 4.
+`P2.*` (all of it) · `P4.*` (all of it) · `X.measure` beyond a first run · the landing-page
+re-theme · Vercel deployment · anything involving real hBTC inventory.
 
 ---
 
-# PHASE 5 — Stretch (post-cut-line, only if 0–4 green)
+## Standing prohibitions
 
-Definition of done: peg-flow signal live in the strategy; transparency panel with bridge column; deposit-ticket TTO flow (gated by docs/DAY-ONE.md check #4).
-
-| Task | id | Depends | Files | Acceptance criteria | VERIFY |
-|---|---|---|---|---|---|
-| Peg-flow signal | T5.1 | T2.6,T2.2 | `keeper/src/strategy/` | Strategy consumes pending mint/burn queue (from `DepositApproved` preceding mint, `WithdrawalRequested` preceding burn) + limiter status as inputs; response stays Seal-encrypted (G8 — signal public, response private). | `cd keeper && npm run test -- strategy.pegflow` |
-| Transparency panel | T5.2 | T4.3 | `app/src/transparency/` | Shows encrypted strategy blob, decision log, and the BRIDGE COLUMN: limiter state, queue depths, and the replayable "we de-risked because the bridge tightened" trace (G5). | `cd app && npm run build`; manual: bridge column renders replay trace |
-| Deposit-ticket TTO | T5.3 | T2.4 | `keeper/src/execution/`, `move/sources/vault.move` | GATED by docs/DAY-ONE.md check #4 (does `generateDepositAddress` accept a 32-byte object id as `suiAddress`?). If yes: key derivation to a per-user deposit-ticket object id; mint lands via transfer-to-object; vault claims with `public_receive` — zero user tx after setup. If check #4 fails: SKIP, mark "UNKNOWN — resolved NO in DAY-ONE.md". | `cd move && sui move test ticket` (only if check #4 passed) |
-
-Cross-ref: docs/APP.md#transparency, HASHI_INTEGRATION.md §3 mechanism #3 & #4, §7 phase 5.
-
----
-
-## Standing ops (from day one, every day)
-
-- Keep 2–3 confirmed hBTC deposits and one broadcast withdrawal WARM at all times (G6) so the demo never waits on signet. See HASHI_INTEGRATION.md §7 (standing ops) + §9 risk register.
-- Keep `signetfaucet.com` dripping — it is the ONLY working signet faucet (`signet257.bublina.eu.org` and `alt.signetfaucet.com` are dead; Mutinynet is a DIFFERENT CHAIN and must never be used). Amount is in BTC, max `0.01`, and you must wait ≥ 30 s after the captcha or the payout is silently discarded. See `docs/FACTS.md#networks-faucets`.
-- Pin SDK/Pyth versions; Pyth DAO auto-upgrades Sui addresses 2026-08-18 → versions must be pinned before then (G9).
-
-## Global definition of done (submission)
-
-All of: cut-line VERIFY green + Phase 4 green + at least one Phase 5 task + demo rehearsed to HASHI_INTEGRATION.md §8 + risk register (§9) mitigations in place + Q&A (§10) answerable. hBTC framing honest per G8.
+1. **Never mark a unit DONE you have not seen a test pass for.** If you did not run the command, do
+   not report its output. `docs/STATUS.md` is a ledger of observations, not of intentions.
+2. **Never add a row to the keeper-callable list** (`docs/FACTS.md#keeper-callable`) without a
+   written decision, and never give a keeper-gated function an `address` parameter.
+3. **Never relitigate `aphotic.md` §3.** Those designs are eliminated with a stated reason.
+4. **Never weaken an invariant in `aphotic.md` §10 to make a test pass.** If an invariant and a test
+   disagree, one of them is wrong — find out which and say so.
+5. **Never silently resolve an item in `docs/FACTS.md#unknowns`.** Record the answer with its
+   evidence.
+6. **Never write any of the five names in `aphotic.md` §22** — anywhere, including generated
+   content. Read §22 for the list; describe the pattern generically instead.
+7. **Never present a number from our own lending market as a third-party rate**, never say a note
+   spend is unlinkable in v1, never quote a bare "7" or a bare "32" for validator collusion, and
+   never present the NAV as fully reconstructible.

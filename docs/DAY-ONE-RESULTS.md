@@ -1,5 +1,18 @@
 # DAY-ONE-RESULTS.md — execution record for `docs/DAY-ONE.md`, 2026-07-25
 
+> # 📌 ARCHIVE — 2026-07-26. Still valid **as evidence**; superseded **as a plan**.
+>
+> The product pivoted on 2026-07-26. The v1 build this record was produced for is dead, and the
+> decisions taken in it about routers, maker quoting and pinned exit addresses no longer apply.
+>
+> **What survives, and why this file was not deleted:** every `[D<n>]` citation in
+> `docs/FACTS.md` and `docs/RECON.md` points at a block below. This is the receipt behind the live
+> Hashi config, the Guardian limiter scalars, the Pyth Beta feed id, the Seal/Walrus/zkLogin
+> endpoints, the DeepBook venue reality and the signet faucet findings — all of which are still
+> load-bearing facts about the world.
+>
+> Read it to check *how* a fact was established. Do not read it for what to build.
+
 > Purpose: the **evidence file**. One section per D1–D10 with the exact command run, the real (trimmed) output, a PASS/FAIL/N-A verdict, and the decision taken. Every value promoted into `docs/FACTS.md` traces back to a block here. Nothing in this file is invented; where a probe was not run, it says so.
 > Read after: `docs/RECON.md`, `docs/DAY-ONE.md`. Resolved values live in `docs/FACTS.md` — this file is the receipt, not the reference.
 

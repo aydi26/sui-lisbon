@@ -3,6 +3,12 @@
 **Aphotic Research** — *draft, July 2026*
 
 > **Status.** This is a design specification, not a description of a live system. Hashi has been on testnet since 22 July 2026 with no announced mainnet date; Aphotic targets that window. Addresses are marked `TBD` until deployment. The structure follows the conventions of published vault governance and operations notes.
+>
+> **Provenance (2026-07-26).** This file was `git mv`'d from the repository root
+> (`aphotic-governance.md`) to `docs/GOVERNANCE.md` per `docs/DESIGN-V2.md` §12. The body below is
+> **unchanged**. Where the build knowingly departs from it, the departure is recorded in
+> **§9 Deviations of record** at the end of this file — never as a silent edit to the body.
+> Read after: `aphotic.md`. Read alongside: `docs/DESIGN-V2.md`.
 
 ---
 
@@ -277,8 +283,132 @@ Fee parameters are governed by the `AdminCap` and published here on change.
 
 ---
 
+## 9 Deviations of record
+
+> Added 2026-07-26, during the v2 build. Everything above this line is the note as written.
+> Everything below is a place where the **shipped design deliberately differs from it**, with the
+> reason. A deviation is recorded here rather than edited into the body, so that a reader who
+> remembers the original can see exactly what changed and why. Source: `docs/DESIGN-V2.md`.
+
+### D-G1 — The vault does **not** hold notes directly. A separate `BalanceLedger` custodies escrow.
+
+**What the note says.** Figure 1 renders the vault as `asset = hBTC · holds notes directly`, and
+§5 Table 2 lists "Notes in escrow — denomination × count in `NoteTree`, net of nullified" as a NAV
+leg. (`docs/DESIGN-V2.md` **F3**, decision **D7**.)
+
+**What the build does.** Escrow custody is separated from vault NAV. `aphotic::balance` owns a
+`BalanceBook<T>` that custodies participants' internal balances and the note-backed base; the
+vault's NAV does not include it.
+
+**Why — this is the load-bearing part.** NAV is committed in two transactions by two parties: the
+keeper calls `propose_nav`, and the admin multisig later calls `approve_nav`. If the vault holds
+escrow directly, then **a batch settlement occurring between those two transactions moves vault
+assets**. The admin then approves a number that is already stale, and the share price is committed
+against a balance sheet that no longer exists. The auction would defeat the two-party split — the
+one governance property §5.1 exists to establish. Separating the balance sheets makes the
+proposal's subject immutable between propose and approve.
+
+**What it costs.** The two legs share a *product* balance sheet, not a *Move* balance. The §10
+Notes invariant ("total note value in the tree equals `Balance<BTC>` held by the vault minus
+deployed capital") is therefore restated in the only form a Move `Table` can actually check —
+incremental totals plus a conservation identity asserted after every operation:
+
+```move
+assert!(l.total_base + l.note_backed_base == l.base.value(),  EBaseDrift);
+assert!(l.total_quote                     == l.quote.value(), EQuoteDrift);
+```
+
+A `Table` cannot be iterated, so a literal "sum the tree" check is not expressible on-chain; the
+identity above is equivalent and O(1).
+
+**Status.** A governed `vault::absorb_idle_escrow` is designed for the case where the two sheets
+should be reunited, and is **disabled in v1**. Marked ⚠ *needs reconciliation* in DESIGN-V2 D7 —
+this section is that reconciliation.
+
+### D-G2 — The keeper is **TypeScript**, not Rust.
+
+**What the note says.** §4.4 and §1 describe "an open-source Rust repository" / "open-source Rust
+service". `aphotic.md` §9 says the same.
+
+**What the build does.** One open-source **TypeScript** keeper process. (`docs/DESIGN-V2.md`
+**D1**.)
+
+**Why.** The keeper's defining duty at batch close is to **decrypt**, and `@mysten/seal` has no
+Rust SDK; `@mysten/hashi` is TypeScript-only as well. A Rust keeper would need a TypeScript sidecar
+for exactly that leg — two supervision trees, an IPC boundary carrying **order plaintext**, and a
+second implementation of the Seal identity encoding, which is precisely where the little-endian
+trap (DESIGN-V2 F1) bites. The honest phrasing is *"open source; TypeScript, because Seal has no
+Rust client."* Rust is retained only for offline clearing-parity work and the `sim/` latency
+calibration, neither of which is on the critical path.
+
+**What does not change.** Every property §4 claims of the keeper still holds, because they are
+properties of the capability model, not of the language: it holds only a `KeeperCap`, it can call
+only the functions in DESIGN-V2 §7, and those functions take **no `address` parameter at all**.
+
+### D-G3 — Settlement **pushes**; it does not wait to be claimed.
+
+**What the note says.** §6.2 step 4: "Participants claim fills against the published Merkle root."
+
+**What the build does.** `settle_step` credits fills directly, and `verify_fill` is exposed as the
+transparency surface. (`docs/DESIGN-V2.md` §5.)
+
+**Why.** A pull model leaves an unbounded unclaimed-liability state that must be excluded from NAV
+and reconciled forever. Push makes settlement terminal. `verify_fill` still gives the front-end the
+"prove my fill against the published root" affordance, which is what the claim story was actually
+for.
+
+### D-G4 — Pause asymmetry is **partly** on-chain, and we say which part.
+
+**What the note says.** §3: "Pause thresholds are asymmetric… pausing is deliberately cheap so a
+small fraction of signers can halt the vault quickly; unpausing requires the full admin quorum."
+
+**What the build does.** Move cannot read a multisig's threshold, so the *signer-count* asymmetry
+is enforced off-chain by the multisig configuration. What Move enforces, and does: `pause` is one
+transaction, while `unpause` requires `arm_unpause` in an **earlier** transaction plus
+`unpause_delay_ms` elapsed. Cheap to stop, expensive to resume — on-chain. (`docs/DESIGN-V2.md`
+§7.)
+
+Additionally, and not a deviation but a clarification worth pinning: **a paused vault still lets
+holders leave.** `request_redeem` and `claim_redeem` do not check the pause flag.
+
+### D-G5 — What the confidentiality section must additionally disclose
+
+§6.4's table is correct and stays. One property it does not state, and which must be published
+alongside it (`docs/DESIGN-V2.md` **D8**):
+
+> **v1 note spends are LINKABLE.** `aphotic.md` §7.1 says spends publish a nullifier "without
+> revealing which leaf" — that is true only with a zero-knowledge membership proof. In v1 the
+> Merkle path is supplied **in the clear**, so `path_index` names the leaf. **v1 delivers
+> uniformity, not unlinkability.** The commitment/nullifier machinery earns its keep by making the
+> Phase 4 upgrade a verifier swap on the same tree and the same nullifier format — not by hiding
+> anything today.
+
+Two further disclosures belong with it, for the same reason:
+
+- **The hBTC lending market Aphotic allocates to on testnet is our own** (`lending/`,
+  `aphotic_lending::lending`). No hBTC lending market exists on Sui testnet — Suilend, Navi and
+  Scallop have no testnet deployment at all. A yield number sourced from it is sourced from
+  ourselves and must never be shown as a third-party or market rate. (`docs/DESIGN-V2.md` **D3**.)
+- **Validator collusion, both numbers, always labelled.** Sui's per-validator voting-power cap is
+  `min(10000, max(1000, ceil(10000/n)))` = 10 % while n ≥ 10, so the **protocol floor** for a
+  quorum is **7 colluding validators**; **live testnet today is 32**. Never a bare "7" (it
+  overstates the risk), never a bare "32" (it understates the guarantee). (`docs/DESIGN-V2.md`
+  **D10**.)
+
+### D-G6 — §8's open items, resolved or still open
+
+| §8 open item | Where it stands |
+|---|---|
+| Deployed Hashi package IDs on testnet; state of the TS SDK | **RESOLVED.** `docs/RECON.md` R5 (package `0xfcea10ca…`, shared `Hashi` `0x22c0ce66…`) and R12 (`@mysten/hashi 0.6.0`). |
+| On-chain clearing is `O(n log n)`; fix the batch-size ceiling as a parameter | **DECIDED, not yet measured.** `MAX_BATCH_SIZE` governed at **256**, `HARD_MAX_BATCH_SIZE = 512`, resumable cursors from day one. The 5 000 000-unit computation cap must still be **measured** by `scripts/measure-clearing.mjs`, which does not exist yet. `docs/DESIGN-V2.md` §2, **D4**. |
+| Two-sided flow is the principal risk, and it is economic | **UNCHANGED and still true.** It is why the vault ships first. |
+| Gas and storage profile of the denomination ladder | **PARTLY ANSWERED.** An append is `depth = 20` hashes rewriting `filled_subtrees` **inside the object** — zero dynamic-field entries — and a nullifier insert is **one** table entry, so 256 spends cost 256 store entries, not 5 120. The storage-rebate economics are still unmeasured. `docs/DESIGN-V2.md` §11. |
+
+---
+
 ## References
 
 - [Hashi design documentation](https://mystenlabs.github.io/hashi/design) — committee, guardian, limiter, withdrawal flow, address scheme.
 - [Seal](https://seal.mystenlabs.com/) — threshold IBE and on-chain access policies.
 - ERC-7540 — asynchronous request/settle vault semantics, adapted to Move.
+- `docs/DESIGN-V2.md` — the reconciliation reference behind every deviation in §9.
