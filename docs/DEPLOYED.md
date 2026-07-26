@@ -550,3 +550,38 @@ The old cap was **not clawed back** and did not need to be: `caps::rotate_keeper
 whichever state is true. It now shows the guarantee **with both addresses** instead of the warning
 "The two-party NAV split is not live on this deployment" — because the deployment changed, not
 because the copy did.
+
+---
+
+## VAULT ROUND TRIP, WITH THE TWO-PARTY SPLIT LIVE (2026-07-26)
+
+The full async cut line, run on testnet **after** the keeper rotation — so `propose_nav` and
+`approve_nav` were signed by **two different keys**. Epoch **4 → 5**.
+
+| Step | Signer | Digest | Result |
+|---|---|---|---|
+| `request_deposit` 20 000 sats | admin `0xd41b0cd8…` | `CRR5UCvYaGZX5FVCXcqjDsq64ZYRhe5QhYUywXhGpMoF` | `DepositReceipt` `0x43faef9a…`, `Deposited{assets:20000, shares:0}` — funds in, **no shares yet** |
+| `propose_nav` | **keeper `0x883ff254…`** | `DWMBT85jtDNoTCxx3GPduaew1NLAqE75Mh6vMeaMSPoQ` | `has_proposal = true`; commits nothing |
+| `approve_nav` | **admin `0xd41b0cd8…`** | `8kysSGo6MNk8zvRCWCVqe8bdGL5CjZzusLuYhQYXjkPK` | `NavApproved{nav_sats:10000}`, epoch **4 → 5**, `EpochPrice` field created |
+| `claim_deposit` | admin `0xd41b0cd8…` | `Dh4c71o9q1QNdEFkjjBbnziVk1PPn7ktSZx74Sy4tJw1` | `+20 000 Coin<APHOTIC_LP>` `0xeb306a0c…`, `Deposited{assets:20000, shares:20000}` |
+
+**The digest binding held.** Before signing, the harness recomputed the proposal digest locally
+from BCS + blake2b and compared it with the one on chain:
+
+```
+digest (on chain)          9b1fc2a2db7d0faabee7ba6269e8f3b1b8cbb3cb775915b51a8116f84acd585e
+digest (local bcs+blake2b) 9b1fc2a2db7d0faabee7ba6269e8f3b1b8cbb3cb775915b51a8116f84acd585e
+```
+
+The admin signs a digest it derived itself, not a number the keeper handed it. That is what makes
+the split two *parties* rather than two steps.
+
+**Two receipts worth reading together.** `Deposited{assets: 20000, shares: 0}` at request and
+`Deposited{assets: 20000, shares: 20000}` at claim: the asynchrony is the product, and the chain
+shows it. Nothing is priced until an admin approves a NAV.
+
+⚠ **`scripts/smoke-vault.mjs` still defaults to the pre-rotation `APHOTIC_KEEPER_CAP`
+(`0xcfbdfc8d…`), and it signs every step with one key.** Post-rotation it must be driven in two
+halves — `APHOTIC_KEEPER_CAP=0x0c64a5f5… APHOTIC_SENDER=0x883ff254… --from=2 --to=2` for the
+proposal, then the default sender for the rest. Its dry run fails loudly rather than broadcasting,
+which is the behaviour we want, but the defaults are stale.
