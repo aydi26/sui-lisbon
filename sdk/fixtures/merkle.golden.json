@@ -1,0 +1,133 @@
+{
+  "_banner": [
+    "APHOTIC CONTRACT - fixtures/merkle.golden.json",
+    "@task       T6.2",
+    "@phase      3",
+    "@status     DONE",
+    "@spec       docs/DESIGN-V2.md#11 - incremental note tree, 0x00 leaf / 0x01 node tags",
+    "@facts      depth here is 8, not the production 20, so the vectors are small enough to state;",
+    "@facts        the code path is identical and test/merkle.test.ts also cross-checks depth 20.",
+    "@facts      zeros[0] = 32 zero bytes; zeros[i+1] = blake2b256(0x01 || zeros[i] || zeros[i]).",
+    "@facts      leaves are REAL note commitments - blake2b256(0x00 || denom || secret || r).",
+    "@facts      invalidProof is proof with ONE sibling byte flipped; it must NOT verify.",
+    "@verify     npx vitest run merkle"
+  ],
+  "depth": 8,
+  "zeros": [
+    "0x0000000000000000000000000000000000000000000000000000000000000000",
+    "0x086dabbfde6914778334b717e94921e353b7cc3f103cd2d19c5a825f30c067cc",
+    "0x18f222dae144a6f9171d661f217570eee1f4920bd15dc607567cb37c281c4b64",
+    "0xeee7d5726716a61a6782a72e892a098a25e6c5574b708159a6586c12c5da178d",
+    "0x92e3d58954ab430adbfb8d98f1118fe06b0b3705af559674c11572ccdbba8862",
+    "0x1c23727030051d1bba1c887273addac2054afbd6926daddef6740f4f8bf1fb7f",
+    "0x3f6cc701600871350d56c50e6a8e04299d8586e369f53126dbe6cd5e5844fca5",
+    "0x44ebf378b8579481b134e787dda3c8929713e09a0d6a8230f3166130e965e269",
+    "0xcc520b28264dd03d2f34efa06513343b0d78a7ff3d81027ad8455de91ca74bfa"
+  ],
+  "leaves": [
+    "0xa99f3f23ad4b109b56e98995274833d156e46a726e78e33976820e35e2531827",
+    "0xc960ddfc525efdb1fc95e07a9179abdcde9275557420540a4bce2b1250939e0e",
+    "0x6e15089a698b7708f9290f09ea4a21265bdab43644956aedfb82d99762a1fdcf",
+    "0x111d75da0052a23ccd2ea4d5aabb6dbb11572fb056f8a85d596bd43fda8f0f8d",
+    "0x5959bc3015002b154be231206f16dc76b978dade97bb9b5ee68122071282d0b2",
+    "0xc1b27f261c88c3403c58353b77eabb3b1cdee0ec9bc9d7e4824908c3eec3d8e7",
+    "0x6ef975ec4ae9802c5956356f04336a3f1b224edc98ab78226756dacd6ce38a71",
+    "0x5d540123f4015468e3b437dfc417a9b114f21b6e814569d5f0f4e2d18abb46ac",
+    "0x5422d2ca86fb17f19597f7eaaeeb08af969e4652b3d2d0ba4c7badc40093980f"
+  ],
+  "rootsAfterNAppends": [
+    {
+      "n": 0,
+      "root": "0xcc520b28264dd03d2f34efa06513343b0d78a7ff3d81027ad8455de91ca74bfa"
+    },
+    {
+      "n": 1,
+      "root": "0x7408d05dc95d45d3e2e9ecdff5b2e0dc6848f1b96a80b928b2d5737a5999e44f"
+    },
+    {
+      "n": 2,
+      "root": "0xa28f3d85026e72f51235e36f25d215814be948be6f4cab8181cf23765477fd84"
+    },
+    {
+      "n": 3,
+      "root": "0xb6e54bf2633b8cbd15e1f04496d47245c6d616762cb834299b25ecf036d18914"
+    },
+    {
+      "n": 4,
+      "root": "0x9b6cb5b1f97390d7246909a6f4055f5d916b08f62c4f900ebfd0d1381b02822f"
+    },
+    {
+      "n": 5,
+      "root": "0x520716eb8ca7331837274bef641b4a607cf0da77c768cfbd4ed12ea7dc30a968"
+    },
+    {
+      "n": 6,
+      "root": "0xb4857309dd5e403cbe9a3924427180bc2dadc39206f71db2b75d379969a1b47c"
+    },
+    {
+      "n": 7,
+      "root": "0x76590391406479e45fe751511d8a4300ab60202f6f862ee643bc641a0cc19d35"
+    },
+    {
+      "n": 8,
+      "root": "0xe7dd5ec4806feee016f4c33c5b85b2866c43e268d9b270a991ab77f6dbacf64b"
+    },
+    {
+      "n": 9,
+      "root": "0x3edb44f992470fd2ea9bddb6afcdcafb788612a29bf89904f87d7752f752c24f"
+    }
+  ],
+  "rootFromAllLeaves": "0x3edb44f992470fd2ea9bddb6afcdcafb788612a29bf89904f87d7752f752c24f",
+  "proof": {
+    "leafIndex": 5,
+    "leaf": "0xc1b27f261c88c3403c58353b77eabb3b1cdee0ec9bc9d7e4824908c3eec3d8e7",
+    "siblings": [
+      "0x5959bc3015002b154be231206f16dc76b978dade97bb9b5ee68122071282d0b2",
+      "0x0d17f10dd81cdcd6c7c3b4d99666cdde2afe5d74ca9ddb850491bbd2ddee74c6",
+      "0x06f8dcd75442c115e764e7547db215ff1728a7af7e0c422da27276b523c53271",
+      "0x464af8b4798b74b1cb77e9fb25016c930aed762a598e4399cc8264201042a700",
+      "0x92e3d58954ab430adbfb8d98f1118fe06b0b3705af559674c11572ccdbba8862",
+      "0x1c23727030051d1bba1c887273addac2054afbd6926daddef6740f4f8bf1fb7f",
+      "0x3f6cc701600871350d56c50e6a8e04299d8586e369f53126dbe6cd5e5844fca5",
+      "0x44ebf378b8579481b134e787dda3c8929713e09a0d6a8230f3166130e965e269"
+    ],
+    "pathIndices": [
+      1,
+      0,
+      1,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "root": "0x3edb44f992470fd2ea9bddb6afcdcafb788612a29bf89904f87d7752f752c24f",
+    "valid": true
+  },
+  "invalidProof": {
+    "leafIndex": 5,
+    "leaf": "0xc1b27f261c88c3403c58353b77eabb3b1cdee0ec9bc9d7e4824908c3eec3d8e7",
+    "siblings": [
+      "0x5859bc3015002b154be231206f16dc76b978dade97bb9b5ee68122071282d0b2",
+      "0x0d17f10dd81cdcd6c7c3b4d99666cdde2afe5d74ca9ddb850491bbd2ddee74c6",
+      "0x06f8dcd75442c115e764e7547db215ff1728a7af7e0c422da27276b523c53271",
+      "0x464af8b4798b74b1cb77e9fb25016c930aed762a598e4399cc8264201042a700",
+      "0x92e3d58954ab430adbfb8d98f1118fe06b0b3705af559674c11572ccdbba8862",
+      "0x1c23727030051d1bba1c887273addac2054afbd6926daddef6740f4f8bf1fb7f",
+      "0x3f6cc701600871350d56c50e6a8e04299d8586e369f53126dbe6cd5e5844fca5",
+      "0x44ebf378b8579481b134e787dda3c8929713e09a0d6a8230f3166130e965e269"
+    ],
+    "pathIndices": [
+      1,
+      0,
+      1,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "root": "0x3edb44f992470fd2ea9bddb6afcdcafb788612a29bf89904f87d7752f752c24f",
+    "valid": false
+  }
+}

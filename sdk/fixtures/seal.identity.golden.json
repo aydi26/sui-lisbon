@@ -1,0 +1,87 @@
+{
+  "_banner": [
+    "APHOTIC CONTRACT - fixtures/seal.identity.golden.json",
+    "@task       T6.6",
+    "@phase      3  [CUT-LINE CRITICAL]",
+    "@status     DONE",
+    "@spec       docs/DESIGN-V2.md#F1 and #3 - the 48-byte inner id, LITTLE-ENDIAN",
+    "@facts      Every vector carries BOTH encodings of the SAME inputs. le is correct and must",
+    "@facts        open the policy; beWRONG is the encoding the deleted vault.move used and that",
+    "@facts        keeper/src/privacy/seal.ts still documents - it must ABORT.",
+    "@facts      Layout: [0..8) u64 close_ms LE, [8..16) u64 policy_version LE, [16..48) address.",
+    "@facts      le[0..8] REVERSED equals beWRONG[0..8], always. The test asserts exactly that, so",
+    "@facts        the fixture cannot be regenerated into agreement by accident.",
+    "@forbidden  a vector where le == beWRONG, except the documented all-zero case",
+    "@verify     npx vitest run identity"
+  ],
+  "innerIdLen": 48,
+  "packageId": "0xbe433a2726fc61391d180ce55cdb8177f9647760b23a7704d42e3b5b9bb72d66",
+  "vectors": [
+    {
+      "name": "all-zero-the-only-palindromic-vector",
+      "closeMs": "0",
+      "policyVersion": "0",
+      "batchId": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "why": "The single input where LE and BE agree. Present so nobody mistakes a passing all-zero test for proof that the endianness is right.",
+      "le": "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "beWRONG": "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "differs": false,
+      "fullIdentity": "0xbe433a2726fc61391d180ce55cdb8177f9647760b23a7704d42e3b5b9bb72d66000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+      "name": "one-one-one-minimal-asymmetry",
+      "closeMs": "1",
+      "policyVersion": "1",
+      "batchId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+      "why": "The smallest input where LE and BE differ: 0x01 lands in byte 0 (LE) or byte 7 (BE).",
+      "le": "0x010000000000000001000000000000000000000000000000000000000000000000000000000000000000000000000001",
+      "beWRONG": "0x000000000000000100000000000000010000000000000000000000000000000000000000000000000000000000000001",
+      "differs": true,
+      "fullIdentity": "0xbe433a2726fc61391d180ce55cdb8177f9647760b23a7704d42e3b5b9bb72d66010000000000000001000000000000000000000000000000000000000000000000000000000000000000000000000001"
+    },
+    {
+      "name": "real-close-2026-07-26T18-00-00Z-policy-3",
+      "closeMs": "1785088800000",
+      "policyVersion": "3",
+      "batchId": "0x000000000000000000000000000000000000000000000000000000000000002a",
+      "why": "A production-shaped identity: a real 18:00 UTC boundary, a bumped policy version, a real batch object id.",
+      "le": "0x0075959f9f0100000300000000000000000000000000000000000000000000000000000000000000000000000000002a",
+      "beWRONG": "0x0000019f9f9575000000000000000003000000000000000000000000000000000000000000000000000000000000002a",
+      "differs": true,
+      "fullIdentity": "0xbe433a2726fc61391d180ce55cdb8177f9647760b23a7704d42e3b5b9bb72d660075959f9f0100000300000000000000000000000000000000000000000000000000000000000000000000000000002a"
+    },
+    {
+      "name": "real-close-2026-07-26T06-00-00Z-policy-0",
+      "closeMs": "1785045600000",
+      "policyVersion": "0",
+      "batchId": "0xf03832c92d4bf745ac720c52fe9198fc928028ce51991059bfe59c0e4ef374e8",
+      "why": "The morning boundary, policy version 0, and a 32-byte id with high bytes set so no leading-zero luck can hide a byte-order bug.",
+      "le": "0x0047029d9f0100000000000000000000f03832c92d4bf745ac720c52fe9198fc928028ce51991059bfe59c0e4ef374e8",
+      "beWRONG": "0x0000019f9d0247000000000000000000f03832c92d4bf745ac720c52fe9198fc928028ce51991059bfe59c0e4ef374e8",
+      "differs": true,
+      "fullIdentity": "0xbe433a2726fc61391d180ce55cdb8177f9647760b23a7704d42e3b5b9bb72d660047029d9f0100000000000000000000f03832c92d4bf745ac720c52fe9198fc928028ce51991059bfe59c0e4ef374e8"
+    },
+    {
+      "name": "u64-max-close-and-version",
+      "closeMs": "18446744073709551615",
+      "policyVersion": "18446744073709551615",
+      "batchId": "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "why": "The all-ones boundary. Palindromic per field, so it pins the LENGTH and the layout independently of byte order.",
+      "le": "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "beWRONG": "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "differs": false,
+      "fullIdentity": "0xbe433a2726fc61391d180ce55cdb8177f9647760b23a7704d42e3b5b9bb72d66ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "name": "byte-pattern-close-ms",
+      "closeMs": "283686952306183",
+      "policyVersion": "72623859790382856",
+      "batchId": "0x0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+      "why": "0x0001020304050607 and 0x0102030405060708 - every byte distinct, so the LE and BE encodings are legible by eye in the fixture.",
+      "le": "0x070605040302010008070605040302010102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+      "beWRONG": "0x000102030405060701020304050607080102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+      "differs": true,
+      "fullIdentity": "0xbe433a2726fc61391d180ce55cdb8177f9647760b23a7704d42e3b5b9bb72d66070605040302010008070605040302010102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
+    }
+  ]
+}

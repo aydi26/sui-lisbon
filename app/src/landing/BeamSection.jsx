@@ -1,11 +1,12 @@
 // ┌── APHOTIC CONTRACT ────────────────────────────────────────────────────────
-// @task       T0.4
+// @task       F1
 // @phase      0
 // @status     DONE
 // @spec       docs/RECON.md R13 (re-theme surface: "the 6 gradient pairs in
 //             BeamSection.jsx"; copy surface: h2 + p + 6 logos)
-// @spec       docs/GOLDEN-RULES.md G8 (the paragraph below is the honest pitch)
-// @rules      G2 G7 G8
+// @spec       aphotic.md §1 (the two products), §4.2 (the queue leak)
+// @spec       CLAUDE.md — hBTC honesty (the paragraph below is the honest pitch)
+// @rules      G7 G8
 // @depends    ./AnimatedBeam.js · app/public/logos/*.svg
 // @facts      Ported VERBATIM from the upstream BeamSection.jsx (docs/RECON.md R13).
 // @facts      DO NOT TOUCH — beam geometry/timing:
@@ -25,7 +26,16 @@
 // @forbidden  claiming hBTC is trustless or non-custodial — G8
 // @invariant  1. Exactly 6 beams; each is destroy()ed on unmount.
 // @invariant  2. Every <img> has a non-empty, accurate alt.
-// @ac         the paragraph names the TradeCap-only keeper and the pinned exit (G2).
+// @invariant  3. The paragraph states plainly that hBTC is custodial-threshold
+//                wrapped BTC. It is never softened to tighten the pitch.
+// @ac         the paragraph names the carry AND the sealed auction, says clearing
+//             is deterministic and recomputable, and concedes the hBTC trust model.
+// @ac         ⚠ It must NOT claim a TradeCap-only keeper or a Move-pinned exit.
+//             Both were v1 and are gone: the keeper's limit is now that none of its
+//             functions takes an `address` at all, and the exit destination is
+//             enforced by a 2-of-2 co-signer AT SIGNING, not by Move. The earlier
+//             version of this line demanded exactly those two dead claims, which is
+//             how a corrected paragraph gets "fixed" back into a false one.
 // @verify     cd app && npm run build
 // └── END CONTRACT ───────────────────────────────────────────────────────────
 

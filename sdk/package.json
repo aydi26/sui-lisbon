@@ -1,0 +1,25 @@
+{
+  "name": "@aphotic/sdk",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Aphotic shared algorithms — clearing, Merkle, notes, Seal inner identity, cadence, NAV. ONE implementation, three consumers (Move parity, keeper, app).",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "exports": {
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "golden": "node --import ./scripts/register-ts.mjs scripts/gen-golden.mjs",
+    "move-fixtures": "node --import ./scripts/register-ts.mjs scripts/gen-move-fixtures.mjs",
+    "golden:check": "node --import ./scripts/register-ts.mjs scripts/gen-golden.mjs --check"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}

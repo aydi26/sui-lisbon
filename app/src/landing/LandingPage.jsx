@@ -1,10 +1,11 @@
 // ┌── APHOTIC CONTRACT ────────────────────────────────────────────────────────
-// @task       T0.4
+// @task       F1
 // @phase      0
 // @status     DONE
 // @spec       docs/RECON.md R13 (landing-page port: source, deps, the ONE EVM
 //             coupling, the 3-card CSS constraint, the re-theme surface)
-// @spec       docs/GOLDEN-RULES.md G8 (every copy string on this page)
+// @spec       aphotic.md §1 (the two products), §7.3 (the 06:00/18:00 cadence)
+// @spec       CLAUDE.md — hBTC honesty applies to every copy string on this page
 // @rules      G7 G8
 // @depends    ./Globe3D.jsx · ./BeamSection.jsx · ./HorizontalScroll.jsx
 //             ./FAQ.jsx · ./stats.js · ./LandingPage.css
@@ -41,7 +42,10 @@
 // @invariant  2. The left counter is LABELLED as the bridge's circulating hBTC —
 //                it is Hashi's number, and must never read as Aphotic's AUM (G8).
 // @invariant  3. onConnect defaults to navigating to /vault (react-router).
-// @ac         docs/APP.md §7 A11 — renders in mock mode with zero signet/RPC.
+// @ac         the hero renders with the network down: readAggregateStats() resolves
+//             ok:false with a zero supply, and the countdown — pure calendar — is
+//             still correct. There is no mock mode to fall back on any more; the
+//             page shows a true number or an honest "read unavailable".
 // @verify     cd app && npm run build
 // @verify     the landing brand gate (docs/RECON.md R13 token list) over
 //             app\src\landing\* must return NOTHING
@@ -64,7 +68,7 @@ import "./LandingPage.css";
  * without it the inferred prop type is required and `npm run build` fails.
  *
  * @param {Object} [props]
- * @param {() => void} [props.onConnect] Overrides the default navigate("/deposit").
+ * @param {() => void} [props.onConnect] Overrides the default navigate("/vault").
  * @param {boolean} [props.connecting]   Renders the button's "Connecting..." state.
  * @param {unknown} [props.refreshKey]   Change it to force a stats re-read.
  */

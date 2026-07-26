@@ -27,7 +27,12 @@
 // @invariant  2. The hBTC answer states the custodial-threshold trust model plainly.
 // @invariant  3. One item is entirely about what v1 does NOT hide, including that
 //                note spends are LINKABLE. It is never removed to tighten the pitch.
-// @ac         docs/GOLDEN-RULES.md L72-L77 — the on-record honesty lines appear here.
+// @ac         the on-record honesty lines appear here, in the answers a reader is
+//             most likely to open: hBTC is custodial-threshold wrapped BTC · v1
+//             note spends are LINKABLE (the Merkle path is public, so the leaf
+//             index names the note — uniformity, not unlinkability) · priority in
+//             the withdrawal queue cannot be bought · the spread is the price of
+//             latency, and if the queue clears in minutes the venue is worth little.
 // @verify     cd app && npm run build
 // └── END CONTRACT ───────────────────────────────────────────────────────────
 

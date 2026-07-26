@@ -206,6 +206,49 @@ against the published root" button, which is what the claim story was actually f
 
 ---
 
+### 5bis. Four things §5 left underspecified — RESOLVED BY THE SDK, and Move MUST match
+
+Found while implementing `sdk/src/clearing.ts`. Each is a place where §5 above was not
+executable as written, so the implementation had to decide. **Bit-identical parity is a
+release blocker**, so `clearing.move` must implement these exact rules, not its own reading
+of §5.
+
+**(a) "Orders strictly inside the cross fill fully" is NOT always satisfiable.**
+Counterexample: one bid 100 @ 10, one ask 50 @ 5. The tie-breaks select `p* = 5`, so the
+*entire* bid is strictly inside the cross while matched volume is only 50. A rule that
+cannot be honoured is worse than no rule — each implementation works around it differently
+and parity breaks silently.
+**Resolved:** walk price levels in price priority; the first level that does not fit is
+pro-rated by largest remainder; every later level gets zero. This reduces to §5.3 exactly
+whenever §5.3 *is* satisfiable. Pinned as `degenerate-strictly-inside-exceeds-matched`.
+
+**(b) §5 never defines the price denomination.** The SDK uses DeepBook's `FLOAT_SCALING`
+convention, `PRICE_SCALE = 1_000_000_000`, and pins it in the fixture header. If
+`clearing.move` picks a different scale, **every golden fixture must be regenerated** — this
+is not a cosmetic difference.
+
+**(c) Fee apportionment.** §5 gives `fee = mul_div(matched_quote, bps, 10_000)` as a single
+aggregate while also demanding `Σdebits == Σcredits + fee` exactly. Those are only
+simultaneously true if the aggregate is distributed without loss.
+**Resolved:** distribute the aggregate across ask fills with the *same* largest-remainder
+rule, so `Σ fill.fee == feeQuote` exactly. The asserted identity is per-asset — base debits
+== base credits; quote debits == quote credits + fee + **dust**, where dust is the
+non-negative residual of rounding toward the vault.
+
+**(d) `FillLeaf` byte layout**, proposed by the SDK and to be mirrored verbatim:
+`u64 index ‖ address submitter ‖ u8 side ‖ u128 price ‖ u64 qty ‖ u64 quote ‖ u64 fee`
+= 73 bytes, hashed `blake2b256(0x00 ‖ bcs)`, rooted with odd-node duplication, bids then
+asks in canonical order. **An empty fill set roots to 32 zero bytes**, not to a hash of
+nothing.
+
+**One deliberate quirk, replicated on purpose.** For `now_ms < offset_ms` — the first six
+hours of the unix epoch — `since` saturates to 0 and `next_boundary` returns
+`offset + cadence` = 18:00, skipping the 06:00 boundary. Unreachable in production, but
+pinned on both sides as `epoch-zero-skips-the-first-boundary` so nobody "fixes" one side
+alone and breaks parity.
+
+---
+
 ## 6. `approve_nav` — the O(1) form
 
 It must **not** iterate requests; `object_runtime_max_num_store_entries = 1000` makes any

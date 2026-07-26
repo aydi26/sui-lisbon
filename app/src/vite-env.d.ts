@@ -19,7 +19,6 @@ interface ImportMetaEnv {
   readonly VITE_SUI_NETWORK?: string;
   readonly VITE_SUI_GRPC_URL?: string;
   readonly VITE_SUI_JSONRPC_URL?: string;
-  readonly VITE_DEMO_MODE?: string;
 
   // aphotic
   readonly VITE_APHOTIC_PACKAGE_ID?: string;

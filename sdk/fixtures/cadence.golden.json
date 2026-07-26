@@ -1,0 +1,113 @@
+{
+  "_banner": [
+    "APHOTIC CONTRACT - fixtures/cadence.golden.json",
+    "@task       T6.8",
+    "@phase      3  [CUT-LINE CRITICAL]",
+    "@status     DONE",
+    "@spec       docs/DESIGN-V2.md#4 - next_boundary, the exact Move twin",
+    "@facts      cadenceMs = 43_200_000 (12 h), offsetMs = 21_600_000 (6 h) => 06:00 / 18:00 UTC.",
+    "@facts      Every nextBoundary below is ALSO asserted to be 06:00:00.000 or 18:00:00.000 UTC.",
+    "@forbidden  an operator-supplied close timestamp - close_ms is DERIVED",
+    "@verify     npx vitest run cadence"
+  ],
+  "cadenceMs": "43200000",
+  "offsetMs": "21600000",
+  "vectors": [
+    {
+      "name": "epoch-zero-skips-the-first-boundary",
+      "why": "FINDING: since saturates to 0 below the offset, so the very first 06:00 is skipped and the answer is 18:00. Replicated from the Move source verbatim; unreachable after 1970-01-01 06:00 UTC.",
+      "nowMs": "0",
+      "nowIso": "1970-01-01T00:00:00.000Z",
+      "nextBoundary": "64800000",
+      "nextBoundaryIso": "1970-01-01T18:00:00.000Z"
+    },
+    {
+      "name": "exactly-06-00-returns-18-00",
+      "why": "The boundary is STRICTLY next: standing exactly on 06:00 gives 18:00, never 06:00 again.",
+      "nowMs": "1785045600000",
+      "nowIso": "2026-07-26T06:00:00.000Z",
+      "nextBoundary": "1785088800000",
+      "nextBoundaryIso": "2026-07-26T18:00:00.000Z"
+    },
+    {
+      "name": "one-ms-before-06-00",
+      "why": "Just before the morning boundary the answer is that same morning boundary.",
+      "nowMs": "1785045599999",
+      "nowIso": "2026-07-26T05:59:59.999Z",
+      "nextBoundary": "1785045600000",
+      "nextBoundaryIso": "2026-07-26T06:00:00.000Z"
+    },
+    {
+      "name": "one-ms-after-06-00",
+      "why": "One ms past it, the answer has already moved to 18:00.",
+      "nowMs": "1785045600001",
+      "nowIso": "2026-07-26T06:00:00.001Z",
+      "nextBoundary": "1785088800000",
+      "nextBoundaryIso": "2026-07-26T18:00:00.000Z"
+    },
+    {
+      "name": "exactly-18-00-returns-next-06-00",
+      "why": "The evening boundary rolls to the following morning.",
+      "nowMs": "1785088800000",
+      "nowIso": "2026-07-26T18:00:00.000Z",
+      "nextBoundary": "1785132000000",
+      "nextBoundaryIso": "2026-07-27T06:00:00.000Z"
+    },
+    {
+      "name": "one-ms-before-18-00",
+      "why": "Just before the evening boundary.",
+      "nowMs": "1785088799999",
+      "nowIso": "2026-07-26T17:59:59.999Z",
+      "nextBoundary": "1785088800000",
+      "nextBoundaryIso": "2026-07-26T18:00:00.000Z"
+    },
+    {
+      "name": "one-ms-after-18-00",
+      "why": "Just after it.",
+      "nowMs": "1785088800001",
+      "nowIso": "2026-07-26T18:00:00.001Z",
+      "nextBoundary": "1785132000000",
+      "nextBoundaryIso": "2026-07-27T06:00:00.000Z"
+    },
+    {
+      "name": "midday",
+      "why": "Mid-window - the common case.",
+      "nowMs": "1785067200000",
+      "nowIso": "2026-07-26T12:00:00.000Z",
+      "nextBoundary": "1785088800000",
+      "nextBoundaryIso": "2026-07-26T18:00:00.000Z"
+    },
+    {
+      "name": "midnight",
+      "why": "Midnight resolves to the SAME morning, not the previous evening.",
+      "nowMs": "1785024000000",
+      "nowIso": "2026-07-26T00:00:00.000Z",
+      "nextBoundary": "1785045600000",
+      "nextBoundaryIso": "2026-07-26T06:00:00.000Z"
+    },
+    {
+      "name": "exactly-the-offset",
+      "why": "1970-01-01 06:00 UTC - the first reachable boundary, and the first input where since stops saturating.",
+      "nowMs": "21600000",
+      "nowIso": "1970-01-01T06:00:00.000Z",
+      "nextBoundary": "64800000",
+      "nextBoundaryIso": "1970-01-01T18:00:00.000Z"
+    },
+    {
+      "name": "one-ms-below-the-offset",
+      "why": "The last input in the saturating region.",
+      "nowMs": "21599999",
+      "nowIso": "1970-01-01T05:59:59.999Z",
+      "nextBoundary": "64800000",
+      "nextBoundaryIso": "1970-01-01T18:00:00.000Z"
+    },
+    {
+      "name": "far-future",
+      "why": "2100-01-01 00:00 UTC - proves no drift accumulates over 130 years of periods.",
+      "nowMs": "4102444800000",
+      "nowIso": "2100-01-01T00:00:00.000Z",
+      "nextBoundary": "4102466400000",
+      "nextBoundaryIso": "2100-01-01T06:00:00.000Z"
+    }
+  ]
+}
