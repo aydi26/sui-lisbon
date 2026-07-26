@@ -61,6 +61,7 @@ const NAV = [
   { to: '/vault', label: 'Vault' },
   { to: '/batch', label: 'Batch' },
   { to: '/verify', label: 'Verify' },
+  { to: '/docs', label: 'Docs' },
 ] as const;
 
 /**
