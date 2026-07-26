@@ -453,6 +453,16 @@ recovery tapleaf is MPC-only after a 60-day relative timelock, while coin select
 criterion**). Aphotic is not trustless; it is **no less trustworthy than the venue it serves**, and
 that is the honest bar.
 
+**Two further upstream facts, on the record.**
+
+- **`approve_deposit` is a permissioned gate that can reject.** The committee performs **sanctions
+  screening** alongside the 6-confirmation wait, so the on-ramp is not merely slow — it is
+  *refusable*, and a refusal is upstream of anything Aphotic controls. Say so rather than implying
+  the deposit path is permissionless end to end. (Only `confirm_deposit`, the final mint step, is
+  permissionless.)
+- **Hashi is pre-1.0 and upstream states it is not production-ready.** Aphotic runs on **testnet**
+  against **signet** and inherits that status. Never present either as production-grade.
+
 ---
 
 ## Hashi Move API
@@ -592,7 +602,7 @@ Bitcoin side = **signet** (block target ~10 min).
 
 | Flow | Planning figure | Steps |
 |---|---|---|
-| **Deposit** | **~70+ min** | BTC to the derived P2TR address (min 30 000 sats) → `deposit` registration → committee `approve_deposit` after **6 confirmations** → **mandatory 10-min delay** → permissionless `confirm_deposit` mints |
+| **Deposit** | **~70+ min** | BTC to the derived P2TR address (min 30 000 sats) → `deposit` registration → committee `approve_deposit` after **6 confirmations** *and* **sanctions screening** → **mandatory 10-min delay** → permissionless `confirm_deposit` mints |
 | **Withdrawal** | **~1.5–2 h** (plan for 2) | `request_withdrawal` (instant on Sui) → batch (~10 min or threshold) → Guardian + MPC threshold-Schnorr sign → broadcast → confirmed after 6 confirmations |
 
 Measured, one real 1 000 000-sat withdrawal on 2026-07-24 `[D10e]` — informative, **not** a promise:

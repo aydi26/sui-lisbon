@@ -5,12 +5,12 @@
 // @spec       aphotic.md §9 (fail-soft) · docs/RECON.md R7 (Hashi #[error] strings)
 // @rules      G7 G8
 // @depends    ../src/lib/tx.ts (F1)
-// @facts      APHOTIC_ABORTS IS EMPTY ON PURPOSE while the v2 Move package is being
-// @facts        written. Every entry in the v1 table is now a WRONG ANSWER, and a
-// @facts        confidently wrong explanation of a failed transaction is worse than
-// @facts        a raw string. These cases pin that behaviour so the table cannot be
-// @facts        "helpfully" repopulated with guesses: an unmapped code degrades to
-// @facts        the raw text, never to an invented meaning.
+// @facts      APHOTIC_ABORTS is now populated FROM THE v2 MODULES — every row was
+// @facts        transcribed from a `const E…: u64 = n;` block, never inferred from a
+// @facts        name. These cases pin both halves of the rule: a code the module
+// @facts        really declares gets its constant and its sentence, and a code it
+// @facts        does NOT declare (including the real gap at `clearing` code 1)
+// @facts        degrades to the raw abort text rather than to an invented meaning.
 // @facts      Hashi's own constants are `#[error]` BYTE-STRINGS, so its abort codes
 // @facts        are CLEVER (high bit set) and encode a constant index plus a line
 // @facts        number — NOT a value we may interpret. We recognise them only by
@@ -56,14 +56,59 @@ describe('parseMoveAbort', () => {
     expect(abort?.explanation).toBeNull();
   });
 
-  it('assigns NO meaning to an Aphotic code while the table is empty', () => {
-    // The v2 package is a rewrite. Until its error constants exist, a mapped
-    // explanation would be a fabrication, so there are none.
-    expect(Object.keys(APHOTIC_ABORTS)).toHaveLength(0);
-    for (const code of [1, 2, 4, 10]) {
-      const abort = parseMoveAbort(vaultAbort(code));
-      expect(abort?.constantName).toBeNull();
-      expect(abort?.explanation).toBeNull();
+  it('maps an Aphotic code to the constant that module actually declares', () => {
+    // Transcribed from move/sources/vault.move's `const E…: u64 = n;` block.
+    const abort = parseMoveAbort(vaultAbort(15));
+    expect(abort?.constantName).toBe('ENotYetPriced');
+    expect(abort?.explanation).toMatch(/has not been priced yet/i);
+  });
+
+  it('keys the table by MODULE, because code 2 means different things per module', () => {
+    expect(parseMoveAbort(vaultAbort(2))?.constantName).toBe('EPaused');
+    const batch = parseMoveAbort(
+      'MoveAbort(MoveLocation { module: 0x148a11::batch, function: 7, instruction: 3 }, 2) in command 0',
+    );
+    expect(batch?.constantName).toBe('ETooEarly');
+  });
+
+  it('leaves clearing code 1 UNMAPPED, because clearing.move has no code 1', () => {
+    // The gap in that module's constants is real. Filling it would be a guess.
+    const abort = parseMoveAbort(
+      'MoveAbort(MoveLocation { module: 0x148a11::clearing, function: 2, instruction: 1 }, 1) in command 0',
+    );
+    expect(abort?.constantName).toBeNull();
+    expect(abort?.explanation).toBeNull();
+  });
+
+  it('degrades an unknown code to raw text rather than inventing a meaning', () => {
+    const abort = parseMoveAbort(vaultAbort(9_999));
+    expect(abort?.constantName).toBeNull();
+    expect(abort?.explanation).toBeNull();
+    expect(describeTxError(new Error(vaultAbort(9_999))).message).toMatch(/abort code 9999/);
+  });
+
+  it('declares no code a module does not', () => {
+    // Every mapped code must be a positive integer, and every module we key must
+    // be one of the ten v2 modules. A typo'd module name would silently never match.
+    const modules = new Set([
+      'vault',
+      'batch',
+      'clearing',
+      'notes',
+      'balance',
+      'caps',
+      'allocate',
+      'carry',
+      'oracle',
+      'events',
+    ]);
+    for (const [moduleName, table] of Object.entries(APHOTIC_ABORTS)) {
+      expect(modules.has(moduleName), `unknown module key "${moduleName}"`).toBe(true);
+      for (const [code, entry] of Object.entries(table)) {
+        expect(Number(code)).toBeGreaterThan(0);
+        expect(entry.name.startsWith('E')).toBe(true);
+        expect(entry.text.length).toBeGreaterThan(10);
+      }
     }
   });
 
@@ -100,11 +145,19 @@ describe('parseMoveAbort', () => {
 });
 
 describe('describeTxError', () => {
-  it('classifies a Move abort and names where it came from', () => {
+  it('classifies a Move abort and explains a MAPPED code in words', () => {
     const failure = describeTxError(new Error(vaultAbort(3)));
     expect(failure.kind).toBe('move-abort');
-    expect(failure.message).toMatch(/vault::claim_deposit/);
     expect(failure.abort?.code).toBe(3n);
+    expect(failure.abort?.constantName).toBe('EZeroAmount');
+    expect(failure.message).toMatch(/amount is zero/i);
+  });
+
+  it('names where an UNMAPPED abort came from, since it cannot explain it', () => {
+    const failure = describeTxError(new Error(vaultAbort(9_998)));
+    expect(failure.kind).toBe('move-abort');
+    expect(failure.message).toMatch(/vault::claim_deposit/);
+    expect(failure.message).toMatch(/Raw:/);
   });
 
   it('classifies a user rejection', () => {

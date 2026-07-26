@@ -313,6 +313,13 @@ public fun set_reveal_grace_ms(
 /// at 00:00 UTC. Saturating arithmetic throughout, so a clock far in the future cannot wrap.
 public fun next_boundary(now_ms: u64, cadence_ms: u64, offset_ms: u64): u64 {
     assert!(cadence_ms > 0, EBadParam);
+    // ⚠ REFINEMENT of the DESIGN-V2 §4 formula, stated rather than silent. Below `offset_ms`
+    // the subtraction saturates to zero and the formula would skip the FIRST boundary
+    // (`next_boundary(0, 12h, 6h)` would answer 18:00 instead of 06:00). Real timestamps are
+    // ~1.7e12 ms so production never enters that window, but a shared golden-vector twin must
+    // agree on every input, not merely on the reachable ones. For every `now_ms >= offset_ms`
+    // this returns exactly what the DESIGN-V2 formula returns.
+    if (now_ms < offset_ms) return offset_ms;
     let since = oracle::saturating_sub(now_ms, offset_ms);
     let periods = since / cadence_ms;
     oracle::saturating_add(offset_ms, oracle::saturating_mul(periods + 1, cadence_ms))
@@ -635,6 +642,13 @@ public fun set_state_for_testing(b: &mut Batch, next: u8) {
 #[test_only]
 public fun seal_approve_for_testing(id: vector<u8>, r: &BatchRegistry, c: &Clock) {
     seal_approve(id, r, c)
+}
+
+/// Release the live-batch slot without walking the state machine, so a table-driven suite can
+/// probe transition pairs without needing a settled batch for each row.
+#[test_only]
+public fun force_release_for_testing(r: &mut BatchRegistry) {
+    if (r.live_batches > 0) r.live_batches = r.live_batches - 1;
 }
 
 /// The BIG-ENDIAN encoding of the same identity — the trap DESIGN-V2 F1 records. It must NOT

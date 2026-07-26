@@ -209,17 +209,13 @@ public struct Fill has copy, drop, store {
     price: u64,
 }
 
-public struct Clearing has key {
-    id: UID,
-    vault_id: ID,
-    batch_id: u64,
-    stage: u8,
-    cursor: u64,
-    // ── loading ──
-    funding: vector<Funding>,
-    bids: vector<Entry>,
-    asks: vector<Entry>,
-    // ── pricing ──
+/// Stage-1 scratch state: the candidate price list and the two running scans that discover the
+/// uniform price. Grouped into its own struct ONLY because the Sui bytecode verifier caps a
+/// struct at 32 fields (`max_fields_in_struct`) and `Clearing` carries more state than that —
+/// `sui move build` does not run that check, so a flat `Clearing` compiles and then fails at
+/// publish with `VMVerificationOrDeserializationError`. No semantics live here.
+public struct Pricing has drop, store {
+    /// The distinct limit prices present, ASCENDING.
     candidates: vector<u64>,
     demand_remaining: u64,
     bid_scan: u64,
@@ -229,7 +225,11 @@ public struct Clearing has key {
     best_price: u64,
     best_vol: u64,
     best_gap: u64,
-    // ── allocation ──
+}
+
+/// Stages 2–4 scratch state: the cleared price and every running total the three allocation
+/// passes carry. Grouped for the same 32-field reason as `Pricing`.
+public struct Allocation has drop, store {
     clearing_price: u64,
     matched_base: u64,
     elig_bids: u64,
@@ -243,6 +243,24 @@ public struct Clearing has key {
     awarded_bid: u64,
     awarded_ask: u64,
     remainder_side: u8,
+}
+
+/// 19 fields — see `Pricing` for why the pricing and allocation blocks are nested rather than
+/// inline. The 32-field verifier cap applies to `Pricing` and `Allocation` too (9 and 13).
+public struct Clearing has key {
+    id: UID,
+    vault_id: ID,
+    batch_id: u64,
+    stage: u8,
+    cursor: u64,
+    // ── loading ──
+    funding: vector<Funding>,
+    bids: vector<Entry>,
+    asks: vector<Entry>,
+    // ── pricing (stage 1) ──
+    pricing: Pricing,
+    // ── allocation (stages 2–4) ──
+    alloc: Allocation,
     // ── rooting ──
     fills: vector<Fill>,
     fills_root: vector<u8>,
@@ -313,28 +331,32 @@ public fun begin<B, Q, S>(
         funding: vector[],
         bids: vector[],
         asks: vector[],
-        candidates: vector[],
-        demand_remaining: 0,
-        bid_scan: 0,
-        supply_acc: 0,
-        ask_scan: 0,
-        found: false,
-        best_price: 0,
-        best_vol: 0,
-        best_gap: 0,
-        clearing_price: 0,
-        matched_base: 0,
-        elig_bids: 0,
-        elig_asks: 0,
-        filled_bid: 0,
-        filled_ask: 0,
-        pro_qty_bid: 0,
-        pro_qty_ask: 0,
-        residual_bid: 0,
-        residual_ask: 0,
-        awarded_bid: 0,
-        awarded_ask: 0,
-        remainder_side: SIDE_BID,
+        pricing: Pricing {
+            candidates: vector[],
+            demand_remaining: 0,
+            bid_scan: 0,
+            supply_acc: 0,
+            ask_scan: 0,
+            found: false,
+            best_price: 0,
+            best_vol: 0,
+            best_gap: 0,
+        },
+        alloc: Allocation {
+            clearing_price: 0,
+            matched_base: 0,
+            elig_bids: 0,
+            elig_asks: 0,
+            filled_bid: 0,
+            filled_ask: 0,
+            pro_qty_bid: 0,
+            pro_qty_ask: 0,
+            residual_bid: 0,
+            residual_ask: 0,
+            awarded_bid: 0,
+            awarded_ask: 0,
+            remainder_side: SIDE_BID,
+        },
         fills: vector[],
         fills_root: vector[],
         quote_paid: 0,
@@ -526,46 +548,46 @@ fun finish_loading(c: &mut Clearing) {
         };
     };
 
-    c.candidates = out;
-    c.demand_remaining = total_bid_qty;
-    c.bid_scan = nb;
-    c.supply_acc = 0;
-    c.ask_scan = 0;
+    c.pricing.candidates = out;
+    c.pricing.demand_remaining = total_bid_qty;
+    c.pricing.bid_scan = nb;
+    c.pricing.supply_acc = 0;
+    c.pricing.ask_scan = 0;
     c.cursor = 0;
     c.stage = STAGE_PRICING;
-    if (c.candidates.is_empty()) finish_pricing(c);
+    if (c.pricing.candidates.is_empty()) finish_pricing(c);
 }
 
 // ── stage 1: uniform price discovery ────────────────────────────────────────
 
 fun price_step(c: &mut Clearing, budget: u64) {
-    let total = c.candidates.length();
+    let total = c.pricing.candidates.length();
     let mut used = 0;
     while (c.cursor < total && used < budget) {
-        let p = *c.candidates.borrow(c.cursor);
+        let p = *c.pricing.candidates.borrow(c.cursor);
 
         // Bids qualify while limit >= p. Sorted DESC, so the qualifying set is a PREFIX that
         // shrinks from the back as p rises.
-        while (c.bid_scan > 0 && c.bids.borrow(c.bid_scan - 1).limit_price < p) {
-            c.demand_remaining = c.demand_remaining - c.bids.borrow(c.bid_scan - 1).qty_sats;
-            c.bid_scan = c.bid_scan - 1;
+        while (c.pricing.bid_scan > 0 && c.bids.borrow(c.pricing.bid_scan - 1).limit_price < p) {
+            c.pricing.demand_remaining = c.pricing.demand_remaining - c.bids.borrow(c.pricing.bid_scan - 1).qty_sats;
+            c.pricing.bid_scan = c.pricing.bid_scan - 1;
         };
         // Asks qualify while limit <= p. Sorted ASC, so the qualifying set is a growing prefix.
         while (
-            c.ask_scan < c.asks.length() && c.asks.borrow(c.ask_scan).limit_price <= p
+            c.pricing.ask_scan < c.asks.length() && c.asks.borrow(c.pricing.ask_scan).limit_price <= p
         ) {
-            c.supply_acc = checked_add(c.supply_acc, c.asks.borrow(c.ask_scan).qty_sats);
-            c.ask_scan = c.ask_scan + 1;
+            c.pricing.supply_acc = checked_add(c.pricing.supply_acc, c.asks.borrow(c.pricing.ask_scan).qty_sats);
+            c.pricing.ask_scan = c.pricing.ask_scan + 1;
         };
 
-        let vol = min_u64(c.demand_remaining, c.supply_acc);
-        let gap = abs_diff_u64(c.demand_remaining, c.supply_acc);
+        let vol = min_u64(c.pricing.demand_remaining, c.pricing.supply_acc);
+        let gap = abs_diff_u64(c.pricing.demand_remaining, c.pricing.supply_acc);
         // Strict improvement only, and candidates ascend, so the lowest price wins every tie.
-        if (vol > 0 && (!c.found || vol > c.best_vol || (vol == c.best_vol && gap < c.best_gap))) {
-            c.found = true;
-            c.best_vol = vol;
-            c.best_gap = gap;
-            c.best_price = p;
+        if (vol > 0 && (!c.pricing.found || vol > c.pricing.best_vol || (vol == c.pricing.best_vol && gap < c.pricing.best_gap))) {
+            c.pricing.found = true;
+            c.pricing.best_vol = vol;
+            c.pricing.best_gap = gap;
+            c.pricing.best_price = p;
         };
 
         c.cursor = c.cursor + 1;
@@ -576,20 +598,20 @@ fun price_step(c: &mut Clearing, budget: u64) {
 }
 
 fun finish_pricing(c: &mut Clearing) {
-    if (!c.found) {
+    if (!c.pricing.found) {
         // No cross. A batch with no crossing interest still settles — spec §7.3 settles every
         // pass, with or without orders.
-        c.clearing_price = 0;
-        c.matched_base = 0;
-        c.elig_bids = 0;
-        c.elig_asks = 0;
+        c.alloc.clearing_price = 0;
+        c.alloc.matched_base = 0;
+        c.alloc.elig_bids = 0;
+        c.alloc.elig_asks = 0;
         c.cursor = 0;
         c.stage = STAGE_ROOTING;
         return
     };
 
-    let p = c.best_price;
-    c.clearing_price = p;
+    let p = c.pricing.best_price;
+    c.alloc.clearing_price = p;
 
     let mut demand = 0u64;
     let mut nb = 0;
@@ -604,9 +626,9 @@ fun finish_pricing(c: &mut Clearing) {
         na = na + 1;
     };
 
-    c.elig_bids = nb;
-    c.elig_asks = na;
-    c.matched_base = min_u64(demand, supply);
+    c.alloc.elig_bids = nb;
+    c.alloc.elig_asks = na;
+    c.alloc.matched_base = min_u64(demand, supply);
     c.cursor = 0;
     c.stage = STAGE_ALLOC_FULL;
 }
@@ -614,32 +636,32 @@ fun finish_pricing(c: &mut Clearing) {
 // ── stage 2: fill the strictly-inside orders, in canonical order ────────────
 
 fun alloc_full_step(c: &mut Clearing, budget: u64) {
-    let total = c.elig_bids + c.elig_asks;
+    let total = c.alloc.elig_bids + c.alloc.elig_asks;
     let mut used = 0;
     while (c.cursor < total && used < budget) {
-        let p = c.clearing_price;
-        let matched = c.matched_base;
-        if (c.cursor < c.elig_bids) {
+        let p = c.alloc.clearing_price;
+        let matched = c.alloc.matched_base;
+        if (c.cursor < c.alloc.elig_bids) {
             let i = c.cursor;
-            let remaining = matched - c.filled_bid;
+            let remaining = matched - c.alloc.filled_bid;
             let e = c.bids.borrow_mut(i);
             if (e.limit_price > p) {
                 let fill = min_u64(e.qty_sats, remaining);
                 e.fill_base = fill;
-                c.filled_bid = c.filled_bid + fill;
+                c.alloc.filled_bid = c.alloc.filled_bid + fill;
             } else {
-                c.pro_qty_bid = checked_add(c.pro_qty_bid, e.qty_sats);
+                c.alloc.pro_qty_bid = checked_add(c.alloc.pro_qty_bid, e.qty_sats);
             };
         } else {
-            let i = c.cursor - c.elig_bids;
-            let remaining = matched - c.filled_ask;
+            let i = c.cursor - c.alloc.elig_bids;
+            let remaining = matched - c.alloc.filled_ask;
             let e = c.asks.borrow_mut(i);
             if (e.limit_price < p) {
                 let fill = min_u64(e.qty_sats, remaining);
                 e.fill_base = fill;
-                c.filled_ask = c.filled_ask + fill;
+                c.alloc.filled_ask = c.alloc.filled_ask + fill;
             } else {
-                c.pro_qty_ask = checked_add(c.pro_qty_ask, e.qty_sats);
+                c.alloc.pro_qty_ask = checked_add(c.alloc.pro_qty_ask, e.qty_sats);
             };
         };
         c.cursor = c.cursor + 1;
@@ -647,8 +669,8 @@ fun alloc_full_step(c: &mut Clearing, budget: u64) {
     };
 
     if (c.cursor >= total) {
-        c.residual_bid = c.matched_base - c.filled_bid;
-        c.residual_ask = c.matched_base - c.filled_ask;
+        c.alloc.residual_bid = c.alloc.matched_base - c.alloc.filled_bid;
+        c.alloc.residual_ask = c.alloc.matched_base - c.alloc.filled_ask;
         c.cursor = 0;
         c.stage = STAGE_ALLOC_PRORATA;
     };
@@ -657,14 +679,14 @@ fun alloc_full_step(c: &mut Clearing, budget: u64) {
 // ── stage 3: pro-rate the orders sitting exactly at p* ──────────────────────
 
 fun alloc_prorata_step(c: &mut Clearing, budget: u64) {
-    let total = c.elig_bids + c.elig_asks;
+    let total = c.alloc.elig_bids + c.alloc.elig_asks;
     let mut used = 0;
     while (c.cursor < total && used < budget) {
-        let p = c.clearing_price;
-        if (c.cursor < c.elig_bids) {
+        let p = c.alloc.clearing_price;
+        if (c.cursor < c.alloc.elig_bids) {
             let i = c.cursor;
-            let residual = c.residual_bid;
-            let pool = c.pro_qty_bid;
+            let residual = c.alloc.residual_bid;
+            let pool = c.alloc.pro_qty_bid;
             let e = c.bids.borrow_mut(i);
             if (e.limit_price == p && pool > 0) {
                 let base = floor_mul_div(residual, e.qty_sats, pool);
@@ -672,12 +694,12 @@ fun alloc_prorata_step(c: &mut Clearing, budget: u64) {
                 e.frac =
                     ((residual as u128) * (e.qty_sats as u128)) - ((base as u128) * (pool as u128));
                 e.bumped = false;
-                c.awarded_bid = c.awarded_bid + base;
+                c.alloc.awarded_bid = c.alloc.awarded_bid + base;
             };
         } else {
-            let i = c.cursor - c.elig_bids;
-            let residual = c.residual_ask;
-            let pool = c.pro_qty_ask;
+            let i = c.cursor - c.alloc.elig_bids;
+            let residual = c.alloc.residual_ask;
+            let pool = c.alloc.pro_qty_ask;
             let e = c.asks.borrow_mut(i);
             if (e.limit_price == p && pool > 0) {
                 let base = floor_mul_div(residual, e.qty_sats, pool);
@@ -685,7 +707,7 @@ fun alloc_prorata_step(c: &mut Clearing, budget: u64) {
                 e.frac =
                     ((residual as u128) * (e.qty_sats as u128)) - ((base as u128) * (pool as u128));
                 e.bumped = false;
-                c.awarded_ask = c.awarded_ask + base;
+                c.alloc.awarded_ask = c.alloc.awarded_ask + base;
             };
         };
         c.cursor = c.cursor + 1;
@@ -694,7 +716,7 @@ fun alloc_prorata_step(c: &mut Clearing, budget: u64) {
 
     if (c.cursor >= total) {
         c.cursor = 0;
-        c.remainder_side = SIDE_BID;
+        c.alloc.remainder_side = SIDE_BID;
         c.stage = STAGE_ALLOC_REMAINDER;
     };
 }
@@ -704,7 +726,7 @@ fun alloc_prorata_step(c: &mut Clearing, budget: u64) {
 /// Index of the largest unbumped fraction at exactly p* on one side, canonical position
 /// breaking ties because the scan runs in canonical order and only a STRICT improvement wins.
 fun best_fraction(c: &Clearing, is_bid: bool): (bool, u64) {
-    let (n, p) = if (is_bid) (c.elig_bids, c.clearing_price) else (c.elig_asks, c.clearing_price);
+    let (n, p) = if (is_bid) (c.alloc.elig_bids, c.alloc.clearing_price) else (c.alloc.elig_asks, c.alloc.clearing_price);
     let mut found = false;
     let mut best_i = 0;
     let mut best_f = 0u128;
@@ -725,40 +747,40 @@ fun best_fraction(c: &Clearing, is_bid: bool): (bool, u64) {
 
 fun alloc_remainder_step(c: &mut Clearing, budget: u64) {
     let mut used = 0;
-    while (used < budget && c.remainder_side != SIDE_NONE) {
-        if (c.remainder_side == SIDE_BID) {
-            if (c.awarded_bid >= c.residual_bid) {
-                c.remainder_side = SIDE_ASK;
+    while (used < budget && c.alloc.remainder_side != SIDE_NONE) {
+        if (c.alloc.remainder_side == SIDE_BID) {
+            if (c.alloc.awarded_bid >= c.alloc.residual_bid) {
+                c.alloc.remainder_side = SIDE_ASK;
                 continue
             };
             let (ok, i) = best_fraction(c, true);
             if (!ok) {
-                c.remainder_side = SIDE_ASK;
+                c.alloc.remainder_side = SIDE_ASK;
                 continue
             };
             let e = c.bids.borrow_mut(i);
             e.fill_base = e.fill_base + 1;
             e.bumped = true;
-            c.awarded_bid = c.awarded_bid + 1;
+            c.alloc.awarded_bid = c.alloc.awarded_bid + 1;
         } else {
-            if (c.awarded_ask >= c.residual_ask) {
-                c.remainder_side = SIDE_NONE;
+            if (c.alloc.awarded_ask >= c.alloc.residual_ask) {
+                c.alloc.remainder_side = SIDE_NONE;
                 continue
             };
             let (ok, i) = best_fraction(c, false);
             if (!ok) {
-                c.remainder_side = SIDE_NONE;
+                c.alloc.remainder_side = SIDE_NONE;
                 continue
             };
             let e = c.asks.borrow_mut(i);
             e.fill_base = e.fill_base + 1;
             e.bumped = true;
-            c.awarded_ask = c.awarded_ask + 1;
+            c.alloc.awarded_ask = c.alloc.awarded_ask + 1;
         };
         used = used + 1;
     };
 
-    if (c.remainder_side == SIDE_NONE) {
+    if (c.alloc.remainder_side == SIDE_NONE) {
         c.cursor = 0;
         c.stage = STAGE_ROOTING;
     };
@@ -771,7 +793,7 @@ fun rooting_step(c: &mut Clearing, budget: u64) {
     let total = nb + c.asks.length();
     let mut used = 0;
     while (c.cursor < total && used < budget) {
-        let p = c.clearing_price;
+        let p = c.alloc.clearing_price;
         let is_bid = c.cursor < nb;
         let e = if (is_bid) *c.bids.borrow(c.cursor) else *c.asks.borrow(c.cursor - nb);
 
@@ -823,8 +845,8 @@ fun rooting_step(c: &mut Clearing, budget: u64) {
         events::emit_batch_cleared(
             c.vault_id,
             c.batch_id,
-            c.clearing_price,
-            c.matched_base,
+            c.alloc.clearing_price,
+            c.alloc.matched_base,
             c.fills_root,
         );
     };
@@ -962,9 +984,9 @@ public fun clearing_vault_id(c: &Clearing): ID { c.vault_id }
 
 public fun clearing_batch_id(c: &Clearing): u64 { c.batch_id }
 
-public fun clearing_price(c: &Clearing): u64 { c.clearing_price }
+public fun clearing_price(c: &Clearing): u64 { c.alloc.clearing_price }
 
-public fun matched_base_sats(c: &Clearing): u64 { c.matched_base }
+public fun matched_base_sats(c: &Clearing): u64 { c.alloc.matched_base }
 
 public fun fills_root(c: &Clearing): vector<u8> { c.fills_root }
 
@@ -989,11 +1011,11 @@ public fun bid_count(c: &Clearing): u64 { c.bids.length() }
 
 public fun ask_count(c: &Clearing): u64 { c.asks.length() }
 
-public fun candidate_count(c: &Clearing): u64 { c.candidates.length() }
+public fun candidate_count(c: &Clearing): u64 { c.pricing.candidates.length() }
 
-public fun eligible_bids(c: &Clearing): u64 { c.elig_bids }
+public fun eligible_bids(c: &Clearing): u64 { c.alloc.elig_bids }
 
-public fun eligible_asks(c: &Clearing): u64 { c.elig_asks }
+public fun eligible_asks(c: &Clearing): u64 { c.alloc.elig_asks }
 
 public fun bid_entry_at(c: &Clearing, i: u64): (u64, address, u64, u64, u64) {
     assert!(i < c.bids.length(), EIndexOutOfRange);
@@ -1095,28 +1117,8 @@ public fun destroy_for_testing(c: Clearing) {
         funding: _,
         bids: _,
         asks: _,
-        candidates: _,
-        demand_remaining: _,
-        bid_scan: _,
-        supply_acc: _,
-        ask_scan: _,
-        found: _,
-        best_price: _,
-        best_vol: _,
-        best_gap: _,
-        clearing_price: _,
-        matched_base: _,
-        elig_bids: _,
-        elig_asks: _,
-        filled_bid: _,
-        filled_ask: _,
-        pro_qty_bid: _,
-        pro_qty_ask: _,
-        residual_bid: _,
-        residual_ask: _,
-        awarded_bid: _,
-        awarded_ask: _,
-        remainder_side: _,
+        pricing: _,
+        alloc: _,
         fills: _,
         fills_root: _,
         quote_paid: _,

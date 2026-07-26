@@ -1,118 +1,308 @@
-# DEPLOY.md — shipping the app to Vercel
+# DEPLOY.md — shipping `app/` to Vercel
 
-> Purpose: the exact steps to put `app/` on Vercel, and the one class of mistake that will silently break it (build-time env inlining).
-> Read after: `docs/STATUS.md`. Only `app/` is deployed — `move/`, `lending/`, `sdk/` and `keeper/` are not web-servable.
+> Purpose: the exact steps to put `app/` on Vercel, and the one class of mistake that silently
+> breaks it (build-time env inlining).
+> Only `app/` is deployed — `move/`, `lending/`, `sdk/`, `clearing-rs/` and `keeper/` are not
+> web-servable.
 >
-> **Updated 2026-07-26 for the v2 pivot.** Everything mechanical in this file survives unchanged —
-> `vercel.json`, the `VITE_*` inlining trap, the Enoki/Google origin registration, the vendored
-> globe textures. What changed is **which routes exist** and **which ids the app is wired to**;
-> both are marked ⚠ below. The app is being rewritten by another agent while you read this, so
-> confirm the route list against `app/src/routes.tsx` before relying on it.
+> **Updated 2026-07-26.** Everything in this file was executed, not quoted. The live output of
+> each command is reproduced below it.
+
+## 0. Status of record
+
+| Thing | Value |
+|---|---|
+| Vercel project | `adrianverdes27-gmailcoms-projects/aphotic` (owner `aiden778`) |
+| Production alias | **https://aphotic-taupe.vercel.app** |
+| Git repo connected | `aydi26/sui-lisbon` — so a push to `main` also triggers a build |
+| Env vars pushed | 24 of 36 (the 12 empty ones are the unpublished v2 ids — see §3) |
+
+> ⚠ **The live production deploy is a `--prebuilt` bridge deploy** (2026-07-26). At the time it was
+> made, `app/src/lib/notes.ts:391` failed `tsc --noEmit`
+> (`TS2322: Type 'EventId | undefined' is not assignable to …`), which fails
+> `npm --prefix app run build` and therefore fails a normal Vercel build. `vite build` alone is
+> unaffected (esbuild strips types without checking them), so the bundle that is live is correct —
+> but it was produced locally and uploaded, bypassing the typecheck.
 >
-> ⚠ **Deployment is below the cut line.** `docs/BUILD-PLAN.md` puts Vercel in "do not start before
-> the line is green". Do not spend the last hour before a demo on a deploy.
+> **Once that error is fixed, go back to the normal path — one command, nothing else to undo:**
+>
+> ```bash
+> cd app && npm run build          # must be green FIRST
+> cd .. && npx vercel deploy --prod --yes
+> ```
+>
+> The committed `vercel.json` is what that command uses and it is correct. Delete `.vercel/output`
+> afterwards so no stale prebuilt bundle can be uploaded by accident.
 
-## What is deployed
+---
 
-Only the Vite SPA in `app/`. The Move package lives on Sui testnet; the keeper is a long-running Node process that must **not** be deployed to Vercel (it holds a signing key and runs a loop — a serverless platform is the wrong shape for it).
+## 1. THE TRAP — read this before anything else
 
-`app/` has **zero imports from `keeper/` or `move/`**, which is what makes this a single-directory deploy. Keep it that way, or update `.vercelignore` at the same time.
+**Vite inlines every `VITE_*` at BUILD time. Nothing reads them at runtime.**
 
-## Repo-level config (already committed)
+A variable that is missing from the Vercel project environment does **not** throw. It compiles to
+the empty string `""`, the bundle ships, the site loads, and the app renders as though the chain
+simply had no data. There is no stack trace, no 500, no red console line — just a product that
+looks broken in a way that reads like a chain problem.
+
+Three consequences, all of which have bitten this repo:
+
+1. **Changing a variable in the Vercel dashboard does nothing until you redeploy.** The value is
+   baked into `assets/index-*.js`. Editing it and refreshing the page changes nothing.
+2. **Every `VITE_*` value ends up in the public JavaScript bundle.** Only public values may go
+   there: the Enoki `enoki_public_…` key and the Google OAuth *client id* are public by design.
+   The Enoki `enoki_private_…` key, an OAuth *client secret*, and any Sui private key must never
+   be a `VITE_*` variable — see §7.
+3. **A build with no env at all still succeeds.** `npm run build` is green either way.
+
+The app's only defence is `app/src/config.ts` → `configProblems()`, which is rendered at the top of
+every screen and names each missing key with what it breaks (`blocking` vs `degraded`). Treat that
+banner as the deploy's smoke test: **if it lists anything on production, the deploy is not done.**
+
+---
+
+## 2. What is deployed, and the repo-level config
+
+Only the Vite SPA in `app/`. The keeper is a long-running Node process holding a signing key —
+a serverless platform is the wrong shape for it; see §8.
+
+Both config files live at the **repo root**, not in `app/`, because the Vercel Root Directory is
+`./` and `vercel.json` reaches into `app/` itself.
 
 | File | Role |
 |---|---|
-| `vercel.json` | Explicit install/build/output commands, SPA rewrites, cache + security headers. `framework: null` so no preset overrides them. |
-| `.vercelignore` | Keeps `move/`, `keeper/`, `docs/`, the Hashi source dumps and every `.env` out of the upload. |
-
-Key settings inside `vercel.json`:
+| `vercel.json` | Install/build/output commands, the SPA rewrite, cache + security headers. `"framework": null` so no preset overrides them. |
+| `.vercelignore` | Keeps `move/`, `lending/`, `keeper/`, `clearing-rs/`, `scripts/`, `docs/`, the test trees and every `.env` out of the upload. |
 
 ```jsonc
-"installCommand":   "npm --prefix app ci",     // needs app/package-lock.json (committed)
-"buildCommand":     "npm --prefix app run build", // tsc --noEmit && vite build
-"outputDirectory":  "app/dist",
-"rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]  // react-router BrowserRouter
+"installCommand":  "npm --prefix app ci",        // needs app/package-lock.json (committed)
+"buildCommand":    "npm --prefix app run build", // = tsc --noEmit && vite build
+"outputDirectory": "app/dist",
+"rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
 ```
 
-The catch-all rewrite is required: **every** app route is client-side with no file behind it. Vercel matches static files first, so `/assets/*`, `/fonts/*`, `/globe/*` and `/logos/*` are unaffected.
+### ⚠ LANDMINE: never set `cleanUrls: true`
 
-⚠ **The route list changed with the pivot.** v1 served `/deposit`, `/exit` and `/transparency`. The
-v2 app drops `/exit` (there is no pinned-exit flow any more) and adds the auction screens. The
-catch-all rewrite means **you do not need to change `vercel.json` when routes change** — but do
-confirm the current list in `app/src/routes.tsx` before writing it into a slide.
+It was set, and it broke every deep link. `cleanUrls` turns `/index.html` into a **308 redirect** to
+`/`, so the rewrite's destination stops resolving to a file. The symptom is deceptive — the home
+page works and every other route 404s:
 
-## One-time setup
+```
+$ curl -o /dev/null -w "%{http_code}" https://aphotic-taupe.vercel.app/vault
+404                              # with cleanUrls: true
+200                              # after removing it
+```
 
-1. **Import the repo** at vercel.com → New Project → `aydi26/sui-lisbon`.
-2. **Leave Root Directory as `./`** — `vercel.json` already points at `app/`. (If you instead set Root Directory to `app`, delete the root `vercel.json` or its paths will be wrong.)
-3. **Add the environment variables** (below) for the Production, Preview and Development scopes.
-4. Deploy.
+If deep links 404 again, check that key first.
 
-## Environment variables — the thing that silently breaks
+### The rewrite and the routes
 
-Vite **inlines every `VITE_*` value at build time**. They are not read at runtime. Two consequences:
+Every route in `app/src/routes.tsx` is client-side with no file behind it, so the catch-all rewrite
+is mandatory. Vercel matches real static files *before* rewrites, so `/assets/*`, `/fonts/*`,
+`/globe/*` and `/logos/*` are unaffected.
 
-- Changing a variable in the Vercel dashboard does nothing until you **redeploy**.
-- Every `VITE_*` value ends up **in the public JavaScript bundle**. Only ever put public values there. The Enoki *private* key, a Google OAuth *client secret*, and any Sui private key must never be a `VITE_*` variable.
+**Because the rewrite is a catch-all, `vercel.json` never needs editing when routes change.** Read
+the current route list from `app/src/routes.tsx` — today it is `/`, `/vault`, `/batch`, `/verify`.
 
-Copy the values from `app/.env.example`. The ones that actually matter:
+### Cache headers
 
-| Variable | Value | Note |
-|---|---|---|
-| `VITE_DEMO_MODE` | `mock` until the vault is live, then `live` | `mock` renders every screen from fixtures with zero network |
-| `VITE_SUI_GRPC_URL` | `https://fullnode.testnet.sui.io:443` | gRPC v2 — the default read transport |
-| `VITE_SUI_JSONRPC_URL` | `https://rpc-testnet.suiscan.xyz:443` | mirror; the official fullnode returns 404 for JSON-RPC |
-| `VITE_ENOKI_API_KEY` | `enoki_public_…` | **public** key only |
-| `VITE_ZKLOGIN_CLIENT_ID` | Google OAuth Web client id | public |
-| `VITE_APHOTIC_PACKAGE_ID` / `VITE_VAULT_ID` | filled at publish time | empty ⇒ the app stays in mock. ⚠ **Nothing is published for v2** — see `docs/DEPLOYED.md` |
-| `VITE_WALRUS_AGGREGATOR` / `VITE_WALRUS_PUBLISHER` | `https://aggregator.walrus-testnet.walrus.space` / `…/publisher…` | v2 uses Walrus for the **encrypted order blobs**, so the app now needs the *publisher* too, not only the aggregator |
+- `/assets/*` and `/fonts/*` — `max-age=31536000, immutable`. Safe: Vite content-hashes them.
+- `/globe/*`, `/logos/*` — 7 days. Not hashed, but they change ~never.
+- **everything else — `no-cache, no-store, must-revalidate`.** This is what stops a stale
+  `index.html` from pinning a browser to a dead `assets/index-<oldhash>.js` after a redeploy. It is
+  written as a negative lookahead (`/((?!assets/|fonts/|globe/|logos/).*)`) so that no path is ever
+  matched by two competing `Cache-Control` rules.
 
-⚠ **New for v2:** the app is a Seal **encryptor**, so it needs the key-server object ids and the
-threshold. `@mysten/seal@1.3.4` requires explicit `serverConfigs` — it exports no
-`getAllowlistedKeyServers` and ships no default set. Committee is **5 operators, t = 3, and it
-excludes Enoki** (`docs/FACTS.md#seal-identity`). Enoki may still be used for zkLogin onboarding;
-what it must never be is a member of the Seal committee, because it would then hold both identity
-linkage and a decryption share.
+### ⚠ `.vercelignore` and `sdk/src`
 
-⚠ **Also new for v2:** the app resolves `sdk/` through `app/vite.config.ts` `resolve.alias`. If a
-Vercel build fails to resolve `sdk/*`, that alias is the first thing to check — `sdk/` has no build
-step and is consumed as TypeScript source.
+`app/tsconfig.json` maps `"@aphotic/sdk/*" → "../sdk/src/*.ts"` and includes `src`, so the moment
+any file under `app/src` imports `@aphotic/sdk`, **`tsc --noEmit` reaches outside `app/`**.
+`sdk/src/` is therefore deliberately *not* excluded. Excluding it turns a green local build into a
+red Vercel build with a confusing `TS2307: Cannot find module`.
 
-Everything else has a correct default in `app/src/config.ts`.
+---
 
-## Enoki / Google must know the deployed origin
+## 3. Environment variables — never transcribe them
 
-zkLogin sign-in fails with `redirect_uri_mismatch` (or an Enoki 403) unless the **deployed origin** is registered in both places, in addition to `http://localhost:5173`:
+> **The id list is NOT reproduced in this file, on purpose.** A transcribed object id goes stale
+> silently the moment a package is republished. `app/.env.example` is the single source; read it.
 
-1. **Enoki portal** → your app → allowed origins → add `https://<your-project>.vercel.app` (and any custom domain).
-2. **Google Cloud console** → your OAuth client → *Authorized JavaScript origins* **and** *Authorized redirect URIs* → same origin.
+`app/.env.example` is the canonical list of every `VITE_*` the build consumes. It is annotated:
+`[RECON Rn]` = verified live on testnet, do not re-derive; `[v2]` = filled in at publish time.
 
-Vercel preview deployments get a **different hostname per commit**, which cannot be pre-registered. Either add a stable preview alias and register that, or accept that zkLogin only works on production and on localhost.
-
-Verify at any time:
+Print the current full list at any moment:
 
 ```bash
-node scripts/check-enoki.mjs https://<your-project>.vercel.app
+grep -oE '^VITE_[A-Z0-9_]+' app/.env.example        # every variable the build reads
+grep -nE '^VITE_[A-Z0-9_]+=\s*(#|$)' app/.env.example   # the ones still blank
 ```
 
-## Verify a deploy
+`app/src/config.ts` supplies a correct default for the network, Hashi, DeepBook, Walrus-aggregator
+and explorer values, so a missing one of those degrades rather than breaks. The variables with **no
+default** — and therefore the ones a deploy must actually carry — are exactly the keys listed by
+`configProblems()` in `app/src/config.ts`: the eight Aphotic v2 object ids, the Seal committee ids,
+the Walrus publisher, and the two zkLogin values.
+
+### Push the whole set to Vercel in one shot
+
+This reads `app/.env.local` (gitignored, never uploaded) and pushes every non-empty value to the
+Production and Preview scopes. Empty values are skipped — an unset variable and an empty one are
+the same thing to Vite.
 
 ```bash
-curl -sI https://<project>.vercel.app/            | head -1   # 200
-curl -sI https://<project>.vercel.app/<any-route> | head -1   # 200 (rewrite → index.html)
-curl -sI https://<project>.vercel.app/logos/aphotic-mark.svg  # 200
-curl -sI https://<project>.vercel.app/globe/earth-blue-marble.jpg  # 200, cached
+while IFS= read -r line; do
+  case "$line" in VITE_*=*) ;; *) continue;; esac
+  k="${line%%=*}"; v="${line#*=}"
+  v="$(printf '%s' "$v" | sed -E 's/[[:space:]]+#.*$//; s/[[:space:]]+$//')"
+  [ -z "$v" ] && { echo "SKIP (empty) $k"; continue; }
+  printf '%s' "$v" | npx vercel env add "$k" production --force >/dev/null 2>&1 &&
+  printf '%s' "$v" | npx vercel env add "$k" preview    --force >/dev/null 2>&1 &&
+  echo "OK   $k" || echo "FAIL $k"
+done < app/.env.local
 ```
 
-The globe textures are **vendored into `app/public/globe/`** on purpose — the upstream landing page fetched them from jsDelivr at runtime, which makes the hero fail on venue wifi. If `/globe/*` 404s, the hero renders a black sphere.
+Observed 2026-07-26: `added=24 skipped=12`. The 12 skipped are the unpublished v2 ids
+(`VITE_APHOTIC_PACKAGE_ID`, `VITE_VAULT_ID`, `VITE_GOVERNANCE_ID`, `VITE_BATCH_REGISTRY_ID`,
+`VITE_NOTE_TREE_ID`, `VITE_NULLIFIER_SET_ID`, `VITE_BALANCE_LEDGER_ID`,
+`VITE_ADAPTER_ALLOWLIST_ID`, …) plus three intentionally-blank ones.
 
-## Not deployed here
+**When the v2 package is published**, the ids land in `app/.env.example` / `app/.env.local`. Rerun
+the loop above and then **redeploy** — §5. Setting them without redeploying changes nothing (§1).
 
-- **The keeper** — needs a persistent process and a signing key. Run it on a VM/container, or locally during the demo. It holds a `KeeperCap`, which is `key`-only and epoch-bound, so a compromised deployment cannot name a destination — but it is still a signing key and Vercel is the wrong shape for it.
-- **`sdk/`, `move/`, `lending/`** — libraries and on-chain packages, nothing to serve.
-- **`VITE_KEEPER_VERIFY_URL`** defaults to `http://localhost:8787`. On a deployed site that endpoint is unreachable, so any "re-run this off-chain" affordance reports the keeper as offline. Point it at a public keeper URL if you expose one.
+---
 
-> **A deployed site does not need the keeper to be useful.** Everything on the auction's critical
-> path — close, reveal, clear, settle, claim — is **permissionless**, so the app can drive it
-> directly from a user's wallet. `verify_fill` is an on-chain read. If the keeper is unreachable,
-> the site should degrade to "nobody is optimising gas for you", not to "the product is down".
+## 4. Enoki / Google must know the deployed origin
+
+zkLogin returns a 403 (Enoki) or `redirect_uri_mismatch` (Google) unless the **deployed origin** is
+registered in **both** places, alongside `http://localhost:5173`.
+
+1. **Enoki portal** — https://portal.enoki.mystenlabs.com → your app → *Allowed origins* → add
+   `https://aphotic-taupe.vercel.app` (and any custom domain).
+2. **Google Cloud console** → APIs & Services → Credentials → your OAuth 2.0 **Web application**
+   client. The same origin must appear in **both** lists:
+   - **Authorised JavaScript origins** → `https://aphotic-taupe.vercel.app`
+   - **Authorised redirect URIs** → `https://aphotic-taupe.vercel.app`
+
+   Registering only the first is the classic mistake: sign-in then fails with
+   `redirect_uri_mismatch`. Google also refuses any non-`localhost` `http://` origin.
+3. Confirm the Google client id is registered under the Enoki app's Google provider.
+
+Verify — the script takes any origin, and normalises a bare host, a trailing slash or a deep link
+down to the `scheme://host[:port]` form Enoki actually stores:
+
+```bash
+node scripts/check-enoki.mjs https://aphotic-taupe.vercel.app
+node scripts/check-enoki.mjs aphotic-taupe.vercel.app          # same thing
+node scripts/check-enoki.mjs http://localhost:5173             # default
+node scripts/check-enoki.mjs <origin> --key=enoki_public_…     # without app/.env.local
+```
+
+Real output, 2026-07-26:
+
+```
+Enoki configuration check
+  key       enoki_public_eaf3a…7b06
+  origin    https://aphotic-taupe.vercel.app
+
+  PASS  api key accepted by Enoki
+  PASS  google provider registered — client id 901837773954-8irovvde51i7o2t9qgnv6k9ttm399fr5.apps.googleusercontent.com
+  PASS  VITE_ZKLOGIN_CLIENT_ID matches the portal
+  FAIL  https://aphotic-taupe.vercel.app is not allow-listed (registered: http://localhost:5173)
+```
+
+⇒ **Action outstanding.** Until that origin is added in the Enoki portal *and* the Google client,
+Google sign-in is dark on production. A browser wallet still works, and `configProblems()` reports
+this as `degraded`, not `blocking`.
+
+Vercel **preview** deployments get a different hostname per commit and cannot be pre-registered.
+Either register a stable preview alias, or accept that zkLogin works on production and localhost
+only.
+
+---
+
+## 5. Deploy
+
+The project is already linked (`.vercel/` at the repo root) and the CLI is authenticated as
+`aiden778`. From the repo root:
+
+```bash
+npx vercel deploy --prod --yes      # production → the aphotic-taupe alias
+npx vercel deploy --yes             # preview → a per-deploy hostname
+```
+
+If the CLI is not authenticated in your shell, `npx vercel login` first (it opens a browser), or
+export a token: `export VERCEL_TOKEN=…` and append `--token "$VERCEL_TOKEN"` to every command.
+
+A deploy runs `installCommand` then `buildCommand` **on Vercel**, so a broken `app/src` fails the
+deploy, not just your laptop. Check locally first — it is 12 s versus 2 min:
+
+```bash
+cd app && npm run build
+```
+
+---
+
+## 6. Verify a deploy
+
+```bash
+U=https://aphotic-taupe.vercel.app
+for p in / /vault /batch /verify /logos/aphotic-mark.svg /globe/earth-blue-marble.jpg; do
+  printf '%s  %s\n' "$(curl -s -o /dev/null -w '%{http_code}' "$U$p")" "$p"
+done
+```
+
+All six must be `200`. `/vault`, `/batch` and `/verify` return `200` only because of the rewrite —
+a `404` there means the rewrite is broken (first suspect: `cleanUrls`, §2).
+
+Then, by eye on the live site:
+
+- **the config banner** at the top of every screen. It must either be absent, or list exactly the
+  variables you know are unset. If it names something you *did* set, you set it after the last
+  build — redeploy.
+- **the globe** on `/`. Textures are vendored into `app/public/globe/` on purpose: the upstream
+  landing page fetched them from jsDelivr at runtime, which fails on venue wifi. A black sphere
+  means `/globe/*` is 404ing.
+- **bundle size.** Expected shape, from the real build:
+
+  | chunk | raw | gzip |
+  |---|---|---|
+  | `assets/index-*.js` | 838 kB | 262 kB |
+  | `assets/globe-*.js` | 1 834 kB | 522 kB |
+  | `assets/LandingPage-*.js` | 36 kB | 12 kB |
+
+  The `globe` chunk is split out **deliberately** in `app/vite.config.ts` (`three`, `three-globe`,
+  `globe.gl`) and `LandingPage` is `React.lazy`'d in `routes.tsx`, so **`/vault` never downloads
+  the hero**. If `index-*.js` jumps past ~1 MB, something static-imported the landing page — do not
+  "fix" it by merging the chunks.
+
+  Vitest 3 loads `app/vitest.config.ts` **instead of** `app/vite.config.ts`. Keep them separate;
+  merging them silently changes what the production build emits.
+
+---
+
+## 7. Secrets — the hard line
+
+| Value | May it be a `VITE_*`? |
+|---|---|
+| `enoki_public_…` API key | **Yes** — public by design, it ships in the bundle. |
+| `enoki_private_…` API key | **Never.** `scripts/check-enoki.mjs` refuses one outright. |
+| Google OAuth **client id** | Yes — public. |
+| Google OAuth **client secret** | **Never.** |
+| Any Sui private key / keystore | **Never.** |
+
+`app/.env.local` is covered by both `.gitignore` and `.vercelignore`. No env value is committed to
+any file in this repo — `app/.env.example` holds only public ids and blanks.
+
+---
+
+## 8. Not deployed here
+
+- **The keeper** — needs a persistent process and a signing key. Run it on a VM or locally during
+  the demo. Nothing on the auction's critical path needs it: close, reveal, clear, settle and claim
+  are all permissionless, and `verify_fill` is an on-chain read. A deployed site with no keeper
+  should degrade to "nobody is optimising gas for you", not to "the product is down".
+- **`sdk/`, `move/`, `lending/`, `clearing-rs/`** — libraries and on-chain packages, nothing to
+  serve. (`sdk/src` is still uploaded — see §2.)
+- **`VITE_KEEPER_VERIFY_URL`**, if reintroduced, defaults to `http://localhost:8787`, which is
+  unreachable from a deployed site. Any "re-run this off-chain" affordance will report the keeper
+  as offline.

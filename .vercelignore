@@ -1,26 +1,48 @@
 # Vercel only builds app/ (see vercel.json). Everything below is dead weight in
 # the deployment upload — keep it out so deploys stay fast.
 #
-# app/ is fully self-contained: it has NO imports from keeper/ or move/.
-# If that ever changes, remove the corresponding line here or the build breaks.
+# ⚠ Before adding a line here, ask: does `npm --prefix app run build`
+#   (= `tsc --noEmit && vite build`) touch it?  app/tsconfig.json has
+#   "include": ["src", "vite.config.ts"] and a `paths` mapping
+#   "@aphotic/sdk/*" -> "../sdk/src/*.ts". So `sdk/src/` is REACHABLE FROM THE
+#   TYPECHECK the moment any file under app/src imports @aphotic/sdk — which is
+#   why sdk/src is deliberately NOT excluded below. Excluding it would turn a
+#   green local build into a red Vercel build with a confusing TS2307.
 
+# ── On-chain packages and off-chain services: nothing to serve ───────────────
 move/
+lending/
 keeper/
+clearing-rs/
 scripts/
 .hashi_src/
 .hashi_raw/
 
-# Reference docs — not served by the app.
-docs/
-HASHI_INTEGRATION.md
-BTC_FIXED_INCOME.md
-CLAUDE.md
-README (8).md
+# ── sdk/: keep src (typecheck reaches it, see above), drop the rest ──────────
+sdk/test/
+sdk/fixtures/
+sdk/scripts/
+sdk/vitest.config.ts
 
-# Never upload local state or secrets (also covered by .gitignore).
+# ── app/: things the production build never reads ────────────────────────────
+app/test/
+app/vitest.config.ts
+app/probe-l2.mjs
+
+# ── Reference docs — not served by the app ──────────────────────────────────
+docs/
+*.md
+!app/**/*.md
+
+# ── Never upload local state or secrets (also covered by .gitignore) ─────────
+# app/.env.local holds the Enoki PUBLIC key and the on-chain ids. It must not
+# ride along: on Vercel the VITE_* values come from the project environment,
+# because Vite inlines them during `vite build` (see docs/DEPLOY.md).
 **/node_modules
 **/.env
 **/.env.*
 !**/.env.example
 **/dist
 move/build
+lending/build
+target/

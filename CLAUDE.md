@@ -73,10 +73,16 @@ but needs a market.
 
 | File | What it is |
 |---|---|
-| `HASHI_INTEGRATION.md` | The v1 "Bitcoin Dark Vault" design (maker-first DeepBook market making, pinned exits, peg-flow signal). **Dead.** |
-| `README (8).md` | The v1 base product design (SUI/USDC lineage). **Dead.** |
-| `BTC_FIXED_INCOME.md` | A shelved alternative ("Meridian" bond). Never was the build. |
-| `docs/DAY-ONE.md` · `docs/DAY-ONE-RESULTS.md` | The v1 pre-code verification checklist and its execution record. The **plan** is superseded; the **RESULTS are still the receipts** behind the `[D<n>]` citations in `docs/FACTS.md` and `docs/RECON.md`. Read as evidence, not as instructions. |
+| ~~`HASHI_INTEGRATION.md`~~ | The v1 "Bitcoin Dark Vault" design. **DELETED 2026-07-26.** Its Hashi content was audited claim-by-claim against `docs/RECON.md` + `docs/FACTS.md`, which are a strict superset of it — and which **contradict** it in five places (event names, the `@mysten/hashi` SDK surface, config/queue getter visibility, `cancel_withdrawal`'s sender binding, and the limiter scalars, which it had wrong by ~100×). The only two facts it uniquely held were transplanted into `docs/FACTS.md#hbtc` and `#latencies`: **`approve_deposit` performs sanctions screening**, and **Hashi is pre-1.0 / not production-ready**. Recoverable from git if ever needed. |
+| ~~`README (8).md`~~ | The v1 base product design (SUI/USDC lineage). **DELETED 2026-07-26** — no unique ground truth. |
+| ~~`BTC_FIXED_INCOME.md`~~ | A shelved alternative ("Meridian" bond) that was never the build. **DELETED 2026-07-26.** |
+| `docs/DAY-ONE.md` · `docs/DAY-ONE-RESULTS.md` | The v1 pre-code verification checklist and its execution record. The **plan** is superseded; the **RESULTS are still the receipts** behind the `[D<n>]` citations in `docs/FACTS.md` and `docs/RECON.md`. **Kept deliberately** — read as evidence, not as instructions. |
+
+> Why these three were deleted rather than banner-marked: they are tracked in git, so deletion is
+> recoverable, whereas a superseded doc left in the tree is *found by grep* and half-believed. The
+> deciding factor was that `HASHI_INTEGRATION.md` was not merely stale but **actively wrong** in
+> five load-bearing places; a SUPERSEDED banner does not stop a coding agent from lifting a
+> plausible-looking event name out of it.
 
 `docs/GOLDEN-RULES.md`, `docs/KEEPER.md`, `docs/APP.md` and `docs/ULTRACODE-BRIEF.md` **were
 deleted** in the pivot. The surviving rules are the ten below.
@@ -241,6 +247,8 @@ keeper and app still contain the v1 product. Nothing about the cut line is prove
   server; using it for both hands one party identity linkage **and** a decryption share. Committee
   is `n = 5` across **5 distinct operators**, `t = 3` (count operators, not servers). Never fall
   back to plaintext.
-- **`BTC_FIXED_INCOME.md` is a shelved alternative. Do not build it.**
+- **The "Meridian" fixed-income bond is a shelved alternative. Do not build it.** Its design doc
+  (`BTC_FIXED_INCOME.md`) was deleted on 2026-07-26; recover it from git only as the option not
+  taken, never as a spec.
 - On any conflict, apply the resolution order at the top of this file. If a value is unknown, mark
   it and log the owner; never invent one.

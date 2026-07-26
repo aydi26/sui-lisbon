@@ -693,6 +693,32 @@ public fun set_min_deposit<B, Q, S>(v: &mut Vault<B, Q, S>, cap: &AdminCap, min_
     v.params.min_deposit_sats = min_sats;
 }
 
+/// Rotate the keeper. Requires `&AdminCap`; a keeper can never rotate its own capability.
+/// Bumping the epoch retires every outstanding `KeeperCap` in the same transaction, including
+/// one held at an address the admin cannot reach.
+public fun rotate_keeper<B, Q, S>(
+    v: &mut Vault<B, Q, S>,
+    cap: &AdminCap,
+    new_keeper: address,
+    ctx: &mut TxContext,
+) {
+    caps::rotate_keeper_cap(&mut v.caps, cap, new_keeper, ctx);
+}
+
+/// Two-step admin handover, surfaced on the vault so the registry never has to be borrowed
+/// mutably from outside. Step 2 is `accept_admin_transfer`, callable only by the nominee.
+public fun initiate_admin_transfer<B, Q, S>(
+    v: &mut Vault<B, Q, S>,
+    cap: &AdminCap,
+    new_admin: address,
+) {
+    caps::initiate_admin_transfer(&mut v.caps, cap, new_admin);
+}
+
+public fun accept_admin_transfer<B, Q, S>(v: &mut Vault<B, Q, S>, ctx: &mut TxContext) {
+    caps::accept_admin_transfer(&mut v.caps, ctx);
+}
+
 /// Fees accrue on MATCHED VOLUME (spec §8), never on AUM. The bound exists so a governance
 /// mistake cannot make the auction confiscatory.
 public fun set_fee_params<B, Q, S>(

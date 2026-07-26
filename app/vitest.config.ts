@@ -21,11 +21,19 @@
 // @verify     cd app && npm test
 // └── END CONTRACT ───────────────────────────────────────────────────────────
 
+import { fileURLToPath } from 'node:url';
+
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vitest/config';
 
+/** Mirrors vite.config.ts — vitest loads THIS file, so the alias must be repeated. */
+const SDK_SRC = fileURLToPath(new URL('../sdk/src', import.meta.url));
+
 export default defineConfig({
   plugins: [react()],
+  resolve: {
+    alias: [{ find: /^@aphotic\/sdk\/(.*)$/, replacement: `${SDK_SRC}/$1.ts` }],
+  },
   define: {
     global: 'globalThis',
   },

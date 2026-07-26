@@ -16,6 +16,17 @@
 // @facts        is non-empty and lacks sui:<configured network> is on the wrong
 // @facts        network; we say so instead of letting the abort surface in-wallet.
 // @facts        An EMPTY list means the wallet declined to say — we do not guess.
+// @facts      SHAPE: a sticky-headed card (help · "Connect Wallet" · dismiss) over
+// @facts        hairline-separated rows, each `[icon] [name] [pill] [chevron]` —
+// @facts        the .ap-panel / .ap-panel-head / .ap-rows / .ap-rowline grammar
+// @facts        already in theme.css. Borrowed shape, our own tokens: no Tailwind,
+// @facts        no @reown/appkit, no new dependency.
+// @facts      ⚠ THE "installed" PILL IS A CLAIM, and it is the one thing on this
+// @facts        card a user acts on. It renders ONLY for wallets wallet-standard
+// @facts        actually reported to this page. Nothing else may ever wear it.
+// @facts      The Google row deliberately sits BELOW a rule and outside the wallet
+// @facts        list: zkLogin is a different trust story (a salt provider and an
+// @facts        OAuth issuer are involved) and must not read as one more wallet.
 // @implements export function WalletGate(props: WalletGateProps): JSX.Element
 // @forbidden  '@mysten/enoki/react' — every hook there is deprecated
 // @forbidden  rendering a screen's write controls before a wallet is connected
@@ -55,6 +66,66 @@ function WalletIcon({ wallet }: { readonly wallet: WalletLike }) {
     <span className="ap-wallet-icon ap-wallet-icon--mono" aria-hidden>
       {wallet.name.slice(0, 1).toUpperCase()}
     </span>
+  );
+}
+
+/** The chevron every row ends in. Inline so the card needs no icon dependency. */
+function Chevron() {
+  return (
+    <svg className="ap-row-cue" viewBox="0 0 16 16" width="14" height="14" aria-hidden focusable="false">
+      <path
+        d="M6 3.5 10.5 8 6 12.5"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function HelpMark() {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden focusable="false">
+      <circle cx="8" cy="8" r="6.25" fill="none" stroke="currentColor" strokeWidth="1.25" />
+      <path
+        d="M6.4 6.2a1.6 1.6 0 1 1 1.9 1.7v1"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.25"
+        strokeLinecap="round"
+      />
+      <circle cx="8.3" cy="11.2" r="0.7" fill="currentColor" />
+    </svg>
+  );
+}
+
+/** The Google mark, drawn in one colour: this is a row cue, not a brand lockup. */
+function GoogleMark() {
+  return (
+    <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden focusable="false">
+      <path
+        d="M14.5 8.15c0-.46-.04-.9-.12-1.32H8v2.5h3.65a3.12 3.12 0 0 1-1.35 2.05v1.7h2.18c1.28-1.18 2.02-2.92 2.02-4.93Z"
+        fill="currentColor"
+        opacity="0.9"
+      />
+      <path
+        d="M8 15c1.83 0 3.36-.6 4.48-1.64l-2.18-1.69c-.6.41-1.38.65-2.3.65-1.77 0-3.27-1.19-3.8-2.8H1.95v1.76A6.99 6.99 0 0 0 8 15Z"
+        fill="currentColor"
+        opacity="0.65"
+      />
+      <path
+        d="M4.2 9.52a4.2 4.2 0 0 1 0-2.68V5.08H1.95a7 7 0 0 0 0 6.2L4.2 9.52Z"
+        fill="currentColor"
+        opacity="0.45"
+      />
+      <path
+        d="M8 3.98c1 0 1.89.34 2.6 1.02l1.93-1.93A6.9 6.9 0 0 0 8 1.36 6.99 6.99 0 0 0 1.95 5.08L4.2 6.84c.53-1.6 2.03-2.86 3.8-2.86Z"
+        fill="currentColor"
+        opacity="0.8"
+      />
+    </svg>
   );
 }
 

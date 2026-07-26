@@ -73,18 +73,45 @@ const DEFAULTS = {
   PYTH_BTC_USD_FEED_ID: '0xf9c0172ba10dfa4d19088d94f5bf61d3b54d5bd7483a322a982e1373ee8ea31b',
   HERMES_ENDPOINT: 'https://hermes-beta.pyth.network',
 
-  // ── OUR OWN deployment (docs/DEPLOYED.md, published 2026-07-25) ────────────
+  // ── OUR OWN deployment — APHOTIC v2 ───────────────────────────────────────
   // Everything above is someone else's; everything here is ours. Overridable
   // from keeper/.env so a redeploy needs no code change.
-  // v3 — republished without the owner escape hatch. Fresh publish, so these two
-  // are equal today. They stay separate on purpose: `Vault<...>`'s type string
+  //
+  // ⚠ RETARGETED 2026-07-26. These were the v1-product ids
+  // (package 0x148a1191…dee54, vault 0x9236a21c…afec7). They are DELIBERATELY
+  // BLANK now, and must not be restored: that package is the deleted DeepBook
+  // market-making product. Leaving them here made this script report PASS for
+  // objects the codebase no longer uses — a green run against the wrong contract,
+  // which is worse than no run at all. The v1 ids remain in docs/DEPLOYED.md
+  // § LEGACY so old digests stay resolvable.
+  //
+  // They are blank rather than filled because the v2 package IS NOT PUBLISHED:
+  // `sui client publish` is rejected on chain with
+  // VMVerificationOrDeserializationError — `clearing::Clearing` declares 39 fields
+  // and the Sui verifier caps a struct at 32 (B25). Every check below WARNs while
+  // unset, and asserts against chain the moment keeper/.env carries a real id.
+  //
+  // published-at vs original stay separate on purpose: `Vault<...>`'s type string
   // keeps the ORIGINAL forever while moveCalls must target the published-at, so
   // checking the vault's type against the target would break on the first upgrade
   // — the same two-id trap DeepBook sets (R4).
-  APHOTIC_PACKAGE_ID: '0x148a11915b86ebb79d0a98f81da666ba92edfc03ff0a3ef937a3441df66dee54',
-  APHOTIC_ORIGINAL_PACKAGE_ID: '0x148a11915b86ebb79d0a98f81da666ba92edfc03ff0a3ef937a3441df66dee54',
-  APHOTIC_VAULT_ID: '0x9236a21c20e6d97e4507171d1709dfc31b90f4b2f2d4b528eb36626ec3fafec7',
-  APHOTIC_VAULT_ISV: 952944693,
+  APHOTIC_PACKAGE_ID: '',
+  APHOTIC_ORIGINAL_PACKAGE_ID: '',
+  APHOTIC_VAULT_ID: '',
+  APHOTIC_VAULT_ISV: undefined,
+  // v2 runtime objects. There are exactly THREE shared objects: the Vault above,
+  // the BatchRegistry and the AdapterRegistry. NoteTree / NullifierSet / DenomLadder
+  // / CapRegistry / both BalanceBooks are embedded in the Vault BY VALUE and have no
+  // id of their own — there is deliberately nothing here to check them with.
+  APHOTIC_BATCH_REGISTRY_ID: '',
+  APHOTIC_ADAPTER_REGISTRY_ID: '',
+  // Capabilities, asserted by OWNER: the whole two-party governance claim is that
+  // these are not held by the same address.
+  APHOTIC_ADMIN_CAP_ID: '',
+  APHOTIC_ADMIN_ADDRESS: '',
+  APHOTIC_KEEPER_CAP_ID: '',
+  APHOTIC_KEEPER_ADDRESS: '',
+  APHOTIC_UPGRADE_CAP_ID: '',
   DEEPBOOK_BALANCE_MANAGER_ID: '0x5766ed0b5e3fd310da9ccd723912198450872d9e2c83a473ed59cd5ab51990e2',
   DEEPBOOK_BALANCE_MANAGER_ISV: 947353675,
 };
@@ -334,6 +361,15 @@ async function checkObject(label, id, expect) {
       }
     }
   }
+  // A capability is only meaningful if it is HELD BY the intended party, so the owner
+  // is asserted from chain — not assumed from the transaction that created it.
+  if (expect.addressOwner) {
+    const ao = d.owner && d.owner.AddressOwner;
+    if (!ao) problems.push(`owner=${JSON.stringify(d.owner)} (expected AddressOwner)`);
+    else if (ao.toLowerCase() !== String(expect.addressOwner).toLowerCase()) {
+      problems.push(`owner=${short(ao)} (expected ${short(expect.addressOwner)})`);
+    } else notes.push(`AddressOwner ${short(ao)}`);
+  }
   if (expect.typeStartsWith && !String(d.type ?? '').startsWith(expect.typeStartsWith)) {
     problems.push(`type does not start with ${short(expect.typeStartsWith)}`);
   }
@@ -367,24 +403,78 @@ async function checkP1() {
   // Skipped rather than failed when unset, so this script still runs green on a
   // clean checkout that has not published yet.
   if (!CFG.APHOTIC_PACKAGE_ID) {
-    row('P1', 'aphotic package', 'WARN', 'APHOTIC_PACKAGE_ID unset — not published yet');
+    row('P1', 'aphotic package', 'WARN', 'APHOTIC_PACKAGE_ID unset — v2 publish REJECTED on chain (B25: Clearing has 39 fields, limit 32)');
   } else {
     await checkObject('aphotic pkg (callable)', CFG.APHOTIC_PACKAGE_ID, { package: true });
     if (CFG.APHOTIC_ORIGINAL_PACKAGE_ID && CFG.APHOTIC_ORIGINAL_PACKAGE_ID !== CFG.APHOTIC_PACKAGE_ID) {
       await checkObject('aphotic pkg (original)', CFG.APHOTIC_ORIGINAL_PACKAGE_ID, { package: true });
     }
   }
+  // v2 `Vault<B, Q, S>` — THREE type args, not two. Order is load-bearing: B is the
+  // base (hBTC), Q the auction quote, S the LP share coin. Swapped, share math would
+  // price the base asset in the wrong unit. The type is checked against the ORIGINAL
+  // id, which is what a type string keeps forever.
+  const APHOTIC_ORIGIN = CFG.APHOTIC_ORIGINAL_PACKAGE_ID || CFG.APHOTIC_PACKAGE_ID;
   if (!CFG.APHOTIC_VAULT_ID) {
-    row('P1', 'Vault<hBTC,DBUSDC>', 'WARN', 'APHOTIC_VAULT_ID unset — no vault created yet');
+    row('P1', 'Vault<B,Q,S>', 'WARN', 'APHOTIC_VAULT_ID unset — no vault created yet (B25/B26)');
   } else {
-    // The type argument order is load-bearing: Vault<B, Q> must be <hBTC, DBUSDC>.
-    // Swapped, share math would price the base asset in the wrong unit.
-    await checkObject('Vault<hBTC,DBUSDC>', CFG.APHOTIC_VAULT_ID, {
+    await checkObject('Vault<B,Q,S>', CFG.APHOTIC_VAULT_ID, {
       shared: true,
       isv: CFG.APHOTIC_VAULT_ISV,
-      typeStartsWith: `${CFG.APHOTIC_ORIGINAL_PACKAGE_ID || CFG.APHOTIC_PACKAGE_ID}::vault::Vault<`,
-      typeContains: [CFG.HBTC_COIN_TYPE, CFG.DBUSDC_COIN_TYPE],
+      typeStartsWith: `${APHOTIC_ORIGIN}::vault::Vault<`,
+      typeContains: [CFG.HBTC_COIN_TYPE],
     });
+  }
+
+  // The other two shared objects. Both carry `vault_id` in Move, so a mismatch here
+  // means a registry bound to a different vault than the one we are pointing at.
+  if (!CFG.APHOTIC_BATCH_REGISTRY_ID) {
+    row('P1', 'BatchRegistry', 'WARN', 'APHOTIC_BATCH_REGISTRY_ID unset — not created yet (B25/B26)');
+  } else {
+    await checkObject('BatchRegistry', CFG.APHOTIC_BATCH_REGISTRY_ID, {
+      shared: true,
+      typeStartsWith: `${APHOTIC_ORIGIN}::batch::BatchRegistry`,
+    });
+  }
+  if (!CFG.APHOTIC_ADAPTER_REGISTRY_ID) {
+    row('P1', 'AdapterRegistry', 'WARN', 'APHOTIC_ADAPTER_REGISTRY_ID unset — not created yet (B25)');
+  } else {
+    await checkObject('AdapterRegistry', CFG.APHOTIC_ADAPTER_REGISTRY_ID, {
+      shared: true,
+      typeStartsWith: `${APHOTIC_ORIGIN}::allocate::AdapterRegistry`,
+    });
+  }
+
+  // Capabilities — asserted by OWNER, because a cap in the wrong hands is the whole
+  // risk. `AdminCap` and `KeeperCap` are `key`-only (no `store`), so they can only be
+  // AddressOwner; if the two resolve to the same address the two-party NAV split that
+  // the governance claim rests on is silently void, so that is checked explicitly.
+  if (!CFG.APHOTIC_ADMIN_CAP_ID) {
+    row('P1', 'AdminCap', 'WARN', 'APHOTIC_ADMIN_CAP_ID unset — not minted yet (B25/B26)');
+  } else {
+    await checkObject('AdminCap', CFG.APHOTIC_ADMIN_CAP_ID, {
+      typeStartsWith: `${APHOTIC_ORIGIN}::caps::AdminCap`,
+      addressOwner: CFG.APHOTIC_ADMIN_ADDRESS || undefined,
+    });
+  }
+  if (!CFG.APHOTIC_KEEPER_CAP_ID) {
+    row('P1', 'KeeperCap', 'WARN', 'APHOTIC_KEEPER_CAP_ID unset — not minted yet (B25/B26)');
+  } else {
+    await checkObject('KeeperCap', CFG.APHOTIC_KEEPER_CAP_ID, {
+      typeStartsWith: `${APHOTIC_ORIGIN}::caps::KeeperCap`,
+      addressOwner: CFG.APHOTIC_KEEPER_ADDRESS || undefined,
+    });
+  }
+  if (CFG.APHOTIC_ADMIN_ADDRESS && CFG.APHOTIC_KEEPER_ADDRESS) {
+    const same = CFG.APHOTIC_ADMIN_ADDRESS.toLowerCase() === CFG.APHOTIC_KEEPER_ADDRESS.toLowerCase();
+    row('P1', 'admin != keeper', same ? 'FAIL' : 'PASS',
+      same ? 'AdminCap and KeeperCap resolve to the SAME address — the two-party NAV split is void'
+           : `admin ${short(CFG.APHOTIC_ADMIN_ADDRESS)} != keeper ${short(CFG.APHOTIC_KEEPER_ADDRESS)}`);
+  }
+  if (!CFG.APHOTIC_UPGRADE_CAP_ID) {
+    row('P1', 'UpgradeCap', 'WARN', 'APHOTIC_UPGRADE_CAP_ID unset — nothing published yet (B25)');
+  } else {
+    await checkObject('UpgradeCap', CFG.APHOTIC_UPGRADE_CAP_ID, { typeStartsWith: '0x2::package::UpgradeCap' });
   }
   if (CFG.DEEPBOOK_BALANCE_MANAGER_ID) {
     await checkObject('DeepBook BalanceManager', CFG.DEEPBOOK_BALANCE_MANAGER_ID, {

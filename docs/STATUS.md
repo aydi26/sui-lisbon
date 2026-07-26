@@ -21,9 +21,10 @@
 | Question | Answer, as observed |
 |---|---|
 | Does `move/` compile? | **Yes.** `sui move build` exit **0**, zero warnings, at 01:52 and again at 02:11. |
-| Do the Move tests pass? | **Yes** — for the modules that exist. **179 passed, 0 failed** at 02:11 (122 at 01:52). |
-| Is the Move package complete? | **No.** **Three of ten modules do not exist**: `vault.move`, `batch.move`, `clearing.move`. |
-| Is the cut line met? | **No.** The three missing modules **are** the cut line. |
+| Do the Move tests pass? | **Yes.** ~~179 passed at 02:11~~ → **`Total tests: 275; passed: 275; failed: 0`** re-run at 05:0x. |
+| Is the Move package complete? | ~~No — three of ten modules do not exist.~~ → **Yes, all ten exist and are green.** |
+| **Can the Move package be PUBLISHED?** | **NO — and this is now the top blocker (B25).** `sui client publish` is rejected by the validator: `VMVerificationOrDeserializationError in command 0`. `aphotic::clearing::Clearing` declares **39 fields**; the Sui verifier caps a struct at **32**. **`sui move build` does not run that verifier**, which is exactly why a 275-green package is unpublishable. Nothing is deployed for v2. |
+| Is the cut line met? | **No.** ~~The three missing modules are the cut line.~~ The modules landed; **the publish is the cut line now**, and it fails on chain (B25), with **B26** (no LP share coin ⇒ no `Vault` can be created) waiting behind it. |
 | Does `sdk/` exist? | **No.** |
 | Is the keeper v2? | **No.** It still contains the v1 directories. |
 | Is the app v2? | **No.** Mid-rewrite; files were being deleted during this session. |
@@ -157,7 +158,9 @@ $ git log --oneline -1                               # 2026-07-26 02:15 local �
 
 | # | Blocker | Impact | Owner / fix |
 |---|---|---|---|
-| **B17** | **`vault.move`, `batch.move`, `clearing.move` do not exist.** | **The cut line is not met.** These three carry the entire product mechanism. | `P1.vault`, `P3.batch`, `P3.clearing` |
+| **B25** | **THE PACKAGE CANNOT BE PUBLISHED. `aphotic::clearing::Clearing` declares 39 fields; the Sui verifier caps a struct at 32.** `sui client publish` is rejected by the validator with `VMVerificationOrDeserializationError in command 0`. Measured directly against the chain: a synthetic `key` struct with **32 fields publishes, 33 does not**. Isolated by subset dry-runs — the other **9 modules publish successfully without `clearing`**; a module holding *only* `clearing`'s four structs, every function body stubbed to `abort 0`, still fails, so it is **not** a code-complexity limit. Proof of fix: the identical struct trimmed to 32 fields dry-runs `success`. | **Total.** No package id, no shared objects, no runtime graph, nothing for the keeper/app/SDK to point at. ⚠ **`sui move build` does not run this verifier** — the package is `275 passed / 0 failed` and still unpublishable, so the local suite is no evidence here. ⚠ **`vault::Vault` is at 31 fields — one under the cap.** | **Move agent.** Trim `Clearing` by ≥ 7 fields; group correlated scalars into a nested `has store` struct (nested structs do not inherit the parent's count). Then gate every publish on `sui client publish --dry-run`, which is the only check that catches this. Full bisection in `docs/DEPLOYED.md` § "PUBLISH ATTEMPT — 2026-07-26". |
+| **B26** | **No LP share coin exists, so no `Vault` can ever be created.** `vault::create<B,Q,S>` consumes a `TreasuryCap<S>` **by value** and asserts `total_supply == 0`, but the package defines no such coin. `aphotic.md` L419 and `docs/MOVE-PACKAGE.md:466` both specify `Coin<APHOTIC_LP>`; that module was never written. The only `S` in the tree is `APLP`, declared `#[test_only]` in `move/tests/vault_tests.move`, which is not published. | **Blocks the whole runtime object graph**, because everything hangs off the vault id: `batch::create_registry(vault_id, ctx)` needs it, and `NoteTree` · `NullifierSet` · `DenomLadder` · both `BalanceBook`s are **embedded in the `Vault` by value** — they are not separate shared objects. Only `allocate::create` is independent of the vault. Independent of B25 and will bite immediately after it. | **Move agent.** Add a real, publishable LP-share coin module with a one-time witness. |
+| **B17** | ~~`vault.move`, `batch.move`, `clearing.move` do not exist.~~ | — | **CLOSED 2026-07-26.** All three exist; `sui move test` is **`Total tests: 275; passed: 275; failed: 0`**, `sui move build` clean with zero warnings. Superseded by **B25** — the code is written and green, and is rejected by the chain for an unrelated reason. |
 | **B18** | **`sdk/` does not exist.** | Blocks `P3.batch` and `P3.clearing` from being written correctly: the Seal identity encoding and the clearing algorithm must have exactly **one** home before a second consumer exists. Writing them twice reintroduces B6 in the one place a divergence is a **release blocker**. | `X.sdk` — do this **before** `P3.batch` |
 | **B19** | **The keeper and app still contain the v1 product.** | A green v1 suite could be mistaken for evidence about v2. | `X.keeper`, `X.app` |
 | ~~**B11**~~ | `scripts/register-deposit.ps1` hardcoded two Hashi ids ⇒ the `ids` gate failed. | — | **CLOSED at 02:13 by commit `72b12bb`** (not by me, and not verified by a run of mine). The ids now resolve process env → `keeper/.env` → `keeper/src/config.ts`, provenance is printed, and a self-test asserts neither watched prefix appears in the file so it cannot silently regress. |
@@ -222,15 +225,17 @@ bullet is stale — recorded here rather than edited into DESIGN-V2, which is re
 
 ## 10. Where old-product text still survives outside `docs/`
 
-Found while sweeping. **Not fixed** — these files are owned by other agents or are historical.
+Found while sweeping. Rows marked **CLOSED** were fixed by the dead-code sweep of 2026-07-26;
+the rest are still open and are owned by other agents or are historical.
 
-| Location | What survives |
-|---|---|
-| `HASHI_INTEGRATION.md`, `README (8).md` (root) | the entire v1 design. Marked SUPERSEDED in `CLAUDE.md`; left in place as history |
-| `README.md` (root) | not reviewed this pass |
-| `move/Move.toml` header comments | cite `docs/MOVE-PACKAGE.md §4.4 envelope::check_action` and `aphotic::vault::seal_approve` — `envelope` is **deleted**, and `seal_approve` now belongs to `batch` |
-| `scripts/gates.ps1` banner | reworked at 02:13 and now pivot-aware, but still `@spec docs/GOLDEN-RULES.md`, which was **deleted** in this pass. Point it at `CLAUDE.md`'s golden-rules table instead |
-| `scripts/*.ps1` / `*.mjs` banners generally | v1 task ids and v1 doc anchors throughout |
-| `keeper/src/{strategy,routing,execution,journal}/` | the entire v1 keeper |
-| `app/src/screens/{deposit,exit,transparency}/` | the entire v1 app |
-| `move/tests/mock_hashi.move` | a v1 bridge stand-in; unreviewed for v2 relevance |
+| Location | What survives | State |
+|---|---|---|
+| ~~`HASHI_INTEGRATION.md`, `README (8).md`, `BTC_FIXED_INCOME.md` (root)~~ | the entire v1 design, plus a shelved alternative that was never built | **CLOSED — deleted.** `HASHI_INTEGRATION.md` was audited claim-by-claim against RECON + FACTS first: a strict subset except two facts (**sanctions screening in `approve_deposit`**, **Hashi is pre-1.0**), both transplanted into `docs/FACTS.md#hbtc` / `#latencies`. It also *contradicted* the live docs in five places, which is why a SUPERSEDED banner was judged insufficient. Recoverable from git. |
+| ~~`README.md` (root)~~ | pitched "The Bitcoin Dark Vault" and linked four deleted docs | **CLOSED — rewritten** for the redemption-carry vault + sealed-order batch auction; leads with the public `WithdrawalRequestQueue` leak and why uniform-price clearing makes front-running *meaningless* rather than merely hard |
+| ~~`move/Move.toml` header comments~~ | cited `envelope::check_action` and `aphotic::vault::seal_approve` | **CLOSED** — now cite `vault::approve_nav` and `aphotic::batch::seal_approve`; the id-homes list now matches `docs/CONVENTIONS.md` §2.6. **Dependency table untouched.** |
+| ~~`scripts/gates.{ps1,sh}` banners~~ | `@spec docs/GOLDEN-RULES.md`, deleted | **CLOSED** — retargeted to `CLAUDE.md` "THE 10 GOLDEN RULES" + `docs/CONVENTIONS.md` §2.6/§6, and the `@rules` lines re-mapped to the **v2** rule numbers (the numbers were reassigned in the pivot, so the old `G2 G4 G5 G7` meant something else). No gate logic or verdict changed. |
+| ~~`scripts/*.ps1` / `*.mjs` banners generally~~ | v1 task ids and v1 doc anchors | **CLOSED** — `check-enoki.mjs`, `verify-onchain.mjs`, `seed-book.{mjs,ps1}`, `register-deposit.ps1`, `verify-all.ps1` all retargeted to live anchors; dead `T<n>.<m>` ids replaced with `ops — no BUILD-PLAN unit id` |
+| `keeper/src/{strategy,routing,execution,journal,privacy,storage,verify}/` | the entire v1 keeper. Three files still cite the now-deleted root docs: `privacy/rotation.ts:9` and `strategy/params.ts:7` cite `"README (8).md"`, `routing/route.ts:11` cites it too, and `strategy/pegflow.ts:7` cites `HASHI_INTEGRATION.md §3`. Those pointers are now **dangling**. | open — `X.keeper` |
+| `keeper/test/*`, `keeper/vitest.config.ts`, `sdk/src/rng.ts` | ~30 banner lines citing the deleted `docs/KEEPER.md`, plus `docs/ULTRACODE-BRIEF.md` in `keeper/test/hashi.real.test.ts:7` and `docs/GOLDEN-RULES.md` in `keeper/src/verify/limiter.ts:6` and `keeper/test/limiter.{cross,consume}.test.ts` | open — `X.keeper` / `X.sdk` |
+| `app/**` | banner debris citing `docs/APP.md` / `docs/GOLDEN-RULES.md` and v1 `A<n>` / `T<n>.<m>` ids; `app/probe-l2.mjs` is a v1 DeepBook L2 probe referenced by nothing; `app/test/tx.test.ts:89` hardcodes a Hashi package id and is the sole cause of the **`ids` gate FAIL** | open — owned by the app agent |
+| `move/tests/mock_hashi.move` | a v1 bridge stand-in; still unreviewed for v2 relevance | open |

@@ -22,7 +22,12 @@
     "allowJs": true,
     "checkJs": false,
 
-    "types": ["vite/client"]
+    "types": ["vite/client"],
+
+    "baseUrl": ".",
+    "paths": {
+      "@aphotic/sdk/*": ["../sdk/src/*.ts"]
+    }
   },
   "include": ["src", "vite.config.ts"],
   "exclude": ["node_modules", "dist", "src/landing"]

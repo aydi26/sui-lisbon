@@ -1,11 +1,12 @@
 // ┌── APHOTIC CONTRACT ────────────────────────────────────────────────────────
 // @task       F1
 // @phase      0
-// @status     PARTIAL
+// @status     DONE
 // @spec       aphotic.md §9 (devInspect-before-send, fail-soft)
 // @spec       move/sources/*.move — the `const E…: u64 = n;` blocks are the source
-//             of truth for every abort code mapped below. The v2 rewrite is in
-//             flight, so APHOTIC_ABORTS is EMPTY rather than wrong (TODO(F2)).
+//             of truth for every abort code mapped below. Transcribed from the v2
+//             modules on 2026-07-26: vault(26) batch(19) clearing(8, starting at 2)
+//             notes(18) balance(7) caps(12) allocate(13) carry(7).
 // @rules      G2 G7 G8 G10
 // @depends    ../config.ts (F1) · ./suiClient.ts (F1) · ../session/useSession.ts
 // @facts      THE ONE SEND PATH. Every screen that writes to chain goes through
@@ -23,9 +24,11 @@
 // @facts        its abort codes are CLEVER (high bit set) and are NOT comparable to
 // @facts        a small u64. We never guess a clever code's meaning: we match the
 // @facts        upstream byte-string when the node echoes it, else we surface raw.
-// @facts      ⚠⚠ APHOTIC_ABORTS IS EMPTY ON PURPOSE. The v1 table is now wrong in
-// @facts        every row, and a confidently wrong explanation of a failed
-// @facts        transaction is worse than a raw string. Unmapped ⇒ raw.
+// @facts      ⚠⚠ APHOTIC_ABORTS carries ONLY rows read out of a module's own
+// @facts        `const E…: u64 = n;` block. A code that is not in the table falls
+// @facts        back to the raw abort string — a confidently wrong explanation of
+// @facts        a failed transaction is worse than an ugly one. Never add a row
+// @facts        by guessing a code from a name.
 // @external   useSignAndExecuteTransaction({ transaction, chain }) → { digest }
 //             client.core.getTransaction({ digest })
 // @implements export type TxErrorKind · TxResult · MoveAbortInfo · TxBuilder
@@ -130,18 +133,147 @@ interface AbortEntry {
 /**
  * Aphotic's own error constants, module → code → meaning.
  *
- * ⚠⚠ DELIBERATELY EMPTY. This table used to mirror the v1 package's
- * `const E…: u64 = n;` blocks. The v2 Move package is a rewrite with a different
- * module set and different codes, so every entry in the old table is now a
- * WRONG ANSWER — and a confidently wrong explanation of a failed transaction is
- * strictly worse than an ugly raw string.
+ * ⚠ EVERY ROW WAS TRANSCRIBED FROM THE `const E…: u64 = n;` BLOCK AT THE TOP OF
+ * THE NAMED MODULE, in order, on 2026-07-26. Not one is inferred from a name and
+ * not one is carried over from v1. The rule that made this table empty still
+ * holds: a confidently wrong explanation of a failed transaction is worse than
+ * an ugly raw string, so a code that is not below degrades to the raw text.
  *
- * An unmapped code degrades to the raw abort text (see `parseMoveAbort`), which
- * is exactly the behaviour we want until the codes are real again.
+ * ⚠ `aphotic::clearing` starts at 2 — there is no code 1 in that module. The gap
+ * is real; do not "fix" it by shifting the rows up.
+ *
+ * ⚠ The keys are MODULE names as the node renders them (`Identifier("vault")`),
+ * which is why `balance.move` is keyed `balance` even though `vault.move`
+ * imports it under the alias `ledger`.
  */
-// TODO(F2): repopulate from the v2 `move/sources/*.move` error constants, one
-// module per key, once those files exist. Do not guess a code from a name.
-export const APHOTIC_ABORTS: Readonly<Record<string, Readonly<Record<number, AbortEntry>>>> = {};
+export const APHOTIC_ABORTS: Readonly<Record<string, Readonly<Record<number, AbortEntry>>>> = {
+  vault: {
+    1: { name: 'ELpSupplyNotZero', text: 'That share coin has already been minted against — a vault can only be created from a treasury with zero supply.' },
+    2: { name: 'EPaused', text: 'The vault is paused, so no new deposit is accepted. Redeeming and claiming still work: pausing stops new risk, not the exit.' },
+    3: { name: 'EZeroAmount', text: 'The amount is zero.' },
+    4: { name: 'ENoProposal', text: 'There is no NAV proposal outstanding to act on.' },
+    5: { name: 'EDigestMismatch', text: 'The digest does not match the proposal on chain — the numbers being approved are not the numbers that were signed.' },
+    6: { name: 'EProposalStale', text: 'The proposal is older than the governed maximum age, so it can no longer be approved.' },
+    7: { name: 'EProposalEpochMismatch', text: 'The proposal belongs to a different epoch than the vault is in now.' },
+    8: { name: 'EIdleMismatch', text: 'The proposal’s idle-balance leg does not equal what the vault actually holds. That is the one NAV leg Move can check itself, and it did.' },
+    9: { name: 'ENavLegUncapped', text: 'The native-BTC leg exceeds the on-Sui withdrawal claims behind it. Move cannot see Bitcoin, so it caps that leg by the claims that produced it.' },
+    10: { name: 'EClaimsRegressed', text: 'The reported Hashi claims went backwards from the last approved valuation.' },
+    11: { name: 'ENavJump', text: 'The NAV per share moved further than the governed jump bound allows in one epoch.' },
+    12: { name: 'EPriceDeviation', text: 'The clearing price deviates from the book mid by more than the governed bound.' },
+    13: { name: 'ESolvency', text: 'The action would leave committed shares worth more than the vault’s assets. It reverted rather than let that stand.' },
+    14: { name: 'ESupplyDrift', text: 'Minted supply plus owed-but-unminted shares no longer equals committed supply.' },
+    15: { name: 'ENotYetPriced', text: 'This receipt’s epoch has not been priced yet. It becomes claimable once the admin multisig approves that epoch’s NAV.' },
+    16: { name: 'EVaultMismatch', text: 'That receipt belongs to a different vault.' },
+    17: { name: 'EInsufficientAssets', text: 'The vault does not hold enough to release that claim right now.' },
+    18: { name: 'ENotPaused', text: 'The vault is not paused.' },
+    19: { name: 'EUnpauseNotArmed', text: 'Unpausing has not been armed. Pausing is one transaction; resuming needs an earlier arming transaction plus a delay.' },
+    20: { name: 'EUnpauseTooEarly', text: 'The unpause delay has not elapsed yet. Cheap to stop, expensive to resume — on chain.' },
+    21: { name: 'EBadParam', text: 'A parameter is outside its permitted range.' },
+    22: { name: 'EEscrowLocked', text: 'A clearing is in flight, so escrow cannot move. A fill was sized against this ledger when the clearing loaded it.' },
+    23: { name: 'EDenomMismatch', text: 'The payment is not exactly that denomination. Notes are fixed-size by design — that is what makes them uniform.' },
+    24: { name: 'EOverflow', text: 'The arithmetic would overflow u64.' },
+    25: { name: 'EBelowMinDeposit', text: 'The deposit is below the vault’s governed minimum.' },
+    26: { name: 'ENoClearingActive', text: 'There is no active clearing to end.' },
+  },
+  batch: {
+    1: { name: 'EBadState', text: 'The batch is not in the state that call requires — transitions are monotonic and no path returns to OPEN.' },
+    2: { name: 'ETooEarly', text: 'The batch cannot be closed before its scheduled instant. The close time is derived from the cadence, not chosen by anyone.' },
+    3: { name: 'ESubmitWindowClosed', text: 'Submission is closed for the last 60 seconds before the boundary, so a submit can never race an early key release.' },
+    4: { name: 'EBatchFull', text: 'The batch is full. It rejects further orders and still waits for the boundary — a full batch does not close early.' },
+    5: { name: 'ECommitmentMismatch', text: 'The revealed order does not hash to the commitment that was submitted. The commitment binds the plaintext, so this cannot be argued with.' },
+    6: { name: 'ESubmitterMismatch', text: 'The revealed order names a different submitter than the sealed one.' },
+    7: { name: 'EAlreadyRevealed', text: 'That order has already been revealed — by anyone, which is the point.' },
+    8: { name: 'ERevealWindowClosed', text: 'The ten-minute reveal window has expired for this batch.' },
+    9: { name: 'ERevealWindowOpen', text: 'The reveal window is still open and not every order is revealed, so clearing cannot start against a half-revealed book.' },
+    10: { name: 'ENonMonotonic', text: 'That state transition would move the batch backwards.' },
+    11: { name: 'EPolicyBumpWithLiveBatch', text: 'The Seal policy version cannot be bumped while a batch is live — it would invalidate a live identity.' },
+    12: { name: 'EBatchAlreadyLive', text: 'A batch is already open. Only one window runs at a time.' },
+    13: { name: 'EVaultMismatch', text: 'That batch belongs to a different vault.' },
+    14: { name: 'EBadDigestLength', text: 'A digest argument is not 32 bytes.' },
+    15: { name: 'EBadOrder', text: 'The order is malformed: quantity and limit price must be non-zero and the salt exactly 32 bytes.' },
+    16: { name: 'EIndexOutOfRange', text: 'There is no order at that index in this batch.' },
+    17: { name: 'EBadParam', text: 'A governed parameter is outside its permitted range.' },
+    18: { name: 'ENoAccess', text: 'The Seal time-lock policy denied: either the batch has not closed yet, the policy version is stale, or the identity carries trailing bytes.' },
+    19: { name: 'EWrongRegistry', text: 'That registry does not govern this batch.' },
+  },
+  clearing: {
+    2: { name: 'EBadParam', text: 'A parameter is outside its permitted range — a step budget must be greater than zero.' },
+    3: { name: 'EWrongBatch', text: 'That clearing belongs to a different batch.' },
+    4: { name: 'EWrongVault', text: 'That clearing belongs to a different vault.' },
+    5: { name: 'EFillOutsideLimit', text: 'A fill would land outside a participant’s limit price. Limit safety is asserted per fill, not merely assumed from the construction.' },
+    6: { name: 'EValueNotPreserved', text: 'Debits did not equal credits plus fee, so settlement reverted. The fee is an explicit third term, never a silent shortfall.' },
+    7: { name: 'EOverflow', text: 'The arithmetic would overflow u64.' },
+    8: { name: 'EIndexOutOfRange', text: 'There is no fill at that index.' },
+    9: { name: 'ENotFinal', text: 'The clearing has not reached settlement, so there is no published root to prove against yet.' },
+  },
+  notes: {
+    1: { name: 'ELadderEmpty', text: 'The denomination ladder cannot be empty.' },
+    2: { name: 'ELadderNotAscending', text: 'The denomination ladder must be strictly ascending.' },
+    3: { name: 'ELadderTooManyTiers', text: 'Too many denomination tiers. Few, widely spaced tiers are what create uniformity.' },
+    4: { name: 'ELadderInUse', text: 'The ladder cannot be re-pointed while notes are outstanding — it would silently revalue every live note.' },
+    5: { name: 'EZeroDenomination', text: 'A denomination cannot be zero.' },
+    6: { name: 'EBadDenomIndex', text: 'That denomination index is not on the ladder.' },
+    7: { name: 'EBadDepth', text: 'The tree depth is outside its permitted range.' },
+    8: { name: 'ETreeFull', text: 'The note tree is full.' },
+    9: { name: 'EBadDigestLength', text: 'A commitment or digest is not 32 bytes.' },
+    10: { name: 'EBadProofLength', text: 'The membership proof does not have one sibling per tree level.' },
+    11: { name: 'ELeafIndexOutOfRange', text: 'That leaf index is beyond the tree’s capacity.' },
+    12: { name: 'EUnknownRoot', text: 'The proof folds to a root this tree never published. Rebuild the path against the current leaf list — the tree may have grown since.' },
+    13: { name: 'ENullifierAlreadySpent', text: 'That note has already been spent. A nullifier is consumed at most once, ever.' },
+    14: { name: 'ESecretLength', text: 'The note secret must be exactly 32 bytes.' },
+    15: { name: 'ERandomnessLength', text: 'The note randomness must be exactly 32 bytes.' },
+    16: { name: 'ENoteBackingMismatch', text: 'Note value in the tree no longer equals the custodied balance behind it.' },
+    17: { name: 'ENoteAccountingUnderflow', text: 'The note accounting would go negative.' },
+    18: { name: 'ECapVaultMismatch', text: 'That capability belongs to a different vault.' },
+  },
+  balance: {
+    1: { name: 'EZeroAmount', text: 'The amount is zero.' },
+    2: { name: 'EInsufficientBalance', text: 'Your internal balance does not cover that. Top it up, or spend a note into it, before submitting.' },
+    3: { name: 'ENoAccount', text: 'This address has no internal balance in that book yet.' },
+    4: { name: 'EInsolvent', text: 'The book’s credited total no longer equals its custodied balance.' },
+    5: { name: 'ESameAccount', text: 'Source and destination are the same account.' },
+    6: { name: 'ECapVaultMismatch', text: 'That capability belongs to a different vault.' },
+    7: { name: 'EBookNotEmpty', text: 'The book still holds balances.' },
+  },
+  caps: {
+    1: { name: 'ECapVaultMismatch', text: 'That capability belongs to a different vault.' },
+    2: { name: 'EStaleAdminEpoch', text: 'That admin capability has been superseded by a rotation.' },
+    3: { name: 'EStaleKeeperEpoch', text: 'That keeper capability has been rotated out.' },
+    4: { name: 'ENoPendingTransfer', text: 'There is no pending admin transfer to accept or cancel.' },
+    5: { name: 'ENotPendingAdmin', text: 'This address is not the pending admin.' },
+    6: { name: 'EPaused', text: 'The vault is paused.' },
+    7: { name: 'EUnknownKeeperAction', text: 'That keeper action is not one the registry recognises.' },
+    8: { name: 'ENotAllowlisted', text: 'That destination is not on the pinned allowlist. The keeper’s functions take no address parameter at all — the allowlist is not a filter, there is nothing to filter.' },
+    9: { name: 'ETransferToSelf', text: 'Admin cannot be transferred to the current admin.' },
+    10: { name: 'EAlreadyPending', text: 'An admin transfer is already pending.' },
+    11: { name: 'EAllowlistFull', text: 'The allowlist is full.' },
+    12: { name: 'ENotAllowlistedEntry', text: 'That entry is not on the allowlist.' },
+  },
+  allocate: {
+    1: { name: 'EWrongRegistry', text: 'That adapter registry is not the one this capability governs.' },
+    2: { name: 'EAdapterNotAllowed', text: 'That venue is not an allowed adapter.' },
+    3: { name: 'EAdapterAlreadyAllowed', text: 'That adapter is already on the allowlist.' },
+    4: { name: 'EAdapterDisabled', text: 'That adapter is allowlisted but currently disabled.' },
+    5: { name: 'ERegistryPaused', text: 'Allocation is paused registry-wide.' },
+    6: { name: 'EVenueCapExceeded', text: 'That allocation would exceed the venue’s cap.' },
+    7: { name: 'EZeroAmount', text: 'The amount is zero.' },
+    8: { name: 'ENoSharesReceived', text: 'The adapter returned no shares for the deposit.' },
+    9: { name: 'EInsufficientShares', text: 'The adapter position does not hold that many shares.' },
+    10: { name: 'EValueLoss', text: 'The round trip would return less than it consumed.' },
+    11: { name: 'EAdapterStillFunded', text: 'That adapter still holds principal and cannot be removed.' },
+    12: { name: 'EEmptyLabel', text: 'An adapter label cannot be empty.' },
+    13: { name: 'EStaleMark', text: 'The adapter’s valuation mark is too old to use.' },
+  },
+  carry: {
+    1: { name: 'ECarryValueLoss', text: 'The carry would return less than it consumed. Value preservation is asserted in Move, not assumed.' },
+    2: { name: 'EUnpinnedExitAddress', text: 'That Bitcoin address is not the pinned redemption address.' },
+    3: { name: 'EInvalidExitAddressLength', text: 'A Bitcoin address program must be 20 bytes (P2WPKH) or 32 bytes (P2TR).' },
+    4: { name: 'EHurdleNotMet', text: 'The discount does not clear the entry hurdle: expected latency × cost of capital, plus gas, plus a margin for model error.' },
+    5: { name: 'EBelowWithdrawalMinimum', text: 'Below Hashi’s 30,000-sat withdrawal minimum.' },
+    6: { name: 'ENotionalCapExceeded', text: 'That would exceed the governed notional cap for a single carry.' },
+    7: { name: 'EInvalidPrice', text: 'The price is outside its permitted range.' },
+  },
+};
 
 /**
  * The upstream Hashi `#[error]` byte-strings (move/tests/mock_hashi.move mirrors

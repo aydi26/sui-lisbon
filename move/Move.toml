@@ -1,4 +1,4 @@
-# Package `aphotic` — Aphotic x Hashi, "The Bitcoin Dark Vault".
+# Package `aphotic` — the redemption-carry vault and the sealed-order batch auction.
 #
 # NEW Move package system (sui 1.76.0). Both upstream deps ship a `Published.toml`
 # with `[published.testnet]`, so `published-at` / `original-id` resolve automatically
@@ -10,14 +10,17 @@
 #   "Cannot override default environments. Environment `testnet` is a system
 #    environment and cannot be overridden. System environments: testnet, mainnet"
 #
-# NOTE: no Pyth dependency (RECON R3). Nothing in Move calls Pyth — `envelope::check_action`
-# takes `oracle_mid: u128` as a PARAMETER (docs/MOVE-PACKAGE.md §4.4, G9). Pyth's Sui
+# NOTE: no Pyth dependency (RECON R3). Nothing in Move calls Pyth — every price or NAV
+# figure arrives as a PARAMETER and is checked on chain (`vault::approve_nav`); Pyth's Sui
 # contracts are `edition = "legacy"` with a heavy pinned Wormhole dep.
 # NOTE: no Seal / Walrus dependency — both are off-chain SDKs. The only on-chain Seal
-# surface is our own `aphotic::vault::seal_approve` (docs/MOVE-PACKAGE.md §3.4).
+# surface is our own `aphotic::batch::seal_approve`, which key servers reach by dry-running
+# a one-command PTB (docs/DESIGN-V2.md §3).
 #
-# This file is one of the FOUR places a canonical on-chain id may appear (G7);
-# the others are keeper/src/config.ts, app/src/config.ts and the .env.example files.
+# This file is one of the places a canonical on-chain id may appear (G7 /
+# docs/CONVENTIONS.md §2.6); the others are lending/Move.toml, keeper/src/config.ts,
+# app/src/config.ts, sdk/src/config.ts and the .env.example files. Everywhere else an id
+# arrives as config.
 
 [package]
 name = "aphotic"

@@ -14,11 +14,109 @@
 
 ---
 
-## APHOTIC v2 — the 2026-07-26 product pivot — **NOT YET PUBLISHED**
+## APHOTIC v2 — the 2026-07-26 product pivot — **NOT PUBLISHED — PUBLISH ATTEMPTED AND REJECTED ON CHAIN**
 
 **Nothing has been deployed for the v2 product.** No package id, no shared objects, no
 digests. Recorded here as a section so that when the publish happens there is one place
 it goes, and so nobody mistakes the v1 ids below for a v2 deployment.
+
+### PUBLISH ATTEMPT — 2026-07-26 — **FAILED: `Clearing` has 39 fields, the on-chain limit is 32**
+
+A publish was attempted and **rejected by the Sui Move verifier**. This is a real, reproducible
+on-chain rejection, not a toolchain or network problem. Nothing was created; there is no
+package id and no digest to record, because no transaction was ever executed.
+
+```
+Error executing transaction '2byvZDvZo2onDwLxQe2bxME9qn3iEscGUDfmWhu4vqmp':
+VMVerificationOrDeserializationError in command 0
+```
+
+The local toolchain is green and disagrees with the chain — this is the whole trap:
+
+| Gate | Result |
+|---|---|
+| `sui move build` | clean, **zero warnings**, 10 modules, 48 143 bytes of bytecode |
+| `sui move test` | `Total tests: 275; passed: 275; failed: 0` |
+| `sui client publish` | **`VMVerificationOrDeserializationError in command 0`** |
+
+**`sui move build` does NOT run the Sui object verifier.** Only the validator does. A package
+can be 275-tests green and still be unpublishable.
+
+#### Root cause, established by bisection (not by guessing)
+
+`sui client verify-bytecode-meter` is `not yet implemented` in sui 1.76.0 and panics, so the
+cause was isolated by publishing progressively larger module subsets with `--dry-run`:
+
+| Module set | Dry run |
+|---|---|
+| `events oracle carry caps balance notes batch vault` (8) | **success** |
+| the same 8 **+ `clearing`** | `VMVerificationOrDeserializationError` |
+| the same 8 **+ `allocate`** (9, no `clearing`) | **success** |
+| a module containing **only** `clearing`'s four structs, no functions | `VMVerificationOrDeserializationError` |
+| the same structs with **every function body stubbed to `abort 0`** | still fails ⇒ **not** a code-complexity/meter limit |
+
+Then the limit itself was measured directly, with a synthetic `public struct T has key`:
+
+| Field count | Dry run |
+|---|---|
+| 21 | success |
+| **32** | **success** |
+| **33** | **`VMVerificationOrDeserializationError`** |
+| 41 | fails |
+
+**The Sui verifier caps a struct at 32 fields.** `aphotic::clearing::Clearing` declares **39**
+(`id` counts). Proof of fix: the *identical* struct with 7 fields removed — 32 exactly — dry-runs
+`success`.
+
+#### The one blocking change (owned by the Move agent — NOT made here)
+
+`move/sources/clearing.move` — `Clearing` must lose **≥ 7 fields** to reach 32. The usual fix is
+to group correlated scalars into a nested `has store` struct, which costs one field each:
+the pricing scan cursors (`bid_scan` `supply_acc` `ask_scan` `found` `best_price` `best_vol`
+`best_gap`), the allocation counters, or the settlement tail
+(`quote_paid` `quote_recv` `fee_quote` `total_debits` `total_credits` `fee_bps` `fee_recipient`).
+Nested structs do **not** inherit the parent's field count.
+
+⚠ **`aphotic::vault::Vault` declares 31 fields — one under the cap.** Adding two fields to the
+vault breaks the publish the same way. Every other struct in the package is well clear.
+
+Field census (`id` included), for whoever fixes this:
+
+```
+39  clearing.move::Clearing   <<< EXCEEDS THE 32-FIELD LIMIT
+31  vault.move::Vault         <<< one field of headroom
+```
+
+#### Second blocker, independent of the first, found while sequencing the runtime objects
+
+Even once `Clearing` is trimmed and the package publishes, **no `Vault` can be created**:
+
+```move
+public fun create<B, Q, S>(lp_treasury: TreasuryCap<S>, admin, keeper, fee_recipient, ctx)
+```
+
+`vault::create` consumes a `TreasuryCap<S>` **by value** and asserts `total_supply == 0`, but the
+`aphotic` package **defines no LP share coin**. `aphotic.md` L419 and `docs/MOVE-PACKAGE.md:466`
+both specify `Coin<APHOTIC_LP>` — that module was never written. The only `S` that exists is
+`APLP`, declared `#[test_only]` inside `move/tests/vault_tests.move`, which is not published.
+
+This blocks the entire runtime object graph, because everything hangs off the vault id:
+`batch::create_registry(vault_id, ctx)` needs it, and `NoteTree`, `NullifierSet`, `DenomLadder`
+and both `BalanceBook`s are **embedded inside the `Vault` by value** — they are not separate
+shared objects and never get their own ids. `allocate::create` (the `AdapterRegistry`) is the
+only runtime object that does not need the vault.
+
+So the shared-object set the app needs is only **three** objects, not seven:
+`Vault` · `BatchRegistry` · `AdapterRegistry`. `Clearing` objects are shared per batch by
+`clearing::share_clearing`. See the env-var mapping note in `app/.env.example`.
+
+#### What was left untouched
+
+`move/sources/**` was not edited — per the task's standing instruction, a Move source change is
+reported, not made. All bisection ran on scratchpad copies. `move/Published.toml` **was** cleared
+of its stale **v1** entry (`0x148a1191…dee54`), because the CLI refuses to publish while a
+publication record exists and v2 is a fresh publish; both v1 ids remain recorded in § LEGACY
+below, so nothing was lost.
 
 ### What changed, and why every id below is stale
 
@@ -58,7 +156,13 @@ us a debugging session.
 ### Before publishing v2, these must be true
 
 - `docs/STATUS.md` shows `vault.move`, `batch.move` and `clearing.move` **existing and
-  green** — as of 2026-07-26 none of them exists.
+  green** — ✅ met 2026-07-26: all three exist, `sui move test` is `275 passed / 0 failed`.
+  Note this is **necessary but not sufficient** — the 275-green package was still rejected
+  on chain (see the publish-attempt section above). Add to this list:
+- `aphotic::clearing::Clearing` declares **≤ 32 fields**, and so does every other struct
+  (`Vault` is at 31). Verified by a `--dry-run` publish, which is the only gate that catches it.
+- The package defines a **real, publishable LP share coin** for `vault::create`'s
+  `TreasuryCap<S>`. A `#[test_only]` witness in `move/tests/` cannot be used.
 - `scripts/measure-clearing.mjs` has run and `docs/LIMITS.md` exists, so `MAX_BATCH_SIZE`
   is a **measured** default and not a reasoned one.
 - The `AdminCap` goes to a **multisig**, not to the deployer EOA. The two-party NAV split

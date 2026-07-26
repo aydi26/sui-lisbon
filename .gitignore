@@ -30,3 +30,9 @@ Thumbs.db
 # --- local scratch ---
 *.local
 tmp/
+
+# --- vercel (these two lines were appended by `vercel link`) ---
+.vercel
+.env*
+# ...but .env.example is the canonical VITE_* list and MUST stay tracked.
+!**/.env.example

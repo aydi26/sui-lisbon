@@ -27,8 +27,26 @@ import react from '@vitejs/plugin-react';
 /** Packages that make up the 3D hero. Split out so the vault screens never load them. */
 const GLOBE_PACKAGES = ['three', 'three-globe', 'globe.gl'];
 
+/**
+ * `../sdk/src` — the ONE implementation of clearing, the Merkle tree, the notes
+ * hashing and the Seal inner identity (docs/DESIGN-V2.md §9). It has no build
+ * step: `"exports": { "./*": "./src/*.ts" }`, consumed here by alias and by the
+ * keeper through its tsconfig `paths`. A second copy of any of those algorithms
+ * in app/ is the drift the parity tests exist to catch.
+ */
+// `fileURLToPath` would pull in `node:url`, and this file is typechecked with
+// `types: ["vite/client"]` only — no @types/node. Strip the leading slash a
+// Windows file URL carries (`/C:/…` → `C:/…`); on POSIX the regex never matches.
+const SDK_SRC = decodeURIComponent(new URL('../sdk/src', import.meta.url).pathname).replace(
+  /^\/([A-Za-z]:)/,
+  '$1',
+);
+
 export default defineConfig({
   plugins: [react()],
+  resolve: {
+    alias: [{ find: /^@aphotic\/sdk\/(.*)$/, replacement: `${SDK_SRC}/$1.ts` }],
+  },
   define: {
     global: 'globalThis',
   },
