@@ -87,6 +87,7 @@ import { SUI_CLOCK_OBJECT_ID } from '@mysten/sui/utils';
 
 import type { Config } from '../config.js';
 import { createJsonRpcClient, createSuiClient, isGrpc, type AnySuiClient } from '../sui/client.js';
+import { preflight, PreflightRevertError } from '../sui/send.js';
 import type { Millis, SuiAddress } from '../types.js';
 import { assertBtcWitnessProgram } from '../util/bytes.js';
 import {
@@ -474,12 +475,28 @@ export function createRealHashiAdapter(cfg: Config, deps: RealHashiDeps = {}): H
     return eventQuery;
   }
 
-  const signAndExecute: SignAndExecute =
+  const submitPreflighted: SignAndExecute =
     deps.signAndExecute ??
     (async ({ signer, transaction }) => {
+      const c = client();
+
+      // SIMULATE FIRST, ALWAYS. Every write path in this adapter funnels through this
+      // one closure, so this is the single place the "never broadcast a revert" rule
+      // has to hold — and it previously did not: the four callers below (deposit,
+      // confirmDeposit, requestWithdrawal, cancelWithdrawal) broadcast blind, which is
+      // what the `send` gate caught.
+      //
+      // A Hashi write that would abort is not a hypothetical: the bridge asserts a
+      // withdrawal minimum, a cancellation cooldown, a sender match on cancel, and the
+      // Guardian's rate limit. Broadcasting one of those burns gas to learn something a
+      // simulation would have said for free — and during a demo it burns the demo.
+      const pre = await preflight({ client: c }, transaction, 'hashi');
+      if (!pre.ok) {
+        throw new PreflightRevertError('hashi', pre.error ?? 'preflight reported a revert');
+      }
+
       // The two transports spell "give me the events back" differently, and we NEED the events:
       // `deposit`/`request_withdrawal` return nothing, so the emitted event is the only receipt.
-      const c = client();
       return isGrpc(c)
         ? await c.signAndExecuteTransaction({ signer, transaction, include: { events: true, effects: true } })
         : await c.signAndExecuteTransaction({
@@ -833,7 +850,7 @@ export function createRealHashiAdapter(cfg: Config, deps: RealHashiDeps = {}): H
         utxos: args.utxos.map((u) => ({ vout: u.vout, amountSats: u.sats })),
         recipient: args.recipient,
       });
-      const result = await signAndExecute({ signer: args.signer, transaction });
+      const result = await submitPreflighted({ signer: args.signer, transaction });
       return { requestId: requireEventField(result, cfg, 'DepositRequested', 'request_id', at('deposit')) };
     },
 
@@ -860,7 +877,7 @@ export function createRealHashiAdapter(cfg: Config, deps: RealHashiDeps = {}): H
           tx.sharedObjectRef({ objectId: SUI_CLOCK_OBJECT_ID, initialSharedVersion: 1, mutable: false }),
         ],
       });
-      const result = await signAndExecute({ signer, transaction: tx });
+      const result = await submitPreflighted({ signer, transaction: tx });
       const digest = txDigestOf(result);
       if (digest === undefined) throw new NotFoundError(at(`confirm_deposit(${requestId}) digest`));
       return { digest };
@@ -884,7 +901,7 @@ export function createRealHashiAdapter(cfg: Config, deps: RealHashiDeps = {}): H
         amount: args.sats,
         bitcoinAddress: args.bitcoinAddress,
       });
-      const result = await signAndExecute({ signer: args.signer, transaction });
+      const result = await submitPreflighted({ signer: args.signer, transaction });
       return {
         requestId: requireEventField(result, cfg, 'WithdrawalRequested', 'request_id', at('requestWithdrawal')),
       };
@@ -899,7 +916,7 @@ export function createRealHashiAdapter(cfg: Config, deps: RealHashiDeps = {}): H
      */
     async cancelWithdrawal(requestId: string, signer: Signer): Promise<{ sats: Sats }> {
       const transaction = sdk().tx.cancelWithdrawal({ requestId, recipient: signer.toSuiAddress() });
-      const result = await signAndExecute({ signer, transaction });
+      const result = await submitPreflighted({ signer, transaction });
       const sats = requireEventField(result, cfg, 'WithdrawalCancelled', 'btc_amount', at('cancelWithdrawal'));
       return { sats: BigInt(sats) };
     },

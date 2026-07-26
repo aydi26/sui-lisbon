@@ -432,7 +432,14 @@ gate_send() {
     return 0
   fi
   reset_scan
-  scan_files "$RX_TS" 'signAndExecute' "^$SEND_TS\$" '' keeper/src sdk/src
+  # Narrowed to an actual INVOCATION. The bare word also matched the type
+  # `SignAndExecute` and the injected field `readonly signAndExecute?:`, neither of
+  # which can broadcast anything — and in PowerShell, whose regex is
+  # case-insensitive by default, that made the gate cry wolf on dependency
+  # injection. Keep this pattern identical to gates.ps1: the two shells returning
+  # different verdicts is worse than either verdict being wrong, because then
+  # nobody knows which one to believe.
+  scan_files "$RX_TS" 'signAndExecute[[:space:]]*(' "^$SEND_TS\$" '' keeper/src sdk/src
   verdict send "$title" 'a revert must never be broadcast' keeper/src sdk/src
 }
 
