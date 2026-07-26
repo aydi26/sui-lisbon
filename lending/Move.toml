@@ -1,0 +1,51 @@
+# Package `aphotic_lending` — a REAL, minimal, supply-side hBTC lending market.
+#
+# WHY THIS PACKAGE EXISTS (read this before assuming it is a mock):
+#   Aphotic's idle-yield leg routes hBTC to a lending venue through the pinned adapter
+#   allowlist in `aphotic::allocate`. On Sui TESTNET there is nothing to route to —
+#   Suilend, Navi and Scallop have no testnet deployment at all, and AlphaLend's markets
+#   are testcoins plus SUI, not hBTC. Rather than fake the adapter in TypeScript and
+#   report a number nobody can check, we deploy a genuine counterparty and disclose that
+#   we are the counterparty. See the honesty block in `sources/lending.move`.
+#
+# NEW Move package system (sui 1.76.0). The single dependency ships a `Published.toml`
+# with `[published.testnet]`, so `published-at` / `original-id` resolve automatically and
+# NO `[dep-replacements]` and NO `[addresses]` block is required (docs/RECON.md R3).
+#
+# There is deliberately NO `[environments]` block: sui 1.76.0 ships `testnet`
+# (chain-id 4c78adac) and `mainnet` as SYSTEM environments and rejects an override.
+#
+# `hashi` is here for exactly one reason: the coin type `hashi::btc::BTC` (hBTC, 8 decimals,
+# sats). This package calls NO hashi function — it never touches the bridge, the withdrawal
+# queue or the treasury. `grep -n "hashi::" sources/lending.move` returns one `use` line.
+#
+# ── DEPLOYED — Sui TESTNET (chain-id 4c78adac), 2026-07-26 ────────────────────────────────
+# This file is a sanctioned home for canonical on-chain ids (CONVENTIONS.md §2.6 / G7).
+#   publish tx                 3PCybDwuxCCxEace2zSrNutPRSNvEKAazPZjbKPTqnJZ   (success)
+#   package                    0x39d038aea02ccc0bd25e97c7f1a715e87dd6ccae19b0bf9ac255379634b6ea8c
+#   shared `Market`            0x220ba0e51d56600d90c967cf523a54b6a4a48c62384810d5d89b0b884b066677
+#                              initial_shared_version = 953314524
+#   `AdminCap`                 0x454bb2997eb3682ca48a6b2627080e5228fe19462a42f06758990ce812b4744a
+#   `UpgradeCap`               0x6a196a845b22c78cbd0c5a4483f4c7da7ea7238e567295374c3e76e00647ef34
+#   share coin type            <package>::lending::LENDING   (symbol aLhBTC, 8 decimals)
+#   shared `Currency<LENDING>` 0xa0b6685de74f6853b32946f7773326d27b5563d3e634b63a35b83523645b8591
+#                              initial_shared_version = 953314525, registered by
+#                              `coin_registry::finalize_registration` in tx
+#                              CoSvQ7zBBqVyFpnW8eJRirBkAknw4ikMxbQcUatvAXW3 (success). The
+#                              metadata cap was destroyed at publish, so the coin description —
+#                              which IS the disclosure — can never be edited away.
+#   AdminCap/UpgradeCap owner  0xd41b0cd83fc1a497a5899eb686e2c7561e75e6d62db2270860d72542f63f333d
+#
+# Live state at publish: cash 0 · total_borrows 0 · reserves 0 · shares 0 · borrow_index 1e9 ·
+# base 0 bps · slope1 400 bps · kink 8_000 bps · slope2 6_000 bps · reserve factor 1_000 bps ·
+# supply cap 2.1e15 sats · unpaused. NOTHING has been supplied or borrowed: we cannot mint
+# hBTC (`hashi::treasury::mint` is `public(package)`, RECON R7.1), so the market is live and
+# empty until real hBTC reaches the deployer.
+
+[package]
+name = "aphotic_lending"
+edition = "2024.beta"
+license = "Apache-2.0"
+
+[dependencies]
+hashi = { git = "https://github.com/MystenLabs/hashi.git", subdir = "packages/hashi", rev = "d9ad6bf440a737a23e0a239d4dfe5a6a51a1de9f" }

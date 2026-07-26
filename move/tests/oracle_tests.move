@@ -1,75 +1,95 @@
 #[test_only]
 module aphotic::oracle_tests;
 
-use aphotic::oracle::{Self, EnvelopeParams};
-use sui::clock::{Self, Clock};
-use sui::event;
-use sui::test_scenario::{Self as ts, Scenario};
+use aphotic::oracle;
 
 // ┌── APHOTIC CONTRACT ────────────────────────────────────────────────────────
-// @task       T4.1
-// @phase      4
+// @task       T2.1
+// @phase      2
 // @status     DONE
-// @spec       docs/RECON.md#R9-guardian-limiter (L113-L150)   <- the golden vectors
-// @spec       docs/MOVE-PACKAGE.md#8-per-module-test-checklist (L638-L644)
-// @rules      G3 G5
-// @depends    aphotic::envelope (T4.1)
-// @facts      These vectors are SHARED with keeper/src/hashi/limiter.ts. The Move function and
-// @facts        the TypeScript function must agree byte-for-byte (G5) — if you change one,
-// @facts        change the other and re-run BOTH suites.
-// @facts      ⚠⚠ RECON R9 ARITHMETIC ERRATA — vectors 1 and 7.
-// @facts        R9 states the state {tokens 100_000, refill 10, last 0, cap 2_000_000} and
-// @facts        expects 105_000 at t = 15 s (v1) and at elapsed 15_999 ms (v7).
-// @facts        R9's own source-verified formula gives min(cap, tokens + elapsed*refill)
-// @facts          = min(2_000_000, 100_000 + 15*10) = 100_150, NOT 105_000.
-// @facts        105_000 would require elapsed*refill == 5_000, i.e. elapsed == 500 s at
-// @facts          refill 10 (or refill 333.33 at 15 s).
-// @facts        RESOLUTION: the FORMULA wins — it is the source-verified guardian algorithm and
-// @facts          G5 requires byte-identity with it. The vectors below assert the
-// @facts          formula-derived 100_150 and additionally pin the 500 s case that yields the
-// @facts          105_000 R9 intended. docs/RECON.md R9 and docs/FACTS.md#guardian-limiter
-// @facts          must be corrected. Vectors 2-6 are internally consistent and pass as written.
-// @implements #[test] fun v1_capacity_at_15_seconds()                         [DONE]
-//             #[test] fun v2_capacity_saturates_at_max_time()                 [DONE]
-//             #[test] fun v3_consume_debits_and_advances_seq()                [DONE]
-//             #[test] fun v4_consume_over_capacity_is_rate_limited()          [DONE]
-//             #[test] fun v5_consume_wrong_seq_is_invalid_inputs()            [DONE]
-//             #[test] fun v6_consume_backwards_timestamp_is_invalid_inputs()  [DONE]
-//             #[test] fun v7_milliseconds_floor_to_whole_seconds()            [DONE]
-//             #[test] fun saturating_helpers_never_abort()                     [DONE]
-//             #[test] fun backwards_clock_refills_nothing()                    [DONE]
-//             ── T4.1 (redemption buffer + the pre-action gate) ──
-//             #[test] fun accessors_round_trip_the_constructor()               [DONE]
-//             #[test] fun setters_are_the_only_way_to_move_a_threshold()       [DONE]
-//             #[test] fun buffer_is_the_static_floor_when_the_bridge_can_serve()  [DONE]
-//             #[test] fun buffer_holds_the_unserviceable_remainder()           [DONE]
-//             #[test] fun static_fallback_governs_at_zero_capacity()           [DONE]
-//             #[test] fun deployable_subtracts_the_earmark_before_the_buffer() [DONE]
-//             #[test] fun deployable_never_underflows_and_never_exceeds_idle() [DONE]
-//             #[test] fun divergence_and_slippage_bps_are_exact()              [DONE]
-//             #[test] fun divergence_fails_closed_on_a_missing_price()         [DONE]
-//             #[test] fun strategy_availability_gate()                         [DONE]
-//             #[test] fun strategy_unavailable_aborts()                        [DONE]
-//             #[test] fun strategy_with_an_empty_blob_id_aborts()              [DONE]
-//             #[test] fun check_action_succeeds_and_advances_exactly_once()    [DONE]
-//             #[test] fun check_action_emits_the_receipt()                     [DONE]
-//             #[test] fun check_action_aborts_when_paused()                    [DONE]
-//             #[test] fun check_action_aborts_on_cooldown()                    [DONE]
-//             #[test] fun first_action_is_never_cooled_down()                  [DONE]
-//             #[test] fun check_action_aborts_on_oracle_divergence()           [DONE]
-//             #[test] fun check_action_aborts_on_buffer_breach()               [DONE]
-//             #[test] fun check_action_aborts_on_the_epoch_notional_cap()      [DONE]
-//             #[test] fun check_action_aborts_on_slippage()                    [DONE]
-//             #[test] fun a_priceless_action_skips_only_the_slippage_bound()   [DONE]
-//             #[test] fun the_epoch_notional_budget_rolls()                    [DONE]
-//             #[test] fun a_zero_epoch_len_never_rolls()                       [DONE]
-//             #[test] fun abort_order_is_pause_cooldown_divergence_buffer_cap_slippage() [DONE]
+// @spec       docs/RECON.md#R9-guardian-limiter (L113-L152)   <- the golden vectors
+// @spec       docs/RECON.md#R7-hashi-move-surface (L76-L99)   <- why the queue is ATTESTED
+// @spec       aphotic.md#4.4-read-surface-for-pricing-and-nav (L163-L174)
+// @spec       aphotic.md#7.6-the-carry (L379-L387)            <- "the tail is the risk"
+// @rules      G3 G5 G10
+// @depends    aphotic::oracle (T2.1)
+// @facts      The limiter vectors are the SHARED cross-implementation contract (G5). If you
+// @facts        change one side you change the other and re-run BOTH suites.
+// @facts      ⚠⚠ RECON R9 ARITHMETIC ERRATA — vectors 1 and 7 (corrected upstream 2026-07-25).
+// @facts        R9 originally printed 105_000 for the state
+// @facts        {tokens 100_000, refill 10, last 0, cap 2_000_000} at t = 15 s and at
+// @facts        elapsed 15_999 ms. R9's own source-verified formula gives
+// @facts          min(cap, tokens + elapsed*refill) = min(2_000_000, 100_000 + 15*10) = 100_150.
+// @facts        105_000 would need elapsed*refill == 5_000, i.e. 500 s at refill 10.
+// @facts        RESOLUTION: the FORMULA wins — it is the Guardian algorithm and G5 requires
+// @facts        byte-identity with it. The vectors below assert 100_150 AND additionally pin the
+// @facts        500 s case that yields the 105_000 R9 intended.
+// @facts      REFERENCE HISTOGRAM used throughout section 3:
+// @facts        edges [600_000, 1_800_000, 3_600_000, 7_200_000] ms,
+// @facts        weights [50, 30, 15, 4], tail 1  ⇒ total 100, tail mass 100 bps.
+// @facts        cumulative 50 / 80 / 95 / 99 ⇒ p50 = 600_000 · p80 = 1_800_000 ·
+// @facts        p95 = 3_600_000 · p99 = 7_200_000 · p100 = UNBOUNDED (it is in the open tail).
+// @implements ── 1. the KEPT limiter surface: RECON R9 golden vectors, verbatim ──
+//             #[test] fun v1_capacity_at_15_seconds()                             [DONE]
+//             #[test] fun v2_capacity_saturates_at_max_time()                     [DONE]
+//             #[test] fun v3_consume_debits_and_advances_seq()                    [DONE]
+//             #[test] fun v4_consume_over_capacity_is_rate_limited()              [DONE]
+//             #[test] fun v5_consume_wrong_seq_is_invalid_inputs()                [DONE]
+//             #[test] fun v6_consume_backwards_timestamp_is_invalid_inputs()      [DONE]
+//             #[test] fun v7_milliseconds_floor_to_whole_seconds()                [DONE]
+//             #[test] fun saturating_helpers_never_abort()                        [DONE]
+//             #[test] fun backwards_clock_refills_nothing()                       [DONE]
+//             #[test] fun a_rejection_is_observed_not_thrown()                    [DONE]
+//             ── 2. the ATTESTED queue snapshot ──
+//             #[test] fun age_buckets_partition_the_line()                        [DONE]
+//             #[test] fun a_snapshot_round_trips()                                [DONE]
+//             #[test] fun the_age_quantile_reads_the_histogram()                  [DONE]
+//             #[test] fun an_all_stuck_queue_has_an_unbounded_age()               [DONE]
+//             #[test] fun an_empty_queue_reports_unbounded_not_zero()             [DONE]
+//             #[test] fun a_wrong_length_histogram_is_rejected()                  [DONE]
+//             #[test] fun being_behind_more_than_exists_is_rejected()             [DONE]
+//             #[test] fun sats_without_requests_is_rejected()                     [DONE]
+//             #[test] fun requests_without_sats_is_rejected()                     [DONE]
+//             #[test] fun nothing_may_be_older_than_the_oldest_request()          [DONE]
+//             #[test] fun an_empty_queue_may_not_claim_an_oldest_request()        [DONE]
+//             #[test] fun an_out_of_range_bucket_is_rejected()                    [DONE]
+//             ── 3. the wait-time DISTRIBUTION ──
+//             #[test] fun quantiles_walk_the_histogram()                          [DONE]
+//             #[test] fun quantiles_round_up_never_short()                        [DONE]
+//             #[test] fun the_floor_shifts_every_quantile()                       [DONE]
+//             #[test] fun the_open_tail_is_unbounded_not_large()                  [DONE]
+//             #[test] fun tail_mass_is_reported_in_bps()                          [DONE]
+//             #[test] fun distribution_accessors_round_trip()                     [DONE]
+//             #[test] fun a_mismatched_histogram_is_rejected()                    [DONE]
+//             #[test] fun an_empty_histogram_is_rejected()                        [DONE]
+//             #[test] fun non_increasing_edges_are_rejected()                     [DONE]
+//             #[test] fun the_unbounded_sentinel_may_not_be_an_edge()             [DONE]
+//             #[test] fun a_massless_distribution_is_rejected()                   [DONE]
+//             #[test] fun a_percentile_above_one_hundred_percent_is_rejected()    [DONE]
+//             ── 4. composing limiter + queue ──
+//             #[test] fun a_covered_request_waits_on_nothing()                    [DONE]
+//             #[test] fun the_drain_floor_is_the_deficit_over_the_refill_rate()   [DONE]
+//             #[test] fun the_drain_floor_rounds_up()                             [DONE]
+//             #[test] fun refill_credited_since_the_last_signature_shortens_the_wait() [DONE]
+//             #[test] fun a_dead_bucket_never_drains()                            [DONE]
+//             #[test] fun the_drain_floor_never_overflows()                       [DONE]
+//             #[test] fun a_pause_pushes_an_eta_to_the_far_side()                 [DONE]
+//             #[test] fun project_wait_stacks_the_shape_on_the_floor()            [DONE]
+//             #[test] fun a_dead_bucket_makes_every_quantile_unbounded()          [DONE]
+//             #[test] fun project_wait_carries_the_pause_into_the_floor()         [DONE]
+//             ── 5. carry sizing discipline ──
+//             #[test] fun the_hurdle_is_the_time_value_of_the_wait()              [DONE]
+//             #[test] fun an_unbounded_wait_admits_no_discount()                  [DONE]
+//             #[test] fun the_hurdle_never_overflows()                            [DONE]
 // @invariant  1. `project_capacity` never aborts, for any u64 input (saturating throughout).
-// @invariant  2. A non-OK `replay_consume` returns the state UNCHANGED.
-// @invariant  3. Every `#[test]` here asserts. An empty body is a defect, not a placeholder.
-// @ac         all 7 RECON R9 golden vectors green
-// @ac         docs/MOVE-PACKAGE.md §8 envelope_tests checklist (L638-L644)
-// @verify     sui move test envelope
+// @invariant  2. A non-OK `replay_consume` returns the state UNCHANGED and the caller keeps going.
+// @invariant  3. No quantile in this suite is compared against a MEAN — the module exposes none,
+//                and these tests must never introduce one (aphotic.md §7.6).
+// @invariant  4. Every `#[test]` here asserts. An empty body is a defect, not a placeholder.
+// @ac         all 7 RECON R9 golden vectors green, verbatim
+// @ac         every constructor rejection path has its own `expected_failure` test
+// @verify     sui move build
+// @verify     sui move test oracle
 // └── END CONTRACT ───────────────────────────────────────────────────────────
 
 const MAX_U64: u64 = 18_446_744_073_709_551_615;
@@ -79,11 +99,15 @@ const V_TOKENS: u64 = 100_000;
 const V_REFILL: u64 = 10;
 const V_CAP: u64 = 2_000_000;
 
+// ════════════════════════════════════════════════════════════════════════════
+// 1 — the KEPT limiter surface (RECON R9 golden vectors, verbatim)
+// ════════════════════════════════════════════════════════════════════════════
+
 // ── R9 vector 1 — capacity at t = 15 s ──────────────────────────────────────
 #[test]
 fun v1_capacity_at_15_seconds() {
     // FORMULA-DERIVED: min(2_000_000, 100_000 + 15*10) = 100_150.
-    // (R9 writes 105_000; see the ERRATA in the banner.)
+    // (R9 originally wrote 105_000; see the ERRATA in the banner.)
     assert!(oracle::project_capacity_secs(V_TOKENS, 0, 15, V_REFILL, V_CAP) == 100_150, 0);
 
     // The case R9 *meant*: 5_000 sats of refill needs 500 s at 10 sats/s.
@@ -102,16 +126,10 @@ fun v2_capacity_saturates_at_max_time() {
     assert!(oracle::project_capacity(V_TOKENS, 0, MAX_U64, V_REFILL, V_CAP) == V_CAP, 1);
 
     // And with a refill rate large enough that elapsed*refill alone would overflow u64.
-    assert!(
-        oracle::project_capacity_secs(V_TOKENS, 0, MAX_U64, MAX_U64, V_CAP) == V_CAP,
-        2,
-    );
+    assert!(oracle::project_capacity_secs(V_TOKENS, 0, MAX_U64, MAX_U64, V_CAP) == V_CAP, 2);
 
     // A cap of u64::MAX means the saturated sum is returned rather than the cap.
-    assert!(
-        oracle::project_capacity_secs(V_TOKENS, 0, MAX_U64, MAX_U64, MAX_U64) == MAX_U64,
-        3,
-    );
+    assert!(oracle::project_capacity_secs(V_TOKENS, 0, MAX_U64, MAX_U64, MAX_U64) == MAX_U64, 3);
 }
 
 // ── R9 vector 3 — consume(42, 100, 80_000) on {100_000, refill 0, last 0, seq 42} ──
@@ -186,7 +204,7 @@ fun v6_consume_backwards_timestamp_is_invalid_inputs() {
 // ── R9 vector 7 — 15_999 ms floors to 15 s of refill, not 16 ────────────────
 #[test]
 fun v7_milliseconds_floor_to_whole_seconds() {
-    // FORMULA-DERIVED: 15 s * 10 sats/s = 150. (R9 writes 105_000; see the ERRATA.)
+    // FORMULA-DERIVED: 15 s * 10 sats/s = 150. (R9 originally wrote 105_000; see the ERRATA.)
     assert!(oracle::project_capacity(V_TOKENS, 0, 15_999, V_REFILL, V_CAP) == 100_150, 0);
 
     // 15_999 ms and 15_000 ms must be indistinguishable.
@@ -224,493 +242,520 @@ fun backwards_clock_refills_nothing() {
     assert!(oracle::project_capacity(V_TOKENS, 100_000, 50, V_REFILL, V_CAP) == V_TOKENS, 1);
 }
 
+// ── @invariant 2: a rejection is a RETURN VALUE, so the replay survives it ──
+#[test]
+fun a_rejection_is_observed_not_thrown() {
+    // A verifier walking Hashi's WithdrawalSigned stream hits a historically rate-limited batch.
+    // If `replay_consume` aborted, that one batch would destroy the whole read. Instead the
+    // rejection comes back as a code, the state is untouched, and the walk continues.
+    let start = oracle::new_limiter_state(50_000, 0, 3);
+
+    let (rejected, unchanged) = oracle::replay_consume(start, 3, 10, 1_000_000, 0, V_CAP);
+    assert!(rejected == oracle::limiter_rate_limit_exceeded(), 0);
+    assert!(oracle::limiter_next_seq(&unchanged) == 3, 1);
+    assert!(oracle::limiter_tokens(&unchanged) == 50_000, 2);
+
+    // Same sequence number, a size the bucket can serve: the replay picks straight back up.
+    let (ok, after) = oracle::replay_consume(unchanged, 3, 10, 20_000, 0, V_CAP);
+    assert!(ok == oracle::limiter_ok(), 3);
+    assert!(oracle::limiter_tokens(&after) == 30_000, 4);
+    assert!(oracle::limiter_next_seq(&after) == 4, 5);
+
+    // A bad sequence number is also observable rather than fatal, and leaves the walk intact.
+    let (bad_seq, still) = oracle::replay_consume(after, 99, 20, 1, 0, V_CAP);
+    assert!(bad_seq == oracle::limiter_invalid_inputs(), 6);
+    assert!(oracle::limiter_next_seq(&still) == 4, 7);
+    assert!(oracle::limiter_tokens(&still) == 30_000, 8);
+}
+
 // ════════════════════════════════════════════════════════════════════════════
-// T4.1 — the redemption buffer and the pre-action gate
+// 2 — the ATTESTED queue snapshot (RECON R7.2: Move cannot read the queue)
 // ════════════════════════════════════════════════════════════════════════════
 
-const OWNER: address = @0x0A;
+/// Six buckets: 3 fresh, 2 half-hour-old, 1 an hour old, nothing older.
+fun fresh_counts(): vector<u64> { vector[3, 2, 1, 0, 0, 0] }
 
-/// DeepBook FLOAT_SCALING mid at BTC ~ $100_000 (`quote = base * price / 1e9`).
-const BOOK_MID: u128 = 1_000_000_000_000;
-
-/// Live testnet limiter scalars (E-K2): 115_740 sats/s into a 100 BTC bucket.
-const LIVE_REFILL: u64 = 115_740;
-const LIVE_CAP: u64 = 10_000_000_000;
-
-/// The reference envelope every check_action test starts from:
-///   slippage 50 bps · 1 BTC of notional per epoch · 1 s cooldown · 100 bps (1 %) buffer floor.
-fun base_params(): EnvelopeParams {
-    oracle::new_envelope_params(50, 100_000_000, 1_000, 100, LIVE_REFILL, LIVE_CAP, 0)
+/// The reference snapshot: 6 requests, 2_000_000 sats pending, 1_500_000 of them ahead of us,
+/// oldest request 50 minutes old (bucket 2).
+fun a_snapshot(): oracle::QueueObservation {
+    oracle::new_queue_observation(0, 1_500_000, 2_000_000, fresh_counts(), 3_000_000)
 }
 
-fun a_vault_id(): ID { object::id_from_address(@0xFA017) }
+#[test]
+fun age_buckets_partition_the_line() {
+    assert!(oracle::age_bucket_count() == 6, 0);
 
-/// A clock parked at `ms`, in its own scenario. Every check_action test needs one because the
-/// cooldown and the epoch roll are clock-driven.
-fun clock_at(scenario: &mut Scenario, ms: u64): Clock {
-    let mut clk = clock::create_for_testing(scenario.ctx());
-    clk.set_for_testing(ms);
-    clk
+    // Edges are INCLUSIVE uppers, so each boundary belongs to the lower bucket.
+    assert!(oracle::age_bucket_index(0) == 0, 1);
+    assert!(oracle::age_bucket_index(600_000) == 0, 2);
+    assert!(oracle::age_bucket_index(600_001) == 1, 3);
+    assert!(oracle::age_bucket_index(1_800_000) == 1, 4);
+    assert!(oracle::age_bucket_index(1_800_001) == 2, 5);
+    assert!(oracle::age_bucket_index(3_600_000) == 2, 6);
+    assert!(oracle::age_bucket_index(3_600_001) == 3, 7);
+    assert!(oracle::age_bucket_index(7_200_000) == 3, 8);
+    assert!(oracle::age_bucket_index(7_200_001) == 4, 9);
+    assert!(oracle::age_bucket_index(21_600_000) == 4, 10);
+    assert!(oracle::age_bucket_index(21_600_001) == 5, 11);
+    assert!(oracle::age_bucket_index(MAX_U64) == 5, 12);
+
+    // The last bucket is OPEN — it reports the unbounded sentinel, not a large number.
+    assert!(oracle::age_bucket_upper_ms(4) == 21_600_000, 13);
+    assert!(oracle::age_bucket_upper_ms(5) == oracle::unbounded_ms(), 14);
 }
 
-/// `check_action` with the reference vault state: 1 BTC idle, NAV == idle, nothing earmarked,
-/// no exit demand, the bridge bucket full. Only the arguments a test actually varies are
-/// parameters.
-fun check(
-    params: &mut EnvelopeParams,
-    idle_sats: u64,
-    earmarked: u64,
-    demand: u64,
-    capacity: u64,
-    notional: u64,
-    action_price: u128,
-    oracle_mid: u128,
-    clk: &Clock,
-) {
-    oracle::check_action(
-        a_vault_id(),
-        false,
-        idle_sats,
-        idle_sats,
-        earmarked,
-        demand,
-        capacity,
-        params,
-        notional,
-        action_price,
-        BOOK_MID,
-        oracle_mid,
-        clk,
+#[test]
+fun a_snapshot_round_trips() {
+    let q = a_snapshot();
+
+    assert!(oracle::queue_observed_at_ms(&q) == 0, 0);
+    assert!(oracle::queue_ahead_of_us_sats(&q) == 1_500_000, 1);
+    assert!(oracle::queue_total_pending_sats(&q) == 2_000_000, 2);
+    assert!(oracle::queue_oldest_age_ms(&q) == 3_000_000, 3);
+
+    // The count is DERIVED from the histogram, so no caller can disagree about it.
+    assert!(oracle::queue_pending_count(&q) == 6, 4);
+    assert!(oracle::queue_age_count_at(&q, 0) == 3, 5);
+    assert!(oracle::queue_age_count_at(&q, 1) == 2, 6);
+    assert!(oracle::queue_age_count_at(&q, 2) == 1, 7);
+    assert!(oracle::queue_age_count_at(&q, 5) == 0, 8);
+}
+
+#[test]
+fun the_age_quantile_reads_the_histogram() {
+    let q = a_snapshot(); // counts 3 / 2 / 1, cumulative 3 / 5 / 6 out of 6
+
+    // p50: target ceil(6 * 0.50) = 3, covered by bucket 0.
+    assert!(oracle::queue_age_percentile_ms(&q, 5_000) == 600_000, 0);
+    // p60: target ceil(3.6) = 4 — bucket 0 alone is one short, so it rounds into bucket 1.
+    assert!(oracle::queue_age_percentile_ms(&q, 6_000) == 1_800_000, 1);
+    // p90: target ceil(5.4) = 6, only reached at bucket 2.
+    assert!(oracle::queue_age_percentile_ms(&q, 9_000) == 3_600_000, 2);
+    // The oldest request is 50 minutes old, so p100 is bounded by the 1 h edge.
+    assert!(oracle::queue_age_percentile_ms(&q, 10_000) == 3_600_000, 3);
+}
+
+#[test]
+fun an_all_stuck_queue_has_an_unbounded_age() {
+    // Two requests, both beyond the 6 h edge — the exact shape "depth alone" would hide: a
+    // shallow queue that is not moving at all.
+    let q = oracle::new_queue_observation(0, 0, 60_000, vector[0, 0, 0, 0, 0, 2], 30_000_000);
+
+    assert!(oracle::queue_pending_count(&q) == 2, 0);
+    assert!(oracle::queue_age_percentile_ms(&q, 5_000) == oracle::unbounded_ms(), 1);
+    assert!(oracle::queue_age_percentile_ms(&q, 10_000) == oracle::unbounded_ms(), 2);
+}
+
+#[test]
+fun an_empty_queue_reports_unbounded_not_zero() {
+    let q = oracle::new_queue_observation(1_234, 0, 0, vector[0, 0, 0, 0, 0, 0], 0);
+
+    assert!(oracle::queue_pending_count(&q) == 0, 0);
+    // There is no age to report. Zero would read as "instant", which is a different claim.
+    assert!(oracle::queue_age_percentile_ms(&q, 5_000) == oracle::unbounded_ms(), 1);
+}
+
+#[test]
+#[expected_failure(abort_code = oracle::EBadAgeHistogram)]
+fun a_wrong_length_histogram_is_rejected() {
+    let _ = oracle::new_queue_observation(0, 0, 30_000, vector[1, 0, 0], 100);
+}
+
+#[test]
+#[expected_failure(abort_code = oracle::EInconsistentQueue)]
+fun being_behind_more_than_exists_is_rejected() {
+    // We cannot be behind 3_000_000 sats when the whole queue holds 2_000_000.
+    let _ = oracle::new_queue_observation(0, 3_000_000, 2_000_000, fresh_counts(), 3_000_000);
+}
+
+#[test]
+#[expected_failure(abort_code = oracle::EInconsistentQueue)]
+fun sats_without_requests_is_rejected() {
+    let _ = oracle::new_queue_observation(0, 0, 2_000_000, vector[0, 0, 0, 0, 0, 0], 0);
+}
+
+#[test]
+#[expected_failure(abort_code = oracle::EInconsistentQueue)]
+fun requests_without_sats_is_rejected() {
+    // Hashi's withdrawal minimum is 30_000 sats, so a pending request never contributes zero.
+    let _ = oracle::new_queue_observation(0, 0, 0, fresh_counts(), 3_000_000);
+}
+
+#[test]
+#[expected_failure(abort_code = oracle::EInconsistentQueue)]
+fun nothing_may_be_older_than_the_oldest_request() {
+    // Oldest claimed at 10 minutes (bucket 0) while a request sits in the 2 h bucket.
+    let _ = oracle::new_queue_observation(0, 0, 60_000, vector[1, 0, 0, 1, 0, 0], 600_000);
+}
+
+#[test]
+#[expected_failure(abort_code = oracle::EInconsistentQueue)]
+fun an_empty_queue_may_not_claim_an_oldest_request() {
+    let _ = oracle::new_queue_observation(0, 0, 0, vector[0, 0, 0, 0, 0, 0], 900_000);
+}
+
+#[test]
+#[expected_failure(abort_code = oracle::EBadAgeHistogram)]
+fun an_out_of_range_bucket_is_rejected() {
+    let q = a_snapshot();
+    let _ = oracle::queue_age_count_at(&q, 6);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// 3 — the wait-time DISTRIBUTION (aphotic.md §7.6)
+// ════════════════════════════════════════════════════════════════════════════
+
+fun ref_edges(): vector<u64> { vector[600_000, 1_800_000, 3_600_000, 7_200_000] }
+
+fun ref_weights(): vector<u64> { vector[50, 30, 15, 4] }
+
+/// Total 100, cumulative 50 / 80 / 95 / 99, with 1 unit of mass in the OPEN tail.
+fun ref_distribution(floor_ms: u64): oracle::LatencyDistribution {
+    oracle::new_latency_distribution(ref_edges(), ref_weights(), 1, floor_ms)
+}
+
+#[test]
+fun quantiles_walk_the_histogram() {
+    let d = ref_distribution(0);
+
+    assert!(oracle::percentile_ms(&d, 5_000) == 600_000, 0);
+    assert!(oracle::percentile_ms(&d, 8_000) == 1_800_000, 1);
+    assert!(oracle::percentile_ms(&d, 9_500) == 3_600_000, 2);
+    assert!(oracle::percentile_ms(&d, 9_900) == 7_200_000, 3);
+
+    assert!(oracle::is_bounded_at_bps(&d, 9_900), 4);
+    assert!(oracle::distribution_total_weight(&d) == 100, 5);
+}
+
+#[test]
+fun quantiles_round_up_never_short() {
+    let d = ref_distribution(0);
+
+    // p51 needs ceil(51) = 51 units; bucket 0 holds only 50, so the quantile MUST step up.
+    // Rounding down here would report a p51 that covers 50 % — the under-reported tail §7.6
+    // forbids.
+    assert!(oracle::percentile_ms(&d, 5_100) == 1_800_000, 0);
+    // p50 is exactly covered by bucket 0 and must NOT step up.
+    assert!(oracle::percentile_ms(&d, 5_000) == 600_000, 1);
+    // p95 is exactly covered at bucket 2; p9501 rounds to 96 and steps into bucket 3.
+    assert!(oracle::percentile_ms(&d, 9_500) == 3_600_000, 2);
+    assert!(oracle::percentile_ms(&d, 9_501) == 7_200_000, 3);
+}
+
+#[test]
+fun the_floor_shifts_every_quantile() {
+    // The deterministic drain floor is arithmetic, not belief: it moves the WHOLE distribution.
+    let d = ref_distribution(60_000);
+
+    assert!(oracle::distribution_floor_ms(&d) == 60_000, 0);
+    assert!(oracle::percentile_ms(&d, 5_000) == 660_000, 1);
+    assert!(oracle::percentile_ms(&d, 9_900) == 7_260_000, 2);
+
+    // Shape and floor stay separable, so a reader can discount the belief and keep the arithmetic.
+    let bare = ref_distribution(0);
+    assert!(oracle::percentile_ms(&d, 5_000) - oracle::percentile_ms(&bare, 5_000) == 60_000, 3);
+}
+
+#[test]
+fun the_open_tail_is_unbounded_not_large() {
+    let d = ref_distribution(0);
+
+    // 1 unit of 100 sits past the last finite edge. p100 therefore has NO bound, and the
+    // module says so instead of quietly returning the last edge.
+    assert!(oracle::percentile_ms(&d, 10_000) == oracle::unbounded_ms(), 0);
+    assert!(!oracle::is_bounded_at_bps(&d, 10_000), 1);
+
+    // A distribution whose mass is entirely in the tail is unbounded everywhere above p0.
+    let all_tail = oracle::new_latency_distribution(ref_edges(), vector[0, 0, 0, 0], 7, 0);
+    assert!(oracle::percentile_ms(&all_tail, 1) == oracle::unbounded_ms(), 2);
+    assert!(oracle::tail_mass_bps(&all_tail) == 10_000, 3);
+}
+
+#[test]
+fun tail_mass_is_reported_in_bps() {
+    let d = ref_distribution(0);
+    assert!(oracle::tail_mass_bps(&d) == 100, 0); // 1 of 100 == 1 % == 100 bps
+
+    let no_tail = oracle::new_latency_distribution(ref_edges(), ref_weights(), 0, 0);
+    assert!(oracle::tail_mass_bps(&no_tail) == 0, 1);
+    assert!(oracle::percentile_ms(&no_tail, 10_000) == 7_200_000, 2);
+}
+
+#[test]
+fun distribution_accessors_round_trip() {
+    let d = ref_distribution(1_234);
+
+    assert!(oracle::distribution_bucket_count(&d) == 4, 0);
+    assert!(oracle::distribution_bucket_upper_ms_at(&d, 0) == 600_000, 1);
+    assert!(oracle::distribution_bucket_upper_ms_at(&d, 3) == 7_200_000, 2);
+    assert!(oracle::distribution_weight_at(&d, 0) == 50, 3);
+    assert!(oracle::distribution_weight_at(&d, 3) == 4, 4);
+    assert!(oracle::distribution_tail_weight(&d) == 1, 5);
+    assert!(oracle::distribution_total_weight(&d) == 100, 6);
+    assert!(oracle::distribution_floor_ms(&d) == 1_234, 7);
+    assert!(oracle::bps_denominator() == 10_000, 8);
+}
+
+#[test]
+#[expected_failure(abort_code = oracle::EBadHistogram)]
+fun a_mismatched_histogram_is_rejected() {
+    let _ = oracle::new_latency_distribution(ref_edges(), vector[50, 30, 15], 1, 0);
+}
+
+#[test]
+#[expected_failure(abort_code = oracle::EBadHistogram)]
+fun an_empty_histogram_is_rejected() {
+    let _ = oracle::new_latency_distribution(vector[], vector[], 1, 0);
+}
+
+#[test]
+#[expected_failure(abort_code = oracle::EBadHistogram)]
+fun non_increasing_edges_are_rejected() {
+    let _ = oracle::new_latency_distribution(
+        vector[600_000, 600_000, 3_600_000],
+        vector[1, 1, 1],
+        0,
+        0,
     );
 }
 
-// ── accessors / setters ─────────────────────────────────────────────────────
-
 #[test]
-fun accessors_round_trip_the_constructor() {
-    let p = oracle::new_envelope_params(50, 100_000_000, 1_000, 100, LIVE_REFILL, LIVE_CAP, 7);
-
-    assert!(oracle::max_slippage_bps(&p) == 50, 0);
-    assert!(oracle::max_notional_per_epoch_sats(&p) == 100_000_000, 1);
-    assert!(oracle::min_cooldown_ms(&p) == 1_000, 2);
-    assert!(oracle::buffer_ratio_bps(&p) == 100, 3);
-    assert!(oracle::limiter_refill_rate(&p) == LIVE_REFILL, 4);
-    assert!(oracle::limiter_max_capacity(&p) == LIVE_CAP, 5);
-    assert!(oracle::epoch_start_ms(&p) == 7, 6);
-
-    // Epoch accounting starts empty, so the FIRST action is never cooled down.
-    assert!(oracle::epoch_notional_used_sats(&p) == 0, 7);
-    assert!(oracle::last_action_ms(&p) == 0, 8);
-
-    // The two T4.1 fields are DEFAULTED, keeping the constructor at 7 arguments (delta (b)).
-    assert!(oracle::max_divergence_bps(&p) == oracle::default_max_divergence_bps(), 9);
-    assert!(oracle::epoch_len_ms(&p) == oracle::default_epoch_len_ms(), 10);
-    assert!(oracle::default_max_divergence_bps() == 200, 11);
-    assert!(oracle::default_epoch_len_ms() == 86_400_000, 12);
-    assert!(oracle::bps_denominator() == 10_000, 13);
+#[expected_failure(abort_code = oracle::EBadHistogram)]
+fun the_unbounded_sentinel_may_not_be_an_edge() {
+    // The open tail is `tail_weight`. Smuggling it in as a finite edge would let a caller report
+    // a bounded quantile for mass that has no bound.
+    let _ = oracle::new_latency_distribution(vector[600_000, MAX_U64], vector[1, 1], 0, 0);
 }
 
 #[test]
-fun setters_are_the_only_way_to_move_a_threshold() {
-    let mut p = base_params();
-
-    oracle::set_max_divergence_bps(&mut p, 25);
-    oracle::set_epoch_len_ms(&mut p, 0);
-
-    assert!(oracle::max_divergence_bps(&p) == 25, 0);
-    assert!(oracle::epoch_len_ms(&p) == 0, 1);
-
-    // Nothing else moved.
-    assert!(oracle::max_slippage_bps(&p) == 50, 2);
-    assert!(oracle::buffer_ratio_bps(&p) == 100, 3);
-}
-
-// ── the redemption buffer (G3) ──────────────────────────────────────────────
-
-#[test]
-fun buffer_is_the_static_floor_when_the_bridge_can_serve() {
-    let p = base_params(); // 100 bps == 1 %
-
-    // Demand 5_000_000 sats, bucket can clear 10 BTC ⇒ nothing is unserviceable, so the
-    // OWNER-set static floor governs: 1 % of a 100_000_000 sat NAV.
-    let buffer = oracle::buffer_sats(100_000_000, 5_000_000, LIVE_CAP, &p);
-    assert!(buffer == 1_000_000, 0);
+#[expected_failure(abort_code = oracle::EEmptyDistribution)]
+fun a_massless_distribution_is_rejected() {
+    let _ = oracle::new_latency_distribution(ref_edges(), vector[0, 0, 0, 0], 0, 0);
 }
 
 #[test]
-fun buffer_holds_the_unserviceable_remainder() {
-    let p = base_params();
+#[expected_failure(abort_code = oracle::EBadPercentile)]
+fun a_percentile_above_one_hundred_percent_is_rejected() {
+    let d = ref_distribution(0);
+    let _ = oracle::percentile_ms(&d, 10_001);
+}
 
-    // The bridge can only clear 2_000_000 of 9_000_000 sats of demand. The vault must hold the
-    // 7_000_000 sat remainder idle — you cannot buy priority in the global queue (G3).
-    let buffer = oracle::buffer_sats(100_000_000, 9_000_000, 2_000_000, &p);
-    assert!(buffer == 7_000_000, 0);
+// ════════════════════════════════════════════════════════════════════════════
+// 4 — composing the limiter and the queue
+// ════════════════════════════════════════════════════════════════════════════
 
-    // ...and that dominates the 1_000_000 static floor, which is what `max` is for.
-    assert!(buffer > oracle::buffer_sats(100_000_000, 0, LIVE_CAP, &p), 1);
+/// A bucket holding 1_000_000 sats, refilling at 1_000 sats/s into a 100 BTC cap.
+const D_TOKENS: u64 = 1_000_000;
+const D_REFILL: u64 = 1_000;
+const D_CAP: u64 = 10_000_000_000;
+
+fun drain_state(): oracle::LimiterState { oracle::new_limiter_state(D_TOKENS, 0, 0) }
+
+#[test]
+fun a_covered_request_waits_on_nothing() {
+    let s = drain_state();
+    // 500_000 ahead + 100_000 of our own = 600_000 <= the 1_000_000 already in the bucket.
+    assert!(oracle::drain_eta_secs(&s, D_REFILL, D_CAP, 0, 500_000, 100_000) == 0, 0);
+    // Exactly covered is still covered.
+    assert!(oracle::drain_eta_secs(&s, D_REFILL, D_CAP, 0, 900_000, 100_000) == 0, 1);
 }
 
 #[test]
-fun static_fallback_governs_at_zero_capacity() {
-    let p = base_params();
+fun the_drain_floor_is_the_deficit_over_the_refill_rate() {
+    let s = drain_state();
+    // needed 1_600_000, available 1_000_000, deficit 600_000 at 1_000 sats/s = 600 s.
+    assert!(oracle::drain_eta_secs(&s, D_REFILL, D_CAP, 0, 1_500_000, 100_000) == 600, 0);
 
-    // projected_capacity == 0 forces the U3 fallback path (RECON R7.2: no on-chain queue-depth
-    // getter exists). With no demand either, the buffer is exactly the bps floor.
-    assert!(oracle::buffer_sats(100_000_000, 0, 0, &p) == 1_000_000, 0);
-
-    // A keeper attesting capacity == 0 AND demand == 0 cannot push the buffer below the floor —
-    // that is the whole trust bound.
-    assert!(oracle::buffer_sats(100_000_000, 0, 0, &p) >= 1_000_000, 1);
+    // Our OWN size is part of the deficit — a bigger exit waits longer for the same queue.
+    assert!(oracle::drain_eta_secs(&s, D_REFILL, D_CAP, 0, 1_500_000, 600_000) == 1_100, 1);
 }
 
 #[test]
-fun deployable_subtracts_the_earmark_before_the_buffer() {
-    let p = base_params();
-
-    // idle 100_000_000 sats, of which 30_000_000 are POOLED sub-minimum exits whose shares are
-    // already burned (vault @invariant 3 / envelope @invariant 6). NAV excludes them.
-    let nav = 70_000_000;
-    let deployable = oracle::deployable_sats(100_000_000, nav, 30_000_000, 0, LIVE_CAP, &p);
-
-    // (100_000_000 - 30_000_000) - 1 % of 70_000_000 = 70_000_000 - 700_000.
-    assert!(deployable == 69_300_000, 0);
-
-    // Dropping the earmark would have let the keeper deploy other depositors' exit sats.
-    let without_earmark = oracle::deployable_sats(100_000_000, nav, 0, 0, LIVE_CAP, &p);
-    assert!(without_earmark == 99_300_000, 1);
-    assert!(deployable < without_earmark, 2);
+fun the_drain_floor_rounds_up() {
+    let s = drain_state();
+    // deficit 600_001 sats at 1_000 sats/s is 600.001 s — a partial second does not clear it.
+    assert!(oracle::drain_eta_secs(&s, D_REFILL, D_CAP, 0, 1_500_001, 100_000) == 601, 0);
 }
 
 #[test]
-fun deployable_never_underflows_and_never_exceeds_idle() {
-    let p = base_params();
-
-    // Buffer larger than the whole idle balance -> 0, not an abort and not a wrap (@invariant 2).
-    assert!(oracle::deployable_sats(1_000, 100_000_000, 0, 0, LIVE_CAP, &p) == 0, 0);
-
-    // Earmark larger than idle -> 0.
-    assert!(oracle::deployable_sats(1_000, 1_000, MAX_U64, 0, LIVE_CAP, &p) == 0, 1);
-
-    // Unserviceable demand at u64::MAX -> 0, no overflow anywhere.
-    assert!(oracle::deployable_sats(MAX_U64, MAX_U64, 0, MAX_U64, 0, &p) == 0, 2);
-
-    // deployable <= idle for every combination above, and for a zero-buffer envelope.
-    let zero_buffer = oracle::new_envelope_params(50, MAX_U64, 0, 0, LIVE_REFILL, LIVE_CAP, 0);
-    assert!(oracle::deployable_sats(12_345, 12_345, 0, 0, LIVE_CAP, &zero_buffer) == 12_345, 3);
-
-    // A 100 % buffer ratio strands everything.
-    let all_buffer = oracle::new_envelope_params(50, MAX_U64, 0, 10_000, LIVE_REFILL, LIVE_CAP, 0);
-    assert!(oracle::deployable_sats(12_345, 12_345, 0, 0, LIVE_CAP, &all_buffer) == 0, 4);
-}
-
-// ── the two bps breakers ────────────────────────────────────────────────────
-
-#[test]
-fun divergence_and_slippage_bps_are_exact() {
-    // 1 % above the oracle == 100 bps, measured against the oracle reference.
-    assert!(oracle::divergence_bps(101_000_000_000_000, 100_000_000_000_000) == 100, 0);
-    // ...and symmetric below it.
-    assert!(oracle::divergence_bps(99_000_000_000_000, 100_000_000_000_000) == 100, 1);
-    assert!(oracle::divergence_bps(BOOK_MID, BOOK_MID) == 0, 2);
-
-    // Slippage is measured against the BOOK mid (G9: never a raw oracle price).
-    assert!(oracle::slippage_bps(BOOK_MID + BOOK_MID / 100, BOOK_MID) == 100, 3);
-    assert!(oracle::slippage_bps(BOOK_MID - BOOK_MID / 200, BOOK_MID) == 50, 4);
-    assert!(oracle::slippage_bps(BOOK_MID, BOOK_MID) == 0, 5);
+fun refill_credited_since_the_last_signature_shortens_the_wait() {
+    let s = drain_state(); // last_updated_at_s = 0
+    // 300 s of refill have already accrued: available 1_300_000, deficit 300_000 = 300 s.
+    assert!(oracle::drain_eta_secs(&s, D_REFILL, D_CAP, 300, 1_500_000, 100_000) == 300, 0);
+    // Far enough forward and the bucket has refilled past the need entirely.
+    assert!(oracle::drain_eta_secs(&s, D_REFILL, D_CAP, 10_000, 1_500_000, 100_000) == 0, 1);
 }
 
 #[test]
-fun divergence_fails_closed_on_a_missing_price() {
-    // No oracle reading, or an empty book (E-M7: the live testnet state) must NOT read as
-    // "zero divergence, trade away". Both saturate, so the breaker trips.
-    assert!(oracle::divergence_bps(BOOK_MID, 0) == MAX_U64, 0);
-    assert!(oracle::divergence_bps(0, BOOK_MID) == MAX_U64, 1);
-    assert!(oracle::divergence_bps(0, 0) == MAX_U64, 2);
-    assert!(oracle::slippage_bps(BOOK_MID, 0) == MAX_U64, 3);
-}
-
-// ── Walrus strategy availability (E-M11: attested OFF-chain) ────────────────
-
-#[test]
-fun strategy_availability_gate() {
-    oracle::assert_strategy_available(&b"blob-v0", true);
-}
-
-#[test]
-#[expected_failure(abort_code = oracle::EBlobUnavailable)]
-fun strategy_unavailable_aborts() {
-    oracle::assert_strategy_available(&b"blob-v0", false);
-}
-
-#[test]
-#[expected_failure(abort_code = oracle::EBlobUnavailable)]
-fun strategy_with_an_empty_blob_id_aborts() {
-    oracle::assert_strategy_available(&vector[], true);
-}
-
-// ── check_action: the happy path ────────────────────────────────────────────
-
-#[test]
-fun check_action_succeeds_and_advances_exactly_once() {
-    let mut scenario = ts::begin(OWNER);
-    let clk = clock_at(&mut scenario, 5_000);
-    let mut p = base_params();
-
-    check(&mut p, 100_000_000, 0, 0, LIVE_CAP, 1_000_000, BOOK_MID, BOOK_MID, &clk);
-
-    // @invariant 4: the epoch notional advanced by exactly the action, once.
-    assert!(oracle::epoch_notional_used_sats(&p) == 1_000_000, 0);
-    assert!(oracle::last_action_ms(&p) == 5_000, 1);
-
-    // A second action past the cooldown accumulates rather than replacing.
-    let mut clk2 = clk;
-    clk2.set_for_testing(9_000);
-    check(&mut p, 100_000_000, 0, 0, LIVE_CAP, 2_000_000, BOOK_MID, BOOK_MID, &clk2);
-    assert!(oracle::epoch_notional_used_sats(&p) == 3_000_000, 2);
-    assert!(oracle::last_action_ms(&p) == 9_000, 3);
-
-    clock::destroy_for_testing(clk2);
-    scenario.end();
-}
-
-#[test]
-fun check_action_emits_the_receipt() {
-    let mut scenario = ts::begin(OWNER);
-    scenario.next_tx(OWNER);
-    let clk = clock_at(&mut scenario, 5_000);
-    let mut p = base_params();
-
-    check(&mut p, 100_000_000, 0, 4_000_000, LIVE_CAP, 1_000_000, BOOK_MID, BOOK_MID, &clk);
-
-    let events = event::events_by_type<oracle::EnvelopeChecked>();
-    assert!(events.length() == 1, 0);
-    let (vault_id, notional, deployable, capacity, mid) =
-        oracle::envelope_checked_fields(events.borrow(0));
-
-    assert!(vault_id == a_vault_id(), 1);
-    assert!(notional == 1_000_000, 2);
-    // 100_000_000 idle - 1 % static floor (the bucket can serve the 4_000_000 of demand).
-    assert!(deployable == 99_000_000, 3);
-    assert!(capacity == LIVE_CAP, 4);
-    assert!(mid == BOOK_MID, 5);
-
-    clock::destroy_for_testing(clk);
-    scenario.end();
-}
-
-// ── check_action: every abort path, IN ORDER ────────────────────────────────
-
-#[test]
-#[expected_failure(abort_code = oracle::EPaused)]
-fun check_action_aborts_when_paused() {
-    let mut scenario = ts::begin(OWNER);
-    let clk = clock_at(&mut scenario, 5_000);
-    let mut p = base_params();
-
-    oracle::check_action(
-        a_vault_id(),
-        true, // paused
-        100_000_000,
-        100_000_000,
+fun a_dead_bucket_never_drains() {
+    let s = drain_state();
+    // refill_rate == 0: the deficit is never made up. "Unbounded" is the honest answer.
+    assert!(
+        oracle::drain_eta_secs(&s, 0, D_CAP, 0, 1_500_000, 100_000) == oracle::unbounded_ms(),
         0,
+    );
+}
+
+#[test]
+fun the_drain_floor_never_overflows() {
+    let s = drain_state();
+    // ahead + own saturates rather than aborting, and the eta clamps rather than wrapping.
+    assert!(oracle::drain_eta_secs(&s, 1, D_CAP, 0, MAX_U64, MAX_U64) > 0, 0);
+    assert!(oracle::drain_eta_secs(&s, MAX_U64, D_CAP, 0, MAX_U64, MAX_U64) == 1, 1);
+    // A cap smaller than the tokens on hand still yields a finite, saturating answer.
+    assert!(oracle::drain_eta_secs(&s, 1, 1, MAX_U64, 10, 0) == 9, 2);
+}
+
+#[test]
+fun a_pause_pushes_an_eta_to_the_far_side() {
+    // Reconfiguration window: [1_000_000, 2_800_000) ms.
+    let start = 1_000_000;
+    let len = 1_800_000;
+
+    // Landing before the window is untouched.
+    assert!(oracle::pause_adjusted_eta_ms(600_000, 0, start, len) == 600_000, 0);
+    // Landing INSIDE it lands at the far edge instead.
+    assert!(oracle::pause_adjusted_eta_ms(1_200_000, 0, start, len) == 2_800_000, 1);
+    // The very first instant of the window is inside it.
+    assert!(oracle::pause_adjusted_eta_ms(1_000_000, 0, start, len) == 2_800_000, 2);
+    // The first instant after it is not.
+    assert!(oracle::pause_adjusted_eta_ms(2_800_000, 0, start, len) == 2_800_000, 3);
+    assert!(oracle::pause_adjusted_eta_ms(3_000_000, 0, start, len) == 3_000_000, 4);
+
+    // No announced pause is the identity.
+    assert!(oracle::pause_adjusted_eta_ms(1_200_000, 0, start, 0) == 1_200_000, 5);
+    // An already-unbounded eta stays unbounded.
+    assert!(
+        oracle::pause_adjusted_eta_ms(oracle::unbounded_ms(), 0, start, len)
+            == oracle::unbounded_ms(),
+        6,
+    );
+    // `now` is the origin the eta is measured from, so a later `now` shortens the push.
+    assert!(oracle::pause_adjusted_eta_ms(400_000, 900_000, start, len) == 1_900_000, 7);
+}
+
+#[test]
+fun project_wait_stacks_the_shape_on_the_floor() {
+    let q = a_snapshot(); // 1_500_000 sats ahead of us, observed at t = 0
+    let s = drain_state();
+
+    let d = oracle::project_wait(
+        &q,
+        &s,
+        D_REFILL,
+        D_CAP,
+        0, // now_s
+        100_000, // our own size
+        0, // no announced pause
         0,
-        LIVE_CAP,
-        &mut p,
-        1_000_000,
-        BOOK_MID,
-        BOOK_MID,
-        BOOK_MID,
-        &clk,
+        ref_edges(),
+        ref_weights(),
+        1,
     );
 
-    abort 0
+    // deficit 600_000 sats / 1_000 sats per s = 600 s = 600_000 ms of deterministic floor.
+    assert!(oracle::distribution_floor_ms(&d) == 600_000, 0);
+    assert!(oracle::percentile_ms(&d, 5_000) == 1_200_000, 1);
+    assert!(oracle::percentile_ms(&d, 9_500) == 4_200_000, 2);
+    // The open tail survives the shift — a floor cannot bound what the shape leaves unbounded.
+    assert!(oracle::percentile_ms(&d, 10_000) == oracle::unbounded_ms(), 3);
+    assert!(oracle::tail_mass_bps(&d) == 100, 4);
 }
 
 #[test]
-#[expected_failure(abort_code = oracle::ECooldown)]
-fun check_action_aborts_on_cooldown() {
-    let mut scenario = ts::begin(OWNER);
-    let mut clk = clock_at(&mut scenario, 5_000);
-    let mut p = base_params(); // cooldown 1_000 ms
+fun a_dead_bucket_makes_every_quantile_unbounded() {
+    let q = a_snapshot();
+    let s = drain_state();
 
-    check(&mut p, 100_000_000, 0, 0, LIVE_CAP, 1_000_000, BOOK_MID, BOOK_MID, &clk);
-    assert!(oracle::last_action_ms(&p) == 5_000, 0);
-
-    // 999 ms later — one millisecond short.
-    clk.set_for_testing(5_999);
-    check(&mut p, 100_000_000, 0, 0, LIVE_CAP, 1_000_000, BOOK_MID, BOOK_MID, &clk);
-
-    abort 0
-}
-
-#[test]
-fun first_action_is_never_cooled_down() {
-    let mut scenario = ts::begin(OWNER);
-    // Clock at 0 with a 1_000 ms cooldown: `now - last_action_ms` would be 0 < 1_000. A fresh
-    // envelope must not be cooled down against its own `last_action_ms == 0` sentinel.
-    let clk = clock_at(&mut scenario, 0);
-    let mut p = base_params();
-
-    check(&mut p, 100_000_000, 0, 0, LIVE_CAP, 1_000_000, BOOK_MID, BOOK_MID, &clk);
-    assert!(oracle::epoch_notional_used_sats(&p) == 1_000_000, 0);
-    // The sentinel is still 0 because the action itself landed at t = 0 — and the NEXT action
-    // is therefore still un-cooled, which is the honest reading of "no action has been timed".
-    assert!(oracle::last_action_ms(&p) == 0, 1);
-
-    clock::destroy_for_testing(clk);
-    scenario.end();
-}
-
-#[test]
-#[expected_failure(abort_code = oracle::EOracleDivergence)]
-fun check_action_aborts_on_oracle_divergence() {
-    let mut scenario = ts::begin(OWNER);
-    let clk = clock_at(&mut scenario, 5_000);
-    let mut p = base_params(); // default breaker = 200 bps
-
-    // Oracle 3 % below the book: 300 bps of divergence. G9 depeg defence.
-    let oracle = BOOK_MID - (BOOK_MID * 3) / 100;
-    check(&mut p, 100_000_000, 0, 0, LIVE_CAP, 1_000_000, BOOK_MID, oracle, &clk);
-
-    abort 0
-}
-
-#[test]
-#[expected_failure(abort_code = oracle::EBufferBreach)]
-fun check_action_aborts_on_buffer_breach() {
-    let mut scenario = ts::begin(OWNER);
-    let clk = clock_at(&mut scenario, 5_000);
-    let mut p = base_params();
-
-    // 9_000_000 sats of exit demand, the bucket can clear 2_000_000 ⇒ 7_000_000 must stay idle.
-    // Deployable is 100_000_000 - 7_000_000 = 93_000_000; the action asks for one sat more.
-    check(&mut p, 100_000_000, 0, 9_000_000, 2_000_000, 93_000_001, BOOK_MID, BOOK_MID, &clk);
-
-    abort 0
-}
-
-#[test]
-#[expected_failure(abort_code = oracle::ENotionalCap)]
-fun check_action_aborts_on_the_epoch_notional_cap() {
-    let mut scenario = ts::begin(OWNER);
-    let mut clk = clock_at(&mut scenario, 5_000);
-    let mut p = base_params(); // 100_000_000 sats per epoch
-
-    check(&mut p, 200_000_000, 0, 0, LIVE_CAP, 60_000_000, BOOK_MID, BOOK_MID, &clk);
-    assert!(oracle::epoch_notional_used_sats(&p) == 60_000_000, 0);
-
-    // 60m + 41m > 100m, and the 24 h window has not rolled.
-    clk.set_for_testing(20_000);
-    check(&mut p, 200_000_000, 0, 0, LIVE_CAP, 41_000_000, BOOK_MID, BOOK_MID, &clk);
-
-    abort 0
-}
-
-#[test]
-#[expected_failure(abort_code = oracle::ESlippage)]
-fun check_action_aborts_on_slippage() {
-    let mut scenario = ts::begin(OWNER);
-    let clk = clock_at(&mut scenario, 5_000);
-    let mut p = base_params(); // 50 bps
-
-    // Quote 1 % (100 bps) through the book mid.
-    let price = BOOK_MID + BOOK_MID / 100;
-    check(&mut p, 100_000_000, 0, 0, LIVE_CAP, 1_000_000, price, BOOK_MID, &clk);
-
-    abort 0
-}
-
-#[test]
-fun a_priceless_action_skips_only_the_slippage_bound() {
-    let mut scenario = ts::begin(OWNER);
-    let clk = clock_at(&mut scenario, 5_000);
-    let mut p = base_params();
-
-    // `action_price == 0` means "no price leg" (banner delta (a)). Every OTHER check still runs,
-    // which the buffer/notional assertions below prove by still being enforced.
-    check(&mut p, 100_000_000, 0, 0, LIVE_CAP, 1_000_000, 0, BOOK_MID, &clk);
-    assert!(oracle::epoch_notional_used_sats(&p) == 1_000_000, 0);
-
-    clock::destroy_for_testing(clk);
-    scenario.end();
-}
-
-// ── the rolling epoch budget ────────────────────────────────────────────────
-
-#[test]
-fun the_epoch_notional_budget_rolls() {
-    let mut scenario = ts::begin(OWNER);
-    let mut clk = clock_at(&mut scenario, 1_000);
-    let mut p = base_params(); // epoch_start_ms 0, epoch_len_ms 86_400_000, cap 100_000_000
-
-    check(&mut p, 200_000_000, 0, 0, LIVE_CAP, 90_000_000, BOOK_MID, BOOK_MID, &clk);
-    assert!(oracle::epoch_notional_used_sats(&p) == 90_000_000, 0);
-    assert!(oracle::epoch_start_ms(&p) == 0, 1);
-
-    // One full day later the window rolls: the budget is fresh, so 90m fits again.
-    clk.set_for_testing(86_400_000);
-    check(&mut p, 200_000_000, 0, 0, LIVE_CAP, 90_000_000, BOOK_MID, BOOK_MID, &clk);
-    assert!(oracle::epoch_notional_used_sats(&p) == 90_000_000, 2);
-    assert!(oracle::epoch_start_ms(&p) == 86_400_000, 3);
-
-    // Jumping several windows lands on the START of the window containing `now`, not on `now`.
-    clk.set_for_testing(86_400_000 * 5 + 123);
-    check(&mut p, 200_000_000, 0, 0, LIVE_CAP, 1_000, BOOK_MID, BOOK_MID, &clk);
-    assert!(oracle::epoch_start_ms(&p) == 86_400_000 * 5, 4);
-    assert!(oracle::epoch_notional_used_sats(&p) == 1_000, 5);
-
-    clock::destroy_for_testing(clk);
-    scenario.end();
-}
-
-#[test]
-#[expected_failure(abort_code = oracle::ENotionalCap)]
-fun a_zero_epoch_len_never_rolls() {
-    let mut scenario = ts::begin(OWNER);
-    let mut clk = clock_at(&mut scenario, 1_000);
-    let mut p = base_params();
-    oracle::set_epoch_len_ms(&mut p, 0); // one open-ended epoch
-
-    check(&mut p, 200_000_000, 0, 0, LIVE_CAP, 90_000_000, BOOK_MID, BOOK_MID, &clk);
-
-    // A year later the budget is still spent.
-    clk.set_for_testing(86_400_000 * 365);
-    check(&mut p, 200_000_000, 0, 0, LIVE_CAP, 90_000_000, BOOK_MID, BOOK_MID, &clk);
-
-    abort 0
-}
-
-// ── the ORDER of the aborts ─────────────────────────────────────────────────
-
-#[test]
-#[expected_failure(abort_code = oracle::ECooldown)]
-fun abort_order_is_pause_cooldown_divergence_buffer_cap_slippage() {
-    let mut scenario = ts::begin(OWNER);
-    let mut clk = clock_at(&mut scenario, 5_000);
-    let mut p = base_params();
-
-    // Land one legal action so the cooldown clock is armed.
-    check(&mut p, 100_000_000, 0, 0, LIVE_CAP, 1_000, BOOK_MID, BOOK_MID, &clk);
-
-    // Now violate the cooldown AND the divergence breaker AND the buffer AND the notional cap
-    // AND the slippage bound simultaneously. The cooldown is checked second, so it is the one
-    // that must surface — if any later check ran first this test would report ITS code instead.
-    clk.set_for_testing(5_001);
-    oracle::check_action(
-        a_vault_id(),
-        false,
-        1_000, // idle far below the action
-        1_000,
+    let d = oracle::project_wait(
+        &q,
+        &s,
+        0, // dead bucket
+        D_CAP,
         0,
-        MAX_U64, // unserviceable demand
-        0, // ...with a dead bucket
-        &mut p,
-        MAX_U64, // notional past the epoch cap
-        BOOK_MID * 2, // 10_000 bps of slippage
-        BOOK_MID,
-        1, // an absurd oracle -> huge divergence
-        &clk,
+        100_000,
+        0,
+        0,
+        ref_edges(),
+        ref_weights(),
+        1,
     );
 
-    abort 0
+    assert!(oracle::distribution_floor_ms(&d) == oracle::unbounded_ms(), 0);
+    assert!(!oracle::is_bounded_at_bps(&d, 5_000), 1);
+    assert!(!oracle::is_bounded_at_bps(&d, 1), 2);
+    // ...and nothing about the shape can rescue it.
+    assert!(oracle::percentile_ms(&d, 9_500) == oracle::unbounded_ms(), 3);
+}
+
+#[test]
+fun project_wait_carries_the_pause_into_the_floor() {
+    let q = a_snapshot(); // observed_at_ms = 0
+    let s = drain_state();
+
+    // The 600_000 ms drain floor lands inside the [500_000, 2_300_000) reconfiguration window,
+    // so the floor becomes the far edge of the window.
+    let d = oracle::project_wait(
+        &q,
+        &s,
+        D_REFILL,
+        D_CAP,
+        0,
+        100_000,
+        500_000,
+        1_800_000,
+        ref_edges(),
+        ref_weights(),
+        1,
+    );
+
+    assert!(oracle::distribution_floor_ms(&d) == 2_300_000, 0);
+    assert!(oracle::percentile_ms(&d, 5_000) == 2_900_000, 1);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// 5 — carry sizing discipline (aphotic.md §7.6)
+// ════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fun the_hurdle_is_the_time_value_of_the_wait() {
+    assert!(oracle::micro_bps_per_bps() == 1_000_000, 0);
+    assert!(oracle::ms_per_year() == 31_536_000_000, 1);
+
+    // A full year at 10 %/yr is, by definition, 1_000 bps == 1e9 micro-bps.
+    assert!(
+        oracle::required_discount_micro_bps(oracle::ms_per_year(), 1_000) == 1_000_000_000,
+        2,
+    );
+
+    // Two hours at 10 %/yr: 1_000 * 7_200_000 * 1e6 / 31_536_000_000 = 228_310 micro-bps,
+    // i.e. 0.228 bps. Reported in whole bps this would floor to ZERO — which is exactly why the
+    // hurdle is denominated in micro-bps.
+    assert!(oracle::required_discount_micro_bps(7_200_000, 1_000) == 228_310, 3);
+
+    // Linear in both arguments.
+    assert!(oracle::required_discount_micro_bps(14_400_000, 1_000) == 456_621, 4);
+    assert!(oracle::required_discount_micro_bps(7_200_000, 2_000) == 456_621, 5);
+
+    // No wait, no hurdle.
+    assert!(oracle::required_discount_micro_bps(0, 1_000) == 0, 6);
+}
+
+#[test]
+fun an_unbounded_wait_admits_no_discount() {
+    // The only sizing input this module offers is a QUANTILE, and a quantile in the open tail is
+    // unbounded. No discount clears a hurdle with no horizon — the position is simply not sized.
+    let d = ref_distribution(0);
+    let p100 = oracle::percentile_ms(&d, 10_000);
+
+    assert!(p100 == oracle::unbounded_ms(), 0);
+    assert!(oracle::required_discount_micro_bps(p100, 1_000) == oracle::unbounded_ms(), 1);
+}
+
+#[test]
+fun the_hurdle_never_overflows() {
+    // A wait one tick below the sentinel with an absurd cost of capital clamps, never wraps.
+    assert!(oracle::required_discount_micro_bps(MAX_U64 - 1, MAX_U64) == MAX_U64, 0);
+    assert!(oracle::required_discount_micro_bps(MAX_U64, 0) == MAX_U64, 1);
+    assert!(oracle::required_discount_micro_bps(1_000_000, 0) == 0, 2);
 }
