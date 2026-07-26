@@ -513,3 +513,35 @@ Spec §5 asks for a top-level `sources/`. **Do not do it.** `move/sources/` is w
 | `keeper/` | `keeper/` | keep, TypeScript (D1) |
 | `sdk/` | — | **NEW** — §9 |
 | `design/governance.md` | `aphotic-governance.md` | move to `docs/GOVERNANCE.md` |
+
+---
+
+## 5quater. ⚠ THE sdk↔MOVE DIVERGENCE IS WIDER THAN CLEARING — measured 2026-07-26
+
+§5ter recorded that `clearing.move` and the spec disagree. Wiring the app against the
+**deployed** package found the same class of divergence in **three more encodings**, and one of
+them is worse than a wrong number.
+
+| | `sdk/` (spec as written) | deployed Move |
+|---|---|---|
+| note commitment | `blake2b256(0x00 ‖ denom ‖ s ‖ r)` | `0x01` tag |
+| nullifier | untagged | `0x02` tag |
+| note node / `zeros[0]` | `0x01` / 32 zero bytes | `0x03` / `blake2b256(0x00)` |
+| `Order` BCS | `u8 side ‖ u128 price ‖ u64 qty ‖ salt` | `address ‖ bool ‖ u64 ‖ u64 ‖ salt` |
+| `Fill` leaf | 81 B, carries `fee`, no `batch_id` | 73 B, carries `batch_id`, no `fee` |
+
+**The note commitment one is the dangerous entry.** A note committed under the SDK's tags
+appends to the tree perfectly happily and is then **unspendable forever** — there is no error at
+append time, no error at spend time that names the cause, and no way to recover the deposit. It
+is the same silent-failure shape as the Seal endianness bug and the Bitcoin txid byte order:
+wrong in exactly one direction, on a path that never throws.
+
+**Resolution taken:** `app/src/lib/{notes,order,fills}.ts` mirror the **deployed** structs and
+import only the SDK's primitives (`blake2b256`, `BcsWriter`, `hashLeafBytes`). Each carries the
+divergence in its banner. `sdk/` was not edited — it implements the spec, and which side is
+right is the same human decision §5ter describes.
+
+**What this means for the parity claim:** it is not one bug, it is a **systematic drift between
+a spec written ahead of the code and the code as shipped**. Do not present cross-implementation
+parity as a property of this system. Present it as what it currently is — a check we built,
+ran, and failed, three times over, which is precisely why it was worth building.
