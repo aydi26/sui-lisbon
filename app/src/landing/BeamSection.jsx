@@ -107,8 +107,8 @@ export default function BeamSection() {
           </div>
         </div>
         <div className="beam-text-side">
-          <h2><span className="line-1">Confidential Batch Clearing,</span><br />Native Bitcoin</h2>
-          <p>Aphotic buys the redemption claim below par and redeems it at par through Hashi's queue, and clears opposing flow at a uniform price twice a day before it ever reaches that queue. Orders are encrypted client-side under a Seal time-lock; clearing runs on-chain in Move and is deterministic, so anyone can recompute the price and check their own fill. hBTC is custodial-threshold wrapped BTC and we say so plainly. Sui testnet, Bitcoin signet.</p>
+          <h2><span className="line-1">Sealed Clearing,</span><br />Native Bitcoin</h2>
+          <p>Buy the redemption claim below par, redeem it at par. Cross opposing flow at one price, twice a day, before it reaches Hashi&rsquo;s public queue. hBTC is custodial-threshold wrapped BTC &mdash; we say so plainly.</p>
         </div>
       </div>
     </section>

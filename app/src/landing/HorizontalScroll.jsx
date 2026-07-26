@@ -46,7 +46,7 @@ const CARDS = [
     title: "SEALED",
     counter: "02 / 03",
     className: "p2",
-    text: "The withdrawal queue is public: who, how much, where to. A desk unwinding is watched forming. Aphotic crosses that flow before it gets there — orders sealed until close, cleared at one price at 06:00 and 18:00 UTC. Front-running isn't made hard, it's made meaningless.",
+    text: "The withdrawal queue is public: who, how much, where to. Aphotic crosses flow before it lands there — sealed orders, one price, twice a day. Front-running isn't made hard, it's made meaningless.",
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="#16c8d9" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="65%" height="65%">
         <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
