@@ -85,6 +85,7 @@ import {
 } from '../src/lib/notes';
 import { encryptOrder, innerIdentity, sealConfigured } from '../src/lib/seal';
 import { blobIdBytes, blobIdFromBytes, ciphertextHash, putBlob, walrusConfigured } from '../src/lib/walrus';
+import { isObjectType, selectObjectOfType } from '../src/lib/batch';
 import type { BatchSnapshot, LiveBatch, RegistrySnapshot } from '../src/lib/batch';
 import BatchScreen from '../src/screens/batch/BatchScreen';
 import NotePanel from '../src/screens/batch/NotePanel';
@@ -559,5 +560,69 @@ describe('<NotePanel/> the secret and the disclosure', () => {
   it('fetches nothing on mount', () => {
     wrap(<NotePanel typeArgs={null} onChanged={() => {}} />);
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
+// ── object discovery: `Batch` is a PREFIX of `BatchRegistry` ─────────────────
+// REGRESSION. `open_batch` creates the `Batch` and mutates the `BatchRegistry` in
+// ONE transaction, so the discovery pass sees both. A `startsWith` test on
+// `<pkg>::batch::Batch` matches `<pkg>::batch::BatchRegistry` too, and whichever the
+// node happens to list first wins — when that was the registry, `readBatch` was
+// handed a `BatchRegistry` and the panel showed
+//   CommandArgumentError { arg_idx: 0, kind: TypeMismatch } in command 0
+// Observed live the moment batch 0 was opened on testnet (2026-07-26), and
+// impossible to hit before that, because no batch had ever been opened.
+
+describe('selectObjectOfType matches the whole type, never a prefix', () => {
+  const PKG = '0xfa214c43';
+  const BATCH = '0xe73f034b90eef92a06db2b889e8d4514f2f097298aa4eecbca2a364a3e2c096f';
+  const REGISTRY = '0x9967881e88d5e22fc790d3b761e8ca55c8fd87d1a07baa11eb4a4352cd356b35';
+  const wanted = `${PKG}::batch::Batch`;
+
+  it('returns the Batch even when the registry is listed FIRST — the bug', () => {
+    expect(
+      selectObjectOfType(
+        [
+          { objectId: REGISTRY, objectType: `${PKG}::batch::BatchRegistry` },
+          { objectId: BATCH, objectType: wanted },
+        ],
+        wanted,
+      ),
+    ).toBe(BATCH);
+  });
+
+  it('returns the Batch when it is listed first, too', () => {
+    expect(
+      selectObjectOfType(
+        [
+          { objectId: BATCH, objectType: wanted },
+          { objectId: REGISTRY, objectType: `${PKG}::batch::BatchRegistry` },
+        ],
+        wanted,
+      ),
+    ).toBe(BATCH);
+  });
+
+  it('never mistakes a BatchRegistry for a Batch', () => {
+    expect(
+      selectObjectOfType([{ objectId: REGISTRY, objectType: `${PKG}::batch::BatchRegistry` }], wanted),
+    ).toBeNull();
+  });
+
+  it('an empty change set is a state, not a failure', () => {
+    expect(selectObjectOfType([], wanted)).toBeNull();
+  });
+
+  it('still matches a GENERIC struct of the wanted type', () => {
+    const v = `${PKG}::vault::Vault`;
+    expect(
+      selectObjectOfType([{ objectId: '0xv', objectType: `${v}<0x2::b::B, 0x2::q::Q, 0x2::s::S>` }], v),
+    ).toBe('0xv');
+  });
+
+  it('isObjectType rejects a longer sibling name outright', () => {
+    expect(isObjectType(`${PKG}::batch::BatchRegistry`, wanted)).toBe(false);
+    expect(isObjectType(`${PKG}::batch::Batch`, wanted)).toBe(true);
+    expect(isObjectType(`${PKG}::clearing::ClearingCursor`, `${PKG}::clearing::Clearing`)).toBe(false);
   });
 });

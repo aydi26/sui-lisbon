@@ -18,6 +18,32 @@
 
 ## 1. Headline
 
+> ## ⚠ RE-MEASURED 2026-07-26, ON macOS — every row below the fold is older than this block
+>
+> The table further down was written mid-build and is now wrong in almost every row that says
+> "No". Re-run from a **fresh clone** of `main`, on macOS, nothing cached:
+>
+> | Question | Answer, as observed |
+> |---|---|
+> | Does `move/` build on macOS / Linux? | **It did NOT — and that was the headline bug.** `Move.lock` recorded its `subdir` paths with **Windows backslashes** (`crates\sui-framework\packages\move-stdlib`), which the resolver treats as a literal directory name off Windows: `Invalid directory`. No build, no test, no publish, on any non-Windows machine. This is blocker **B8**, known and never fixed. `Move.toml` was always right; the **lock** is what the resolver reads. Fixed by normalising both lockfiles to forward slashes, which are valid on Windows too. |
+> | Do the Move tests pass? | **Yes — `Total tests: 283; passed: 283; failed: 0`.** |
+> | `lending/`? | **Yes — `Total tests: 37; passed: 37; failed: 0`.** First time this package was run at all. |
+> | Does `sdk/` exist? | **Yes, and it is green: 376 tests**, including the 10 000-case seeded property suite. |
+> | Is the keeper v2? | **Yes: typecheck clean, 252 tests green.** |
+> | Is the app v2? | **Yes: typecheck clean, `vite build` clean, 345 tests green.** |
+> | Are the gates green? | **Yes: `bash scripts/gates.sh` → 12 PASS · 0 FAIL · 0 SKIP.** The four SKIPs are gone — `batchstate` and `seal_le` now guard a `batch.move` that exists. |
+> | On-chain verification? | **`34 PASS · 1 FAIL · 0 WARN`.** The 7 WARNs were never a deployment problem: `verify-onchain.mjs` reads `APHOTIC_VAULT_ID` etc., while `keeper/.env.example` shipped `VAULT_ID` and omitted six others, so **the repo could not reproduce the `33 PASS` it documents**. Fixed in the example. |
+> | **The one real FAIL** | **`admin != keeper` — `Vault.caps.admin` and `.keeper` are BOTH `0xd41b0cd8…f333d`.** One key proposes NAV *and* approves it, so the two-party split (G3) is not live on this deployment. The Move is not at fault: the bytecode is identical either way, which is exactly why this can only be caught on chain. `/vault` now **reads the CapRegistry and says so** instead of asserting the guarantee; `scripts/rotate-keeper.mjs <addr> --execute` closes it in one transaction, signed by the AdminCap holder. |
+> | Had the auction ever run? | **No — `next_batch_id` was 0.** Batch **0** is now open on chain (digest `3JWjDDma…`), closing at exactly **18:00:00.000Z**, derived not passed. See `docs/DEPLOYED.md § BATCH 0`. Opening it immediately exposed a real app bug — `Batch` is a **prefix** of `BatchRegistry`, so live-batch discovery could return the registry id — which no test could have caught while no batch existed. |
+> | Total | **1 293 tests green** across move · lending · sdk · keeper · app. |
+>
+> **Cut line: met.** Deposit → `propose_nav` → `approve_nav` → claim has run four times on chain
+> (epoch 4), and the auction has a live batch. B26 is closed: the `Vault` exists
+> (`0x91660fb4…89b3efcf`), so the "no LP share coin" blocker below is history.
+
+### The original table, kept for the record — stale from `2026-07-26 02:1x`
+
+
 | Question | Answer, as observed |
 |---|---|
 | Does `move/` compile? | **Yes.** `sui move build` exit **0**, zero warnings, at 01:52 and again at 02:11. |

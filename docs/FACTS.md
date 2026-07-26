@@ -156,6 +156,7 @@ can *find* the ciphertext.
 | Health probe | `GET {url}/v1/service` — requires **both** a `Client-Sdk-Version` header **and** a `?service_id=` query param, else `400`. |
 | Refusal rule | **Refuse to open a batch below `t` live servers. Never fall back to plaintext.** |
 | Testnet fleet state (2026-07-25) | 3 of 10 advertised servers down; versions skew `0.4.4` / `0.6.7` / `0.6.11`. |
+| **Fleet state FROM A BROWSER (2026-07-26)** | **6 of 10 usable, across exactly 5 distinct operators.** Measured with a real cross-origin `fetch` from `http://localhost:5173`, not with `curl`. The four that fail fail on **CORS, not liveness**: NodeInfra, Studio Mirai, H2O Nodes and Mhax.io all answer `curl` with HTTP 200 and a matching `service_id` while the browser rejects the response — NodeInfra sends `Access-Control-Allow-Origin` **twice**, which is invalid and fatal everywhere. **This app encrypts in the browser, so the browser's verdict is the only one that counts, and a `curl`-based health check will lie to you.** Browser-clean committee, one server per operator: Mysten Labs · Ruby Nodes · Overclock · Triton One · Natsai. Verified end to end (`SealClient.encrypt`, `verifyKeyServers: true`, t = 3 of 5), not merely probed. |
 | **Enoki is excluded** | Enoki is both a zkLogin salt provider and a Seal key server; using it for both hands one party identity linkage **and** a decryption share. |
 | Mainnet ⚠ | Mainnet decentralized Seal requires an **Enoki-issued API key**, which the no-Enoki rule forecloses. Options in order: (a) run our own key servers alongside independent operators, (b) accept an Enoki key for *transport only* — **needs verification that it confers no share**, (c) go straight to the PCR-gated Nautilus policy, the planned upgrade anyway. **Decide before mainnet; do not design around it in silence.** |
 
@@ -950,6 +951,30 @@ All three verified live on testnet. `[D8]`
 | Independent key server #2 | `0xf5d14a81a982144ae441cd7d64b09027f116a468bd36e7eca494f750591623c8` · `https://seal-key-server-testnet-2.mystenlabs.com` |
 | Decentralized (committee) server | `0xb012378c9f3799fb5b1a7083da74a4069e3c3f1c93de0b27212a5799ce1e1e98` · aggregator `https://seal-aggregator-testnet.mystenlabs.com` |
 | SDK | `@mysten/seal@1.3.4` |
+
+**The full open-mode testnet fleet**, from `MystenLabs/seal` `docs/content/Pricing.mdx` — nine
+distinct operators. `browser` is a real cross-origin `fetch`, measured 2026-07-26; **`curl` says
+200 for every row**, which is exactly why the column exists.
+
+| Operator | Open-mode URL | KeyServer object id | browser |
+|---|---|---|---|
+| Mysten Labs (1) | `https://seal-key-server-testnet-1.mystenlabs.com` | `0x73d05d62…9356db75` | ✅ |
+| Mysten Labs (2) | `https://seal-key-server-testnet-2.mystenlabs.com` | `0xf5d14a81…591623c8` | ✅ (same operator as #1 — counts once) |
+| Ruby Nodes | `https://seal-testnet.api.rubynodes.io` | `0x6068c0ac…6d141da2` | ✅ |
+| NodeInfra | `https://open-seal-testnet.nodeinfra.com` | `0x5466b7df…b8131007` | ❌ duplicate `Access-Control-Allow-Origin` |
+| Studio Mirai | `https://open.key-server-testnet.seal.mirai.cloud` | `0x164ac3d2…cccf0f2` | ❌ CORS |
+| Overclock | `https://seal-testnet-open.overclock.run` | `0x9c949e53…4c434105` | ✅ |
+| H2O Nodes | `https://seal-open.sui-testnet.h2o-nodes.com` | `0x39cef09b…774f25a2` | ❌ CORS |
+| Triton One | `https://seal.testnet.sui.rpcpool.com` | `0x4cded1ab…b2da4c46` | ✅ |
+| Natsai | `https://seal-open-test.natsai.xyz` | `0x3c93ec14…6adc3dad` | ✅ ⚠ its KeyServer object is `AddressOwner`, not `Shared`, unlike the other four; `verifyKeyServers` still passes |
+| Mhax.io | `https://seal-testnet-open.suiftly.io` | `0x6a0726a1…c930ba06` | ❌ CORS |
+
+There is **no on-chain registry to enumerate**: the `key_server` module emits no registration
+event, and the live KeyServer objects sit under four *different* original package ids
+(`0x0f16e84a…`, `0x4614e5da…`, `0x62c79dfe…`, `0xe3d7e7a0…`) because Seal has been republished
+several times on testnet. So a type-equality check against one package id will reject valid
+servers — check `endsWith('::key_server::KeyServer')`, and treat the doc page as the discovery
+mechanism it is.
 
 ⚠ `@mysten/seal@1.3.4` **no longer exports `getAllowlistedKeyServers`.** Construct
 `SealClient({ suiClient, serverConfigs: [{ objectId, weight: 1 }, …], verifyKeyServers })` with

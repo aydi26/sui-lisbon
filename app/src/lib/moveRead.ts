@@ -32,6 +32,7 @@
 // @implements export function readMove(build, opts?): Promise<ReturnValues>
 // @implements export function objectTypeArgs(objectType): string[]
 // @implements export async function readObjectType(objectId, opts?): Promise<string>
+// @implements export async function readObjectFields(objectId, opts?): Promise<Fields>
 // @implements export const decode = { u8, u64, bool, address, bytes, u64Vec, byteVec }
 // @implements export function first(values, i): Uint8Array
 // @forbidden  constructing a Sui client here — lib/suiClient.ts is the ONE factory
@@ -52,7 +53,7 @@ import { bcs } from '@mysten/sui/bcs';
 import { Transaction } from '@mysten/sui/transactions';
 
 import { config } from '../config';
-import { getSuiClient } from './suiClient';
+import { getJsonRpcClient, getSuiClient } from './suiClient';
 
 /** 32 zero bytes. A read has no sender in any meaningful sense; this is the stand-in. */
 export const ZERO_ADDRESS = `0x${'0'.repeat(64)}`;
@@ -185,6 +186,41 @@ export async function readObjectType(objectId: string, fn?: ObjectTypeFn): Promi
   if (fn !== undefined) return fn(objectId);
   const response = await getSuiClient().core.getObject({ objectId });
   return response.object.type;
+}
+
+/** The parsed `content.fields` of a Move object. Values are whatever JSON-RPC returns. */
+export type ObjectFields = Readonly<Record<string, unknown>>;
+
+/** Injected object-field read, so the readers stay testable offline. */
+export type ObjectFieldsFn = (objectId: string) => Promise<ObjectFields>;
+
+/**
+ * A Move object's parsed fields.
+ *
+ * Deliberately the JSON-RPC path, not the gRPC `core` one: `core.getObject`
+ * hands back the object's BCS, and decoding a struct as large as `Vault` would
+ * mean restating its whole layout here — a second definition that silently rots
+ * the moment the Move struct changes. The parsed shape is what we want for a
+ * field the app only ever displays.
+ *
+ * Used for the fields no Move accessor can return across a PTB boundary: the
+ * embedded `CapRegistry` is reachable only as `&CapRegistry` (`vault::cap_registry`),
+ * and a reference cannot cross a programmable-transaction command boundary.
+ */
+export async function readObjectFields(
+  objectId: string,
+  fn?: ObjectFieldsFn,
+): Promise<ObjectFields> {
+  if (fn !== undefined) return fn(objectId);
+  const response = (await getJsonRpcClient().getObject({
+    id: objectId,
+    options: { showContent: true },
+  })) as { data?: { content?: { fields?: ObjectFields } } };
+  const fields = response.data?.content?.fields;
+  if (fields === undefined) {
+    throw new Error(`object ${objectId} returned no parsed fields — wrong id, or not a Move struct`);
+  }
+  return fields;
 }
 
 // ── decoders ────────────────────────────────────────────────────────────────
