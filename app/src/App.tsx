@@ -1,65 +1,113 @@
 // ┌── APHOTIC CONTRACT ────────────────────────────────────────────────────────
-// @task       T0.4, T5.3
-// @phase      0 / 5
+// @task       F1
+// @phase      0
 // @status     DONE
-// @spec       docs/APP.md §1 (route table), §7 A8 (disclosure reachable everywhere)
-// @spec       docs/GOLDEN-RULES.md G6 G8
-// @rules      G6 G8
-// @depends    ./components (T0.4) · ./config.ts (T0.4) · ./theme.css (T0.4)
-// @facts      Route table (adapted — "/" is the landing page, not a redirect):
-// @facts        /              landing (React.lazy, owned by the landing unit)
-// @facts        /deposit       Screen 1   (T3.1, T3.3)
-// @facts        /exit          Screen 2   (T3.2)
-// @facts        /transparency  Screen 3   (T5.2)
-// @facts      The landing route renders WITHOUT the app chrome (it is a full-bleed
-// @facts        hero with its own nav) but STILL carries <TrustModelDisclosure/> —
-// @facts        A8 requires the G8 line on every route, including "/".
+// @spec       aphotic.md §1 (the two products), §13 (limitations are published)
+// @spec       docs/DESIGN-V2.md §4 (cadence in the header)
+// @rules      G6 G7 G8
+// @depends    ./components (F1) · ./config.ts (F1) · ./session (kept) · ./theme.css
+// @facts      Route table — the landing page renders WITHOUT the app chrome (it is
+// @facts        a full-bleed hero with its own nav) but STILL carries the trust
+// @facts        disclosure. Every other route gets the frame:
+// @facts          /        landing
+// @facts          /vault   redemption-carry vault
+// @facts          /batch   sealed-order batch auction
+// @facts          /verify  recompute it yourself
 // @facts      <WalletBar/> lives in the SHELL, not per screen: one session, one
-// @facts        connect affordance, visible from every app route. The screens keep
-// @facts        their own in-flow sign-in panels because a signed-out user should
-// @facts        not have to hunt in the header for the thing the page is asking for.
-// @facts      The mode chip states what the data actually is. VITE_DEMO_MODE=mock
-// @facts        means fixtures; `live` means the screens read chain. Neither claims
-// @facts        the Bitcoin leg is live — it never is (G6).
+// @facts        connect affordance, visible from every app route. Both sign-in
+// @facts        paths (browser extension and Enoki zkLogin) are wallet-standard
+// @facts        wallets, so there is exactly one session object behind it.
+// @facts      ⚠⚠ VITE_* IS INLINED AT BUILD TIME. A var missing from the build
+// @facts        environment yields "" in the bundle with no runtime error, so the
+// @facts        shell renders configProblems() at the top of every app route. It is
+// @facts        deliberately NOT rendered over the landing hero, which has no
+// @facts        controls that could mislead; main.tsx logs it to the console on
+// @facts        every load regardless.
+// @facts      NETWORK GUARD: an account that positively advertises a chain other
+// @facts        than sui:<configured network> gets a banner and every write is
+// @facts        disabled with a stated reason, rather than failing confusingly
+// @facts        inside the wallet. An EMPTY chains list means the wallet declined
+// @facts        to say — we do not guess.
 // @implements export function App(): JSX.Element
-// @forbidden  omitting <TrustModelDisclosure/> on any route — G8, A8
+// @forbidden  omitting <TrustModelDisclosure/> on any route — G8
 // @forbidden  a canonical id literal here — G7
 // @forbidden  app chrome over the landing route — it is full-bleed by design
 // @invariant  1. <TrustModelDisclosure/> renders on every route.
-// @invariant  2. The demo-mode indicator states plainly when data is pre-staged (G6).
-// @invariant  3. Every header control is functional or disabled with a stated
-//                reason — <WalletBar/> owns that contract for the session controls.
-// @ac         docs/APP.md §7 A8 A11
+// @invariant  2. A blocking config problem is stated on screen before any screen
+//                offers a control that depends on it.
+// @invariant  3. A screen that throws never blanks the app — the nav survives.
+// @ac         all four routes render with no wallet and no published package.
+// @verify     cd app && npm test -- routes
 // @verify     cd app && npm run build
 // └── END CONTRACT ───────────────────────────────────────────────────────────
 
 import { Component, type ErrorInfo, type ReactNode } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 
-import { TrustModelDisclosure, WalletBar } from './components';
-import { config, isMock } from './config';
+import { EpochClock, TrustModelDisclosure, WalletBar } from './components';
+import { config, configProblems } from './config';
+import { useAphoticSession } from './session';
 
 const NAV = [
-  { to: '/deposit', label: 'Deposit' },
-  { to: '/exit', label: 'Exit' },
-  { to: '/transparency', label: 'Transparency' },
+  { to: '/vault', label: 'Vault' },
+  { to: '/batch', label: 'Batch' },
+  { to: '/verify', label: 'Verify' },
 ] as const;
 
-/** What the numbers on screen actually are. Never dressed up (G6). */
-function ModeChip() {
-  const mock = isMock();
+/**
+ * What this build is actually wired to. Rendered rather than logged, because a
+ * missing `VITE_*` produces an empty string in the bundle and no error at all —
+ * the failure mode is a screen full of controls that quietly cannot work.
+ */
+function ConfigBanner() {
+  const problems = configProblems();
+  if (problems.length === 0) return null;
+
+  const blocking = problems.filter((p) => p.severity === 'blocking');
+  const degraded = problems.filter((p) => p.severity === 'degraded');
+
   return (
-    <span
-      className={mock ? 'ap-chip ap-chip--warn' : 'ap-chip ap-chip--live'}
-      title={
-        mock
-          ? 'Balances, the vault, the book and the journal are read live from Sui testnet on every screen. VITE_DEMO_MODE=mock, so the decision log and the bridge event stream are the pre-staged samples — each says so where it is rendered. The Bitcoin leg is never live: ~70 min in, ~1.5–2 h out.'
-          : 'VITE_DEMO_MODE=live — every panel reads Sui testnet directly. The Bitcoin leg is still pre-staged: ~70 min in, ~1.5–2 h out, never live in a demo.'
-      }
+    <div
+      className={blocking.length > 0 ? 'ap-state ap-state--error' : 'ap-state'}
+      role="status"
+      style={{ marginBottom: 'var(--space-5)' }}
     >
-      <span className="ap-chip-dot" aria-hidden="true" />
-      {config.sui.network} · {mock ? 'live reads · staged log' : 'live reads'}
-    </span>
+      <span className="ap-state-title">
+        {blocking.length > 0
+          ? `This build is not wired to a deployed package (${blocking.length} required ${
+              blocking.length === 1 ? 'value' : 'values'
+            } missing)`
+          : `${degraded.length} optional ${degraded.length === 1 ? 'value is' : 'values are'} unset`}
+      </span>
+      <p className="ap-reason" style={{ margin: 0 }}>
+        Vite inlines <code>VITE_*</code> at build time, so a value missing from the build
+        environment becomes an empty string in the bundle — there is no runtime error to catch.
+        Nothing below is faked to cover for it: panels that need one of these say so.
+      </p>
+      <ul style={{ margin: 0, paddingLeft: '1.1rem' }}>
+        {problems.map((p) => (
+          <li key={p.key} className="aphotic-muted" style={{ fontSize: 'var(--text-xs)' }}>
+            <code>{p.key}</code> — {p.effect}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/** The network guard, stated once at the shell rather than per screen. */
+function NetworkGuard() {
+  const session = useAphoticSession();
+  if (session.networkProblem === null) return null;
+  return (
+    <div className="ap-state ap-state--error" role="alert" style={{ marginBottom: 'var(--space-5)' }}>
+      <span className="ap-state-title">Wrong network</span>
+      <p style={{ margin: 0 }}>{session.networkProblem}</p>
+      <p className="ap-reason" style={{ margin: 0 }}>
+        Every write is disabled while this is showing. Switch the wallet to {config.sui.network} and
+        reconnect.
+      </p>
+    </div>
   );
 }
 
@@ -96,11 +144,7 @@ class ScreenBoundary extends Component<{ children: ReactNode }, { error: Error |
             The other routes above still work.
           </p>
           <div className="ap-row">
-            <button
-              type="button"
-              className="ap-btn"
-              onClick={() => this.setState({ error: null })}
-            >
+            <button type="button" className="ap-btn" onClick={() => this.setState({ error: null })}>
               Try rendering it again
             </button>
           </div>
@@ -132,13 +176,23 @@ export function App() {
           </nav>
 
           <div className="aphotic-nav-right">
-            <ModeChip />
-            <WalletBar />
+            <EpochClock variant="inline" />
+            <span className="ap-chip" title={`Reads and writes target Sui ${config.sui.network}.`}>
+              <span className="ap-chip-dot" aria-hidden="true" />
+              {config.sui.network}
+            </span>
+            <WalletBar showBalance={false} />
           </div>
         </header>
       )}
 
       <main className="aphotic-main">
+        {isLanding ? null : (
+          <div className="aphotic-container" style={{ paddingTop: 'var(--space-5)' }}>
+            <ConfigBanner />
+            <NetworkGuard />
+          </div>
+        )}
         <ScreenBoundary key={pathname}>
           <Outlet />
         </ScreenBoundary>

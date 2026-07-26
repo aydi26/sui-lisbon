@@ -1,42 +1,57 @@
 // ┌── APHOTIC CONTRACT ────────────────────────────────────────────────────────
-// @task       T0.4, T3.2
-// @phase      3  [CUT-LINE CRITICAL]
+// @task       F1, F4
+// @phase      0
 // @status     DONE
-// @spec       docs/APP.md §3.1 (<PinningExplainer/>, L118)
-// @spec       docs/MOVE-PACKAGE.md#gateway · docs/GOLDEN-RULES.md G2
-// @rules      G2
-// @depends    ../theme.css (T0.4) · aphotic::gateway (T1.3)
-// @external   public fun hashi::withdraw::request_withdrawal(
-//                 hashi: &mut Hashi, clock: &Clock, btc: Balance<BTC>,
-//                 bitcoin_address: vector<u8>, ctx: &mut TxContext)
-//             ⚠ asserts addr_len == 20 || addr_len == 32  EInvalidBitcoinAddress
-//             ⚠ asserts btc.value() >= 30_000             EBelowMinimumWithdrawal
-// @facts      The destination comes from `Vault.btc_exit_address`, written ONCE by
-// @facts        gateway::register_exit_address at deposit and immutable after.
-// @facts      gateway::exit_to_bitcoin has NO bitcoin_address parameter — that is
-// @facts        the whole point, and gates.ps1 g2 enforces it.
-// @facts      ⚠ v3 (commit "remove the owner emergency withdraw") deleted the owner's
-// @facts        escape hatch from vault.move. There is now NO function through which
-// @facts        the owner can move depositor funds, and vault error code 1 is vacant
-// @facts        where it used to live. The only two ways value leaves the vault are a
-// @facts        depositor's own pro-rata redemption and this pinned exit.
+// @spec       aphotic.md §6.3 (the one boundary Move cannot enforce), §3 (the
+//             rejected shared-vault-holds-queue-positions design), §7.7 (NAV)
+// @rules      G2 G8
+// @depends    ../config.ts (F1) · ./AddressPill.tsx · ../theme.css
+// @facts      ⚠⚠ THE HONEST VERSION. Hashi's `create_withdrawal` sets
+// @facts        `sender: ctx.sender()`, which on Sui is the TRANSACTION SIGNER,
+// @facts        never the calling module — so a shared object can never be the
+// @facts        sender, and `cancel_withdrawal` asserts
+// @facts        `request_sender() == ctx.sender()`. A vault that holds queue
+// @facts        positions is custodial BY CONSTRUCTION. That design is rejected.
+// @facts      ⇒ The carry exit runs through a Sui 2-of-2 multisig (keeper + an
+// @facts        independent policy co-signer) and the returning BTC lands at a
+// @facts        Bitcoin address no Move code controls.
+// @facts      ⇒ Pinning is enforced AT SIGNING, not by Move. The co-signer signs
+// @facts        `request_withdrawal` only when `bitcoin_address` equals the pinned
+// @facts        vault address, and only within a rate limit.
+// @facts      The three mitigations, in order of strength: publish and pin the
+// @facts        address · cap NAV attribution to the sum of on-Sui-readable
+// @facts        withdrawal claims · a Bitcoin header relay (roadmap).
 // @implements export function PinningExplainer(): JSX.Element
-// @forbidden  any editable destination field anywhere in the exit UI — G2, A4
-// @forbidden  claiming hBTC itself is trustless — it is custodial-threshold wrapped
-//             BTC and the copy says so (G8)
-// @invariant  1. The copy states the address is write-once and read from the Vault.
-// @invariant  2. No prop lets a caller present a different destination.
-// @invariant  3. The copy names BOTH parties who cannot take funds: the keeper and
-//                the owner. Naming only the keeper would overstate nothing but would
-//                understate the v3 change.
-// @ac         docs/APP.md §7 A4 — assert no editable field on btc_exit_address
-// @verify     cd app && npm run build
+// @forbidden  claiming Move enforces the destination — it does not, and saying so
+//             would be the single most damaging false claim in this app (G8)
+// @forbidden  an editable destination field anywhere in the UI
+// @invariant  1. The copy states plainly that the enforcement is off-chain.
+// @invariant  2. When no redemption address is configured, the panel says so
+//                rather than rendering a blank or a placeholder address.
+// @ac         the panel names the multisig, the co-signer rule and the NAV cap.
+// @verify     cd app && npm test -- components
 // └── END CONTRACT ───────────────────────────────────────────────────────────
 
+import { config } from '../config';
+import { AddressPill } from './AddressPill';
+
 export function PinningExplainer() {
+  const { redemptionAddress, multisigAddress } = config.custody;
+
   return (
     <section className="aphotic-card">
-      <h3 style={{ fontSize: 'var(--text-md)' }}>Why this address cannot change</h3>
+      <h3 style={{ fontSize: 'var(--text-md)', margin: 0 }}>
+        The one boundary Move cannot enforce
+      </h3>
+
+      <p style={{ color: 'var(--text-secondary)', fontSize: 'var(--text-sm)' }}>
+        Hashi&rsquo;s <code>create_withdrawal</code> sets <code>sender: ctx.sender()</code>, and on
+        Sui that is the <em>transaction signer</em>, never the calling module. A shared object can
+        therefore never be the sender, and <code>cancel_withdrawal</code> asserts that the canceller
+        is that same sender. A vault that held queue positions would be custodial by construction —
+        so we do not build one.
+      </p>
+
       <ol
         style={{
           color: 'var(--text-secondary)',
@@ -46,36 +61,42 @@ export function PinningExplainer() {
         }}
       >
         <li>
-          At your first deposit, <code>gateway::register_exit_address</code> writes your Bitcoin
-          address into the Vault. It is <strong>write-once</strong>: no later call can overwrite it.
+          The redemption exit is signed by a Sui <strong>2-of-2 multisig</strong>: the keeper plus an
+          independent policy co-signer.
         </li>
         <li>
-          <code>gateway::exit_to_bitcoin</code> burns your shares, splits the balance and calls
-          Hashi’s <code>request_withdrawal</code> in <strong>one atomic PTB</strong>, reading the
-          destination from the Vault.
+          The co-signer signs <code>request_withdrawal</code> only when the{' '}
+          <code>bitcoin_address</code> equals the pinned address below, and only within a rate
+          limit.
         </li>
         <li>
-          That function takes <strong>no Bitcoin-address argument</strong>. There is no code path —
-          for you, for us, or for a fully compromised keeper — that supplies a different
-          destination.
+          <strong>That check happens at signing, not in Move.</strong> We will not dress it up as an
+          on-chain guarantee. It is the same trust shape the venue already asks users to accept.
         </li>
         <li>
-          The keeper holds a DeepBook <code>TradeCap</code> and nothing else, so it cannot burn
-          shares, cannot request a withdrawal, and cannot reclaim one (Hashi’s{' '}
-          <code>cancel_withdrawal</code> is sender-bound to the depositor).
+          The pinned address is published, so every redemption is auditable on Bitcoin by anyone,
+          without asking us.
         </li>
         <li>
-          <strong>The owner cannot withdraw either.</strong> The emergency-withdraw function was
-          removed from <code>vault.move</code> in v3, so no privileged path out exists any more. The
-          only two ways value leaves this vault are your own pro-rata redemption and this pinned
-          exit.
-        </li>
-        <li>
-          What arrives on Bitcoin is native BTC released by Hashi&rsquo;s committee. Be clear-eyed
-          about the dependency: hBTC is custodial-threshold wrapped BTC. What is trust-minimised here
-          is the <em>machinery</em> around it — the destination, the caps, and who may cancel.
+          NAV attributed to native BTC at that address is <strong>capped</strong> at the sum of
+          on-Sui-readable withdrawal claims that produced it. The unverifiable component can never
+          exceed the verifiable claim behind it.
         </li>
       </ol>
+
+      {redemptionAddress.length > 0 ? (
+        <AddressPill value={redemptionAddress} label="Pinned Bitcoin redemption address" immutable />
+      ) : (
+        <p className="ap-reason ap-reason--warn">
+          No redemption address is configured in this build (<code>VITE_REDEMPTION_ADDRESS</code> is
+          empty), so there is nothing to publish here yet. We would rather show this line than a
+          plausible-looking placeholder.
+        </p>
+      )}
+
+      {multisigAddress.length > 0 ? (
+        <AddressPill value={multisigAddress} label="Custody multisig (Sui, 2-of-2)" />
+      ) : null}
     </section>
   );
 }

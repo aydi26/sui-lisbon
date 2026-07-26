@@ -1,32 +1,30 @@
 // @vitest-environment jsdom
 // ┌── APHOTIC CONTRACT ────────────────────────────────────────────────────────
-// @task       T5.3
-// @phase      5
+// @task       F1
+// @phase      0
 // @status     DONE
-// @spec       docs/APP.md §7 A8 (the G8 line on every route), A11 (zero network
-//             on mount), §1 (route table)
+// @spec       aphotic.md §13 (limitations are published), §2 (hard constraints)
 // @rules      G6 G7 G8
-// @depends    ../src/App.tsx · ../src/screens/**  · ../vitest.config.ts
-// @facts      vitest.config.ts PINS VITE_APHOTIC_PACKAGE_ID='' , VITE_VAULT_ID='',
-// @facts        VITE_ENOKI_API_KEY='' and VITE_ZKLOGIN_CLIENT_ID=''. This file
+// @depends    ../src/App.tsx · ../src/routes.tsx · ../src/screens/** · ../vitest.config.ts
+// @facts      vitest.config.ts PINS every id-bearing VITE_* to ''. This file
 // @facts        therefore renders the app in its WORST configuration: no published
-// @facts        package, no vault, no zkLogin credentials, no wallet connected.
-// @facts        That is the state a fresh clone starts in, and the state a mis-set
-// @facts        Vercel project ends in — it must render honestly, not crash.
+// @facts        package, no vault, no batch registry, no Seal committee, no zkLogin
+// @facts        credentials, no wallet connected, and the network down. That is the
+// @facts        state a fresh clone starts in and the state a mis-set CI project
+// @facts        ends in — it must render honestly rather than crash or invent.
 // @facts      The landing route is deliberately NOT rendered here: it mounts
 // @facts        globe.gl/three against a real WebGL context, which jsdom does not
 // @facts        provide. Its data path (readAggregateStats) IS covered below,
 // @facts        because that is the part that can lie or throw.
-// @implements the "every state renders" safety net for /deposit /exit /transparency
+// @implements the "every route renders, unconfigured and offline" safety net
 // @forbidden  a network call from any test — a fetch spy fails the suite
 // @invariant  1. No screen throws while unconfigured and signed out.
-//             2. No screen fetches on mount (G6): every read is click- or
-//                session-gated.
-//             3. Each screen states its unconfigured/signed-out condition in
-//                words rather than rendering an enabled control that cannot work.
-//             4. readAggregateStats resolves to zeros when the network is down.
-// @ac         docs/APP.md §7 A8 A11
-// @verify     cd app && npm test
+//             2. No screen fetches on mount: every read is click- or session-gated.
+//             3. Every route states its unconfigured condition in words rather than
+//                offering an enabled control that cannot work.
+//             4. readAggregateStats resolves rather than rejecting when offline.
+// @ac         /vault /batch /verify all render; the shell names all three.
+// @verify     cd app && npm test -- routes
 // └── END CONTRACT ───────────────────────────────────────────────────────────
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -37,9 +35,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import App from '../src/App';
 import { config } from '../src/config';
-import DepositScreen from '../src/screens/deposit/DepositScreen';
-import ExitScreen from '../src/screens/exit/ExitScreen';
-import TransparencyScreen from '../src/screens/transparency/TransparencyScreen';
+import BatchScreen from '../src/screens/batch/BatchScreen';
+import VaultScreen from '../src/screens/vault/VaultScreen';
+import VerifyScreen from '../src/screens/verify/VerifyScreen';
 
 const { networkConfig } = createNetworkConfig({
   testnet: { network: 'testnet', url: config.sui.jsonRpcUrl },
@@ -79,9 +77,9 @@ afterEach(() => {
 });
 
 const SCREENS: readonly (readonly [string, string, React.ReactNode])[] = [
-  ['Deposit', '/deposit', <DepositScreen key="d" />],
-  ['Exit', '/exit', <ExitScreen key="e" />],
-  ['Transparency', '/transparency', <TransparencyScreen key="t" />],
+  ['Vault', '/vault', <VaultScreen key="v" />],
+  ['Batch', '/batch', <BatchScreen key="b" />],
+  ['Verify', '/verify', <VerifyScreen key="y" />],
 ];
 
 describe('every route renders unconfigured, signed out and offline', () => {
@@ -89,73 +87,102 @@ describe('every route renders unconfigured, signed out and offline', () => {
     it(`${name} renders without throwing and fires no request on mount`, () => {
       const { container } = renderRoute(path, element);
       const text = container.textContent ?? '';
-      expect(text.length).toBeGreaterThan(200);
-      // A11 / G6: nothing may hit the wire before the user asks.
+      expect(text.length).toBeGreaterThan(500);
+      // Nothing may hit the wire before the user asks for it.
       expect(fetchSpy).not.toHaveBeenCalled();
     });
 
-    it(`${name} carries the shell: nav, the four routes and the G8 line`, () => {
+    it(`${name} carries the shell: nav, all three routes and the honesty line`, () => {
       const { container } = renderRoute(path, element);
       const text = container.textContent ?? '';
       expect(container.querySelector('.aphotic-nav')).not.toBeNull();
-      expect(text).toMatch(/Deposit/);
-      expect(text).toMatch(/Exit/);
-      expect(text).toMatch(/Transparency/);
-      // G8, A8 — the honesty line is on every route.
+      expect(text).toMatch(/Vault/);
+      expect(text).toMatch(/Batch/);
+      expect(text).toMatch(/Verify/);
+      // The G8 line rides on every route.
       expect(text).toMatch(/custodial/i);
     });
 
-    it(`${name} disables what it cannot do and says why`, () => {
+    it(`${name} states the missing configuration instead of hiding it`, () => {
       const { container } = renderRoute(path, element);
-      const disabled = Array.from(container.querySelectorAll('button[disabled]'));
-      // Every disabled control must carry a machine-readable reason (title), and
-      // the page must state the underlying condition in words somewhere.
-      for (const button of disabled) {
-        const hasTitle = (button.getAttribute('title') ?? '').length > 0;
-        const hasLabel = (button.getAttribute('aria-label') ?? '').length > 0;
+      const text = container.textContent ?? '';
+      expect(text).toMatch(/VITE_APHOTIC_PACKAGE_ID/);
+      expect(text).toMatch(/inlines/i);
+    });
+
+    it(`${name} has no enabled control that cannot complete`, () => {
+      const { container } = renderRoute(path, element);
+      // Nothing is wired, so the only enabled buttons may be local UI state
+      // (the side toggle, the ladders). Anything that would touch chain must be
+      // disabled — and every disabled control sits next to a stated reason.
+      const enabled = Array.from(container.querySelectorAll('button:not([disabled])'));
+      for (const button of enabled) {
+        const label = (button.textContent ?? '').toLowerCase();
         expect(
-          hasTitle || hasLabel,
-          `disabled button "${button.textContent}" on ${path} carries no reason`,
-        ).toBe(true);
+          /submit|deposit|redeem|withdraw|approve|settle|claim/.test(label),
+          `enabled button "${button.textContent}" on ${path} looks like it writes to chain`,
+        ).toBe(false);
       }
+    });
+
+    it(`${name} shows the countdown to the next clearing in the header`, () => {
+      const { container } = renderRoute(path, element);
+      expect(container.textContent ?? '').toMatch(/to clearing/i);
     });
   }
 });
 
-describe('the unconfigured build says so instead of pretending', () => {
-  it('Deposit names the empty environment keys', () => {
-    const { container } = renderRoute('/deposit', <DepositScreen />);
-    const text = container.textContent ?? '';
-    expect(text).toMatch(/VITE_APHOTIC_PACKAGE_ID|VITE_VAULT_ID/);
+describe('each screen carries its own subject matter', () => {
+  it('the vault screen explains the carry and refuses to claim it is running', () => {
+    const text = renderRoute('/vault', <VaultScreen />).container.textContent ?? '';
+    expect(text).toMatch(/Redemption-carry vault/i);
+    expect(text).toMatch(/We are not demonstrating the carry/i);
+    expect(text).toMatch(/propose_nav/);
+    expect(text).toMatch(/approve_nav/);
   });
 
-  it('Transparency disables the chain read and gives the reason', () => {
-    const { container } = renderRoute('/transparency', <TransparencyScreen />);
-    const text = container.textContent ?? '';
-    expect(text).toMatch(/VITE_VAULT_ID is empty/);
+  it('the batch screen names the public queue as the leak it routes around', () => {
+    const text = renderRoute('/batch', <BatchScreen />).container.textContent ?? '';
+    expect(text).toMatch(/public Move object/i);
+    expect(text).toMatch(/meaningless/i);
+    expect(text).toMatch(/never fall back to plaintext|fall back to plaintext/i);
+    expect(text).toMatch(/LINKABLE/);
   });
 
-  it('Exit offers a sign-in path rather than a dead position panel', () => {
-    const { container } = renderRoute('/exit', <ExitScreen />);
-    const text = container.textContent ?? '';
-    expect(text).toMatch(/Sign in/i);
+  it('the verify screen publishes the full clearing rule and the wiring census', () => {
+    const text = renderRoute('/verify', <VerifyScreen />).container.textContent ?? '';
+    expect(text).toMatch(/Canonical order/i);
+    expect(text).toMatch(/largest fractional remainder/i);
+    expect(text).toMatch(/What this build points at/i);
+    expect(text).toMatch(/not configured/i);
+    // The one boundary Move cannot enforce is stated, not dressed up.
+    expect(text).toMatch(/at signing, not in Move/i);
+  });
+
+  it('the batch screen offers no free-form amount field anywhere', () => {
+    const { container } = renderRoute('/batch', <BatchScreen />);
+    expect(container.querySelectorAll('input')).toHaveLength(0);
+    expect(container.querySelectorAll('textarea')).toHaveLength(0);
   });
 });
 
 describe('the landing counters never throw and never invent a number', () => {
-  it('resolves to zeros with the network down', async () => {
+  it('resolves with ok:false and a zero supply when the network is down', async () => {
     const { readAggregateStats } = (await import('../src/landing/stats.js')) as {
-      readAggregateStats: () => Promise<{
-        deposits: number;
-        loans: number;
+      readAggregateStats: (nowMs?: number) => Promise<{
+        circulating: number;
+        circulatingSats: bigint;
+        minutesToClearing: number;
+        nextCloseMs: number;
         ok: boolean;
-        vaultSats: bigint;
       }>;
     };
-    const stats = await readAggregateStats();
-    expect(stats.deposits).toBe(0);
-    expect(stats.loans).toBe(0);
-    expect(stats.vaultSats).toBe(0n);
+    const stats = await readAggregateStats(Date.UTC(2026, 6, 26, 12, 0, 0, 0));
+    expect(stats.circulating).toBe(0);
+    expect(stats.circulatingSats).toBe(0n);
     expect(stats.ok).toBe(false);
+    // The countdown needs no network at all, so it stays correct regardless.
+    expect(stats.nextCloseMs).toBe(Date.UTC(2026, 6, 26, 18, 0, 0, 0));
+    expect(stats.minutesToClearing).toBe(360);
   });
 });

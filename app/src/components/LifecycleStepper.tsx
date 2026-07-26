@@ -1,10 +1,11 @@
 // ┌── APHOTIC CONTRACT ────────────────────────────────────────────────────────
-// @task       T0.4, T3.1, T3.2
-// @phase      3  [CUT-LINE CRITICAL]
+// @task       F1
+// @phase      0
 // @status     DONE
-// @spec       docs/APP.md §2.2 (six deposit stages), §3.2 (two exit phases)
+// @spec       aphotic.md §7.2 (batch state machine), docs/DESIGN-V2.md §6
+//             (the NAV epoch: propose → approve → claim)
 // @rules      G1 G6
-// @depends    ../fixtures (T0.4) · ../theme.css (T0.4)
+// @depends    ../theme.css (F1)
 // @facts      Time classes and their tokens:
 // @facts        'bitcoin' → var(--time-bitcoin)  slow: signet confs / MPC batching
 // @facts        'delay'   → var(--amber)         fixed 600_000 ms Hashi delay
@@ -21,7 +22,23 @@
 
 import type { ReactNode } from 'react';
 
-import type { LifecycleStage, TimeClass } from '../fixtures';
+/**
+ * How long a stage takes, by CLASS rather than by number. The distinction is the
+ * point: a Sui state transition is one checkpoint, a Bitcoin confirmation is not,
+ * and a UI that renders them in the same colour teaches the wrong model.
+ */
+export type TimeClass = 'bitcoin' | 'delay' | 'sui';
+
+export interface LifecycleStage {
+  /** 1-based position in the flow. */
+  readonly index: number;
+  readonly label: string;
+  /** What is actually observed when this stage completes. */
+  readonly signal: string;
+  /** Honest expectation, e.g. "~10 min" or "one checkpoint". */
+  readonly expected: string;
+  readonly timeClass: TimeClass;
+}
 
 export interface LifecycleStepperProps {
   stages: readonly LifecycleStage[];

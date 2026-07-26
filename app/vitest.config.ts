@@ -1,8 +1,8 @@
 // ┌── APHOTIC CONTRACT ────────────────────────────────────────────────────────
-// @task       T3.1, T3.2, T3.3
-// @phase      3
+// @task       F1
+// @phase      0
 // @status     DONE
-// @spec       docs/APP.md §7 (acceptance A1 A4 A6 A10 A11)
+// @spec       aphotic.md §2 (hard constraints), §13 (limitations are published)
 // @rules      G2 G3 G5 G6 G7 G8
 // @depends    ./package.json · ./vite.config.ts (mirrored, NOT imported — vitest
 //             ignores vite.config.ts once this file exists)
@@ -34,14 +34,27 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['test/**/*.test.ts', 'test/**/*.test.tsx'],
-    // Pinned so `.env.local` cannot influence the suite.
+    // Pinned so `.env.local` cannot influence the suite. Every id-bearing var
+    // the app reads is listed here EXPLICITLY, empty, so the suite always
+    // exercises the worst configuration: a build that shipped without them.
     env: {
-      VITE_DEMO_MODE: 'mock',
       VITE_ENOKI_API_KEY: '',
       VITE_ZKLOGIN_CLIENT_ID: '',
       VITE_ENOKI_REDIRECT_URL: '',
       VITE_APHOTIC_PACKAGE_ID: '',
+      VITE_APHOTIC_ORIGINAL_PACKAGE_ID: '',
       VITE_VAULT_ID: '',
+      VITE_GOVERNANCE_ID: '',
+      VITE_BATCH_REGISTRY_ID: '',
+      VITE_NOTE_TREE_ID: '',
+      VITE_NULLIFIER_SET_ID: '',
+      VITE_BALANCE_LEDGER_ID: '',
+      VITE_ADAPTER_ALLOWLIST_ID: '',
+      VITE_SEAL_KEY_SERVER_IDS: '',
+      VITE_SEAL_KEY_SERVER_URLS: '',
+      VITE_WALRUS_PUBLISHER: '',
+      VITE_CUSTODY_MULTISIG: '',
+      VITE_REDEMPTION_ADDRESS: '',
     },
     restoreMocks: true,
   },

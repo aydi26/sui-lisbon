@@ -1,28 +1,37 @@
 // ┌── APHOTIC CONTRACT ────────────────────────────────────────────────────────
-// @task       T0.4
+// @task       F1
 // @phase      0
 // @status     DONE
-// @spec       docs/APP.md §1 (components/ = shared UI)
+// @spec       aphotic.md §5 (app/), docs/CONVENTIONS.md §2 rule 6
 // @rules      G7
-// @depends    ./*.tsx (T0.4)
+// @depends    ./*.tsx (F1)
 // @facts      Screens import from '../../components', never from a component file
-// @facts        directly — one barrel keeps the A10 grep surface small.
+// @facts        directly — one barrel keeps the id-grep surface small.
 // @implements re-exports of every shared component
-// @forbidden  a canonical on-chain id anywhere under components/ — G7 / A10
-// @ac         docs/APP.md §7 A10
+// @forbidden  a canonical on-chain id anywhere under components/ — G7
+// @ac         `rg '0x[a-f0-9]{16,}' src/components` returns nothing.
 // @verify     cd app && npx tsc --noEmit
 // └── END CONTRACT ───────────────────────────────────────────────────────────
 
 export { AddressPill } from './AddressPill';
 export type { AddressPillProps } from './AddressPill';
 
-export { BridgeColumn, rederiveCongestion } from './BridgeColumn';
-export type { BridgeColumnProps } from './BridgeColumn';
+export { DenominationLadder, DENOMINATIONS } from './DenominationLadder';
+export type { Denomination, DenominationLadderProps } from './DenominationLadder';
+
+export { EpochClock, epochClockState } from './EpochClock';
+export type { EpochClockProps, EpochClockState, EpochPhase } from './EpochClock';
 
 export { KeeperCapabilityBadge } from './KeeperCapabilityBadge';
 
 export { LifecycleStepper } from './LifecycleStepper';
-export type { LifecycleStepperProps } from './LifecycleStepper';
+export type { LifecycleStage, LifecycleStepperProps, TimeClass } from './LifecycleStepper';
+
+export { LimitationsPanel, LIMITATIONS } from './LimitationsPanel';
+export type { Limitation, LimitationsPanelProps } from './LimitationsPanel';
+
+export { PendingCall } from './PendingCall';
+export type { PendingCallProps } from './PendingCall';
 
 export { PinningExplainer } from './PinningExplainer';
 

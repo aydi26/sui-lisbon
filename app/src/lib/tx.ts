@@ -1,15 +1,13 @@
 // ┌── APHOTIC CONTRACT ────────────────────────────────────────────────────────
-// @task       T3.4
-// @phase      3  [CUT-LINE CRITICAL]
-// @status     DONE
-// @spec       docs/APP.md §1 (lib/), §2.4, §3.3 (exit PTB), §7 A1 A4
-// @spec       docs/APP.md ERRATA E-A3 (reclaim is DEPOSITOR-signed; sponsorship
-//             changes who PAYS, never who the SENDER is)
-// @spec       move/sources/vault.move · gateway.move · envelope.move · router.move
-//             · journal.move — the `const E…: u64 = n;` blocks are the source of
-//             truth for every abort code mapped below
+// @task       F1
+// @phase      0
+// @status     PARTIAL
+// @spec       aphotic.md §9 (devInspect-before-send, fail-soft)
+// @spec       move/sources/*.move — the `const E…: u64 = n;` blocks are the source
+//             of truth for every abort code mapped below. The v2 rewrite is in
+//             flight, so APHOTIC_ABORTS is EMPTY rather than wrong (TODO(F2)).
 // @rules      G2 G7 G8 G10
-// @depends    ../config.ts (T0.4) · ./suiClient.ts (T0.4) · ../session/useSession.ts
+// @depends    ../config.ts (F1) · ./suiClient.ts (F1) · ../session/useSession.ts
 // @facts      THE ONE SEND PATH. Every screen that writes to chain goes through
 // @facts        useAphoticTx(); nothing else may call useSignAndExecuteTransaction.
 // @facts      dapp-kit 1.1.9 `useSignAndExecuteTransaction` signs AND executes via
@@ -19,15 +17,15 @@
 // @facts        config.sui.network. Never inline 'sui:testnet' (G7).
 // @facts      Move abort rendering seen in the wild:
 // @facts        MoveAbort(MoveLocation { module: ModuleId { address: 148a11…,
-// @facts        name: Identifier("gateway") }, function: 4, instruction: 27,
-// @facts        function_name: Some("exit_to_bitcoin") }, 4) in command 2
+// @facts        name: Identifier("vault") }, function: 4, instruction: 27,
+// @facts        function_name: Some("claim_deposit") }, 4) in command 2
 // @facts      ⚠ The REAL hashi package uses `#[error]` byte-string constants, so
 // @facts        its abort codes are CLEVER (high bit set) and are NOT comparable to
 // @facts        a small u64. We never guess a clever code's meaning: we match the
 // @facts        upstream byte-string when the node echoes it, else we surface raw.
-// @facts      Aphotic's own modules use plain `const E…: u64` — those ARE mapped.
-// @facts      vault code 1 is VACANT (the removed owner emergency withdraw). An
-// @facts        abort 1 from ::vault:: must NOT be given a meaning.
+// @facts      ⚠⚠ APHOTIC_ABORTS IS EMPTY ON PURPOSE. The v1 table is now wrong in
+// @facts        every row, and a confidently wrong explanation of a failed
+// @facts        transaction is worse than a raw string. Unmapped ⇒ raw.
 // @external   useSignAndExecuteTransaction({ transaction, chain }) → { digest }
 //             client.core.getTransaction({ digest })
 // @implements export type TxErrorKind · TxResult · MoveAbortInfo · TxBuilder
@@ -131,63 +129,18 @@ interface AbortEntry {
 /**
  * Aphotic's own error constants, module → code → meaning.
  *
- * Mirrors the `const E…: u64 = n;` block at the top of each file under
- * `move/sources/`. Keep in sync; an unmapped code degrades to the raw string,
- * which is ugly but honest.
+ * ⚠⚠ DELIBERATELY EMPTY. This table used to mirror the v1 package's
+ * `const E…: u64 = n;` blocks. The v2 Move package is a rewrite with a different
+ * module set and different codes, so every entry in the old table is now a
+ * WRONG ANSWER — and a confidently wrong explanation of a failed transaction is
+ * strictly worse than an ugly raw string.
  *
- * ⚠ `vault` code 1 is deliberately ABSENT: it belonged to the removed owner
- * emergency withdraw and the slot was left vacant so an old client decoding
- * abort 1 finds nothing rather than a different meaning.
+ * An unmapped code degrades to the raw abort text (see `parseMoveAbort`), which
+ * is exactly the behaviour we want until the codes are real again.
  */
-export const APHOTIC_ABORTS: Readonly<Record<string, Readonly<Record<number, AbortEntry>>>> = {
-  vault: {
-    2: { name: 'ENotAuthorized', text: 'That capability is not authorised for this vault action.' },
-    3: { name: 'EZeroShares', text: 'The vault has no shares outstanding, so there is nothing to price.' },
-    4: { name: 'EZeroDeposit', text: 'A deposit of zero sats is not accepted.' },
-    5: { name: 'EInsufficientShares', text: 'You do not hold enough vault shares for that amount.' },
-    6: { name: 'EPaused', text: 'The vault is paused: deposits, exits and trading are all halted.' },
-    7: { name: 'EStaleVersionEpoch', text: 'Your page is on an old strategy version epoch — reload and retry.' },
-    8: { name: 'EBadIdentityNamespace', text: 'The Seal identity namespace does not belong to this vault.' },
-    9: { name: 'ECapVaultMismatch', text: 'That capability belongs to a different vault.' },
-    10: { name: 'EUnregisteredDepositor', text: 'This address has no depositor record in the vault yet — deposit first.' },
-    11: { name: 'EZeroNav', text: 'The vault values at zero, so a share price cannot be computed.' },
-    12: { name: 'EOverflow', text: 'That amount overflows the vault’s 64-bit sats accounting.' },
-    13: { name: 'EZeroRedemption', text: 'That share amount redeems to zero sats — increase it.' },
-    14: { name: 'EInsufficientIdle', text: 'The vault’s idle balance is short: capital is currently deployed on the order book.' },
-    15: { name: 'EExitAddressAlreadySet', text: 'A Bitcoin exit address is already pinned for you. Pinning is write-once and cannot be changed.' },
-    16: { name: 'ENothingPending', text: 'There is no pending exit to flush for this address.' },
-  },
-  gateway: {
-    1: { name: 'EBadAddressLength', text: 'That is not a 20-byte P2WPKH or 32-byte P2TR witness program — Hashi accepts no other shape.' },
-    2: { name: 'EExitAddressAlreadySet', text: 'Your Bitcoin exit address is already pinned on-chain. It is immutable by design — that is what stops a compromised keeper redirecting funds.' },
-    3: { name: 'EExitAddressUnset', text: 'No Bitcoin exit address is pinned for you yet. Register one before exiting.' },
-    4: { name: 'EBelowHashiMinimum', text: 'Below Hashi’s 30,000 sat withdrawal minimum. The amount pools on-chain until it clears the floor — it is not a queue position.' },
-    5: { name: 'ENotDepositor', text: 'Only the depositor can do this. Reclaims and exits are depositor-signed.' },
-    6: { name: 'ERequesterMismatch', text: 'The signer does not match the address this call is being made for.' },
-  },
-  envelope: {
-    1: { name: 'EPaused', text: 'The risk envelope is paused — no action passes the gate.' },
-    2: { name: 'ECooldown', text: 'The envelope cooldown has not elapsed since the last action.' },
-    3: { name: 'EOracleDivergence', text: 'Pyth and the DeepBook book disagree beyond the allowed band — trading is halted until they reconverge.' },
-    4: { name: 'EBufferBreach', text: 'That size would eat into the redemption buffer reserved for exits.' },
-    5: { name: 'ENotionalCap', text: 'That size exceeds the per-action notional cap.' },
-    6: { name: 'ESlippage', text: 'The price is further from the book mid than the envelope allows.' },
-    7: { name: 'EBlobUnavailable', text: 'The Walrus decision blob is missing or not attested available.' },
-  },
-  router: {
-    1: { name: 'EWrongPool', text: 'That is not the pool this vault trades.' },
-    2: { name: 'ENotKeeper', text: 'Only the keeper’s TradeCap may place orders. It can trade; it can never take (G2).' },
-    3: { name: 'EBadTick', text: 'The price is not on the pool’s tick grid.' },
-    4: { name: 'EBadLot', text: 'The quantity is not a whole number of lots.' },
-    5: { name: 'EBelowMinSize', text: 'The order is below the pool’s minimum size.' },
-    6: { name: 'EEmptyBook', text: 'The order book is empty on at least one side, so there is no mid to quote against.' },
-    7: { name: 'ENotPostOnly', text: 'The maker leg must be POST_ONLY and this order would have crossed.' },
-  },
-  journal: {
-    1: { name: 'EStaleSeq', text: 'That journal sequence number is not ahead of the last one recorded.' },
-    2: { name: 'ECursorVaultMismatch', text: 'That journal cursor belongs to a different vault.' },
-  },
-};
+// TODO(F2): repopulate from the v2 `move/sources/*.move` error constants, one
+// module per key, once those files exist. Do not guess a code from a name.
+export const APHOTIC_ABORTS: Readonly<Record<string, Readonly<Record<number, AbortEntry>>>> = {};
 
 /**
  * The upstream Hashi `#[error]` byte-strings (move/tests/mock_hashi.move mirrors

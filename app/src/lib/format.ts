@@ -51,6 +51,17 @@ export function formatBtc(sats: bigint, opts?: { suffix?: boolean }): string {
 }
 
 /**
+ * Exact BTC rendering with trailing fractional zeros stripped — `0.01`, `10`.
+ * For the denomination ladder, where `0.01000000` is noise. Still exact: it
+ * removes zeros, never significant digits.
+ */
+export function formatBtcCompact(sats: bigint): string {
+  const full = formatBtc(sats, { suffix: false });
+  const trimmed = full.replace(/\.?0+$/, '');
+  return trimmed === '' || trimmed === '-' ? '0' : trimmed;
+}
+
+/**
  * Parse a human BTC string ("0.0003") into sats. Returns null on anything that
  * is not a finite, non-negative decimal with <= 8 fractional digits.
  */

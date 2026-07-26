@@ -1,10 +1,14 @@
 // ┌── APHOTIC CONTRACT ────────────────────────────────────────────────────────
-// @task       T0.4
+// @task       F1
 // @phase      0
 // @status     DONE
-// @spec       docs/APP.md §1 (React Query for all async reads; dapp-kit providers)
 // @spec       docs/RECON.md R1 (transport), R12 (pinned package versions)
 // @rules      G6 G7 G9
+// @facts      ⚠⚠ VITE_* IS INLINED AT BUILD TIME, so a var missing from the CI
+// @facts        environment ships as "" and throws nothing. configProblems() is
+// @facts        logged here on every load — that console line is what makes a
+// @facts        broken deploy visible in a bug report. The shell renders the same
+// @facts        list on every app route.
 // @depends    ./routes.tsx (T0.4) · ./config.ts (T0.4) · ./lib/suiClient.ts (T0.4)
 // @facts      Provider order (outer → inner): QueryClientProvider →
 // @facts        SuiClientProvider → WalletProvider → BrowserRouter → AppRoutes.
@@ -38,8 +42,18 @@ import '@mysten/dapp-kit/dist/index.css';
 import './theme.css';
 
 import AppRoutes from './routes';
-import { config } from './config';
+import { config, configProblems } from './config';
 import { registerAphoticEnokiWallets } from './session/enoki';
+
+// Loud at startup. `import.meta.env.VITE_*` is INLINED AT BUILD TIME, so a value
+// missing from the CI environment ships as "" and throws nothing — the only way
+// to notice is to say so. The shell also renders these on every app route; this
+// console line is what makes a broken deploy visible in a bug report.
+for (const problem of configProblems()) {
+  const line = `[aphotic config] ${problem.severity.toUpperCase()} ${problem.key} is unset — ${problem.effect}`;
+  if (problem.severity === 'blocking') console.error(line);
+  else console.warn(line);
+}
 
 // Enoki zkLogin wallets are wallet-standard wallets. They MUST be registered
 // before <WalletProvider> mounts, otherwise dapp-kit's autoConnect races the

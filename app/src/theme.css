@@ -480,6 +480,150 @@ button {
   font-variant-numeric: tabular-nums;
 }
 
+/* ── v2 primitives: the shell frame, the clock, the ladders ──────────────────
+   Cards lay their children out on a grid so a panel can be written as a plain
+   sequence of paragraphs without every one of them carrying a margin. */
+
+.aphotic-card {
+  display: grid;
+  gap: var(--space-3);
+  align-content: start;
+}
+
+.aphotic-card > h3 {
+  margin: 0;
+}
+
+.aphotic-card > p {
+  margin: 0;
+}
+
+.ap-eyebrow {
+  color: var(--accent);
+  font-size: var(--text-xs);
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+}
+
+.ap-screen-head {
+  display: grid;
+  gap: var(--space-3);
+  max-width: 62ch;
+}
+
+.ap-screen-head h1 {
+  font-family: var(--font-display);
+  font-size: var(--text-xl);
+  letter-spacing: var(--tracking-tight);
+  margin: 0;
+}
+
+.ap-screen-head p {
+  color: var(--text-secondary);
+  font-size: var(--text-base);
+  line-height: var(--leading-normal);
+  margin: 0;
+}
+
+.ap-grid {
+  display: grid;
+  gap: var(--space-5);
+  align-items: start;
+}
+
+@media (min-width: 900px) {
+  .ap-grid--2 {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+/* The countdown to the next 06:00 / 18:00 UTC boundary. */
+.ap-clock-value {
+  font-size: var(--text-xl);
+  color: var(--accent);
+  letter-spacing: var(--tracking-tight);
+}
+
+/* Fixed-denomination controls. Deliberately chunky: these are the only size and
+   price controls in the app, and they are meant to look like a short list of
+   choices rather than a field you can type anything into. */
+.ap-ladder {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.ap-ladder-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.ap-ladder-row .ap-btn {
+  display: grid;
+  gap: 2px;
+  justify-items: start;
+  min-width: 8.5rem;
+}
+
+.ap-ladder-sub {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+/* A panel with no backing data. Dashed, so it never reads as a live figure. */
+.ap-pending {
+  border-style: dashed;
+}
+
+.ap-pending-targets {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.ap-pending-targets code {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  padding: 2px var(--space-2);
+}
+
+/* Label / value rows: the wiring census and the key-server list. */
+.ap-kv {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-2);
+}
+
+.ap-kv > li {
+  display: grid;
+  gap: 2px;
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border-soft);
+  font-size: var(--text-sm);
+}
+
+@media (min-width: 720px) {
+  .ap-kv > li {
+    grid-template-columns: 16rem 1fr;
+    align-items: baseline;
+  }
+
+  .ap-kv > li > :last-child:nth-child(3) {
+    grid-column: 2;
+  }
+}
+
+.ap-limitations li strong {
+  color: var(--text-primary);
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

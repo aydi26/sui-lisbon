@@ -1,11 +1,11 @@
 // ┌── APHOTIC CONTRACT ────────────────────────────────────────────────────────
-// @task       T0.4, T5.2
+// @task       F1
 // @phase      0
 // @status     DONE
-// @spec       docs/APP.md §0 (GR8 row), §4.1 (<TrustModelDisclosure/>), §7 A8
-// @spec       docs/GOLDEN-RULES.md G8 + "Pitch honesty" lines
+// @spec       aphotic.md §13 (known limitations), §6.2 (two parties, not two scopes)
+// @spec       docs/DESIGN-V2.md §7 (what KeeperCap may call · INV-C1)
 // @rules      G8
-// @depends    ../theme.css (T0.4)
+// @depends    ../theme.css (F1)
 // @facts      hBTC IS custodial-threshold wrapped BTC: MPC threshold Schnorr +
 // @facts        Guardian 2-of-2 + a ~60-day recovery leaf. SAY THIS PLAINLY.
 // @facts      mpc_threshold_in_basis_points = 3334 · committee epoch 1171,
@@ -59,12 +59,18 @@ export function TrustModelDisclosure({ variant = 'line' }: TrustModelDisclosureP
       <ul style={{ color: 'var(--text-secondary)', fontSize: 'var(--text-sm)', paddingLeft: '1.1rem' }}>
         <li>Custody of the native BTC sits with Hashi’s threshold committee — not with us.</li>
         <li>
-          What we add is on-chain: exits are pinned in Move at deposit, the bridge’s congestion
-          envelope is replayable from Hashi’s own events, and the deposit crank is permissionless.
+          What we add is on-chain: uniform-price clearing runs in Move and anyone can recompute it,
+          the redemption queue we route around is a public object, and the schedule is mechanical
+          rather than operator-chosen.
         </li>
         <li>
-          The keeper holds a DeepBook <code>TradeCap</code> and nothing else. It can trade; it can
-          never take.
+          The keeper holds no discretion. Every function it can call is safe for anyone to call at
+          the scheduled time, and none of them takes an address parameter — so no keeper call can
+          send assets anywhere but the pinned allowlist.
+        </li>
+        <li>
+          Valuation is split across two <em>parties</em>, not two scopes: the keeper proposes a NAV
+          and records nothing else, and an admin multisig approves the exact digest it signed.
         </li>
       </ul>
     </section>

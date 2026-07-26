@@ -9,9 +9,13 @@
 // @depends    ./Globe3D.jsx · ./BeamSection.jsx · ./HorizontalScroll.jsx
 //             ./FAQ.jsx · ./stats.js · ./LandingPage.css
 // @facts      There is NO contact form and NO email address anywhere on this page,
-// @facts        by explicit product decision. The second CTA routes to
-// @facts        /transparency (the decision log) instead. ContactModal.jsx is
-// @facts        deleted — do not reintroduce it or any mailto: link.
+// @facts        by explicit product decision. The second CTA routes to /verify
+// @facts        instead. ContactModal.jsx is deleted — do not reintroduce it or
+// @facts        any mailto: link.
+// @facts      ⚠ The route targets here MUST match src/routes.tsx: "/vault" for the
+// @facts        primary CTA, "/verify" for the secondary. A stale target does not
+// @facts        404 — the catch-all bounces it back to "/", which during a demo
+// @facts        looks like a button that does nothing.
 // @facts      Ported VERBATIM from the upstream landing page (docs/RECON.md R13
 // @facts        names the repo + path; never re-derive it here).
 // @facts        Every timing constant, scroll formula and NumberFlow config is
@@ -34,8 +38,9 @@
 // @forbidden  a canonical id literal here — G7 (ids arrive via ./stats.js → ../config)
 // @forbidden  importing the upstream EVM-only aggregate reader — ./stats.js replaced it
 // @invariant  1. readAggregateStats() never throws, so the hero always renders.
-// @invariant  2. The left counter shows APHOTIC's sats, never the bridge's hBTC supply.
-// @invariant  3. onConnect defaults to navigating to /deposit (react-router).
+// @invariant  2. The left counter is LABELLED as the bridge's circulating hBTC —
+//                it is Hashi's number, and must never read as Aphotic's AUM (G8).
+// @invariant  3. onConnect defaults to navigating to /vault (react-router).
 // @ac         docs/APP.md §7 A11 — renders in mock mode with zero signet/RPC.
 // @verify     cd app && npm run build
 // @verify     the landing brand gate (docs/RECON.md R13 token list) over
@@ -67,18 +72,19 @@ export default function LandingPage({ onConnect, connecting = false, refreshKey 
   const navigate = useNavigate();
   const [loaderVisible, setLoaderVisible] = useState(true);
   const [statsReady, setStatsReady] = useState(false);
-  const [deposits, setDeposits] = useState(0);
-  const [loans, setLoans] = useState(0);
+  const [circulating, setCirculating] = useState(0);
+  const [minutes, setMinutes] = useState(0);
+  const [statsOk, setStatsOk] = useState(true);
   const statsRef = useRef(null);
 
   // "Enter the vault" — the landing page has no wallet step of its own; it hands
-  // off to the deposit screen, which owns zkLogin + the sponsored first tx.
+  // off to the vault screen, which owns the session and the deposit request.
   const handleEnter = useCallback(() => {
     if (onConnect) {
       onConnect();
       return;
     }
-    navigate("/deposit");
+    navigate("/vault");
   }, [onConnect, navigate]);
 
   const handleGlobeReady = useCallback(() => {
@@ -102,10 +108,11 @@ export default function LandingPage({ onConnect, connecting = false, refreshKey 
   useEffect(() => {
     let cancelled = false;
     const fetchStats = async () => {
-      const { deposits: d, loans: l } = await readAggregateStats();
+      const { circulating: c, minutesToClearing: m, ok } = await readAggregateStats();
       if (cancelled) return;
-      setDeposits(d);
-      setLoans(l);
+      setCirculating(c);
+      setMinutes(m);
+      setStatsOk(ok);
     };
     fetchStats();
     const interval = setInterval(fetchStats, 30_000);
@@ -145,11 +152,13 @@ export default function LandingPage({ onConnect, connecting = false, refreshKey 
 
       <div className={`stats-row${statsReady ? " ready" : ""}`} ref={statsRef}>
         <div className="stat-block">
-          <div className="stat-label">Sats under management</div>
+          <div className="stat-label">
+            {statsOk ? "hBTC in circulation · sats" : "hBTC in circulation · read unavailable"}
+          </div>
           <div className="stat-value">
             <span className="dollar">₿</span>
             <NumberFlow
-              value={deposits}
+              value={circulating}
               format={{ useGrouping: true, maximumFractionDigits: 0 }}
               locales="en-US"
               transformTiming={{ duration: 1600, easing: "cubic-bezier(0.16, 1, 0.3, 1)" }}
@@ -158,11 +167,11 @@ export default function LandingPage({ onConnect, connecting = false, refreshKey 
           </div>
         </div>
         <div className="stat-block">
-          <div className="stat-label">Decisions logged</div>
+          <div className="stat-label">Minutes to next clearing</div>
           <div className="stat-value">
             <span className="dollar"></span>
             <NumberFlow
-              value={loans}
+              value={minutes}
               format={{ useGrouping: true, maximumFractionDigits: 0 }}
               locales="en-US"
               transformTiming={{ duration: 1600, easing: "cubic-bezier(0.16, 1, 0.3, 1)" }}
@@ -177,13 +186,13 @@ export default function LandingPage({ onConnect, connecting = false, refreshKey 
 
       <section className="cta-section">
         <h2>Bitcoin, Working Quietly</h2>
-        <p>A non-custodial vault that market-makes hBTC against DBUSDC from a strategy nobody else can read, and sends your Bitcoin home to an address pinned on-chain. Sui testnet · Bitcoin signet.</p>
+        <p>Two things sharing one balance sheet: a vault that buys the redemption claim below par and redeems it at par, and a sealed-order auction that clears hBTC at one uniform price twice a day. Sui testnet · Bitcoin signet.</p>
         <div className="cta-buttons">
           <button className="gradient-btn" onClick={handleEnter} disabled={connecting}>
             {connecting ? "Connecting..." : "Enter the vault"}
           </button>
-          <button className="ghost-btn" onClick={() => navigate("/transparency")}>
-            See the decision log
+          <button className="ghost-btn" onClick={() => navigate("/verify")}>
+            Recompute it yourself
           </button>
         </div>
       </section>

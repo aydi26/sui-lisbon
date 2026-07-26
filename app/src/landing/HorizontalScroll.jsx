@@ -1,10 +1,10 @@
 // ┌── APHOTIC CONTRACT ────────────────────────────────────────────────────────
-// @task       T0.4
+// @task       F1
 // @phase      0
 // @status     DONE
 // @spec       docs/RECON.md R13 (hardcoded to EXACTLY 3 cards; the count is baked
 //             into CSS as .hscroll-section{height:300vh} / .hscroll-track{width:300vw})
-// @spec       docs/GOLDEN-RULES.md G2 G5 (cards 2 and 3 are those two rules)
+// @spec       aphotic.md §1 (the two products), §4.2 (the leak), §2 constraint 5
 // @rules      G2 G5 G7 G8
 // @depends    ./LandingPage.css (.hscroll-*) · app/public/logos/*.svg
 // @facts      Ported VERBATIM from the upstream HorizontalScroll.jsx (RECON R13).
@@ -22,8 +22,10 @@
 // @implements export default function HorizontalScroll()
 // @forbidden  a 4th card without editing .hscroll-section/.hscroll-track together
 // @forbidden  claiming hBTC is trustless or non-custodial — G8
-// @invariant  1. CARDS.length === 3.
-// @invariant  2. Card 2 states the exit address is write-once and Move-composed (G2).
+// @invariant  1. CARDS.length === 3 — carry / sealed auction / verify.
+// @invariant  2. Card 2 names the PUBLIC withdrawal queue as the leak being routed
+//                around, and says uniform-price clearing makes front-running
+//                meaningless rather than merely hard.
 // @invariant  3. Card 3 states the limiter is RE-DERIVED from Hashi's own events,
 //                never read from a trusted SDK call (G5).
 // @ac         three panels scroll horizontally across 300vh of vertical scroll.
@@ -34,10 +36,17 @@ import React, { useEffect, useRef } from "react";
 
 const CARDS = [
   {
-    title: "ENCRYPTED",
+    title: "CARRY",
     counter: "01 / 03",
     className: "p1",
-    text: "The strategy lives Seal-encrypted, so nobody reads the quotes before the book does. That protects the depositor, not the author: a readable strategy gets front-run, and the vault eats the loss. A Move seal_approve gate decides who may decrypt, namespaced to the vault and a version epoch — rotating the keeper revokes every old key share.",
+    text: "Redemption through the bridge is queued, rate-limited and paused during every reconfiguration, so hBTC trades below par. That discount is the market price of the wait. The vault buys the claim below par, redeems it one-for-one, and captures the spread — while idle capital earns lending yield between carries. Valuation is split across two parties: the keeper proposes a NAV, an admin multisig approves it.",
+    icon: <img src="/logos/aphotic-mark.svg" alt="Aphotic" />,
+  },
+  {
+    title: "SEALED",
+    counter: "02 / 03",
+    className: "p2",
+    text: "The withdrawal queue is a public Move object: every pending request shows who, how much, where to, and since when. A desk unwinding is watched forming in real time. Aphotic crosses that flow before it reaches the queue — orders encrypted client-side under a Seal time-lock, cleared at one uniform price at 06:00 and 18:00 UTC. Front-running is not made hard, it is made meaningless.",
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="#16c8d9" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="65%" height="65%">
         <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
@@ -46,18 +55,11 @@ const CARDS = [
     ),
   },
   {
-    title: "PINNED",
-    counter: "02 / 03",
-    className: "p2",
-    text: "Your Bitcoin exit address is written once on-chain at deposit and can never be changed. Exits are composed in Move straight into Hashi's request_withdrawal, so a fully compromised keeper can neither steal your funds nor redirect them somewhere else.",
-    icon: <img src="/logos/globe.svg" alt="" />,
-  },
-  {
-    title: "REPLAYABLE",
+    title: "VERIFY",
     counter: "03 / 03",
     className: "p3",
-    text: "Every keeper decision is written to Walrus, and the bridge's own withdrawal-rate limiter is re-derived from Hashi's on-chain event stream. You can replay exactly why the vault de-risked, without trusting us.",
-    icon: <img src="/logos/aphotic-mark.svg" alt="Aphotic" />,
+    text: "Same order set, same price, always. Clearing runs on-chain in Move with every tie broken, so anyone can recompute it and compare byte-for-byte — a divergence between implementations is a release blocker, not a warning. Fills are provable against a published Merkle root, and the bridge's own rate limiter is re-derived from its event stream rather than taken on faith.",
+    icon: <img src="/logos/globe.svg" alt="" />,
   },
 ];
 

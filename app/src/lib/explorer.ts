@@ -1,20 +1,22 @@
 // ┌── APHOTIC CONTRACT ────────────────────────────────────────────────────────
-// @task       T0.4, T3.2
+// @task       F1
 // @phase      0
 // @status     DONE
-// @spec       docs/APP.md §1 (lib/: explorer links), §3.1 (<SignetTxLink/>)
-// @rules      G6 G7
-// @depends    ../config.ts (T0.4)
-// @facts      SIGNET_EXPLORER default = https://mempool.space/signet
-// @facts      SUI_EXPLORER    default = https://suiscan.xyz/testnet
-// @facts      ⚠ G6: the signet link shown during the demo points at an EARLIER,
-// @facts        ALREADY-CONFIRMED withdrawal. The BTC leg is never live.
-// @implements export function signetTxUrl(txid: string): string
+// @spec       aphotic.md §6.3 (the redemption address is published so anyone can
+//             check it on Bitcoin), §7.7 (NAV mitigations)
+// @rules      G7
+// @depends    ../config.ts (F1)
+// @facts      BITCOIN_EXPLORER default = https://mempool.space/signet
+// @facts      SUI_EXPLORER     default = https://suiscan.xyz/testnet
+// @facts      The Bitcoin links exist so a redemption can be audited by a third
+// @facts        party without asking us — that is mitigation #1 for the one NAV leg
+// @facts        Move cannot read.
+// @implements export function bitcoinTxUrl(txid: string): string
+//             export function bitcoinAddressUrl(address: string): string
 //             export function suiTxUrl(digest: string): string
 //             export function suiObjectUrl(id: string): string
 // @forbidden  hardcoding an explorer base URL — it comes from config (G7)
 // @invariant  1. Every returned URL is built from config.explorers.*.
-// @ac         docs/APP.md §7 A5
 // @verify     cd app && npx tsc --noEmit
 // └── END CONTRACT ───────────────────────────────────────────────────────────
 
@@ -22,9 +24,14 @@ import { config } from '../config';
 
 const trimSlash = (base: string): string => base.replace(/\/+$/, '');
 
-/** Bitcoin signet transaction. Pre-staged during the demo (G6). */
-export function signetTxUrl(txid: string): string {
-  return `${trimSlash(config.explorers.signet)}/tx/${txid}`;
+/** Bitcoin transaction (signet while the Sui side is testnet). */
+export function bitcoinTxUrl(txid: string): string {
+  return `${trimSlash(config.explorers.bitcoin)}/tx/${txid}`;
+}
+
+/** Bitcoin address page — the redemption address is published for exactly this. */
+export function bitcoinAddressUrl(address: string): string {
+  return `${trimSlash(config.explorers.bitcoin)}/address/${address}`;
 }
 
 /** Sui transaction digest (base58). */

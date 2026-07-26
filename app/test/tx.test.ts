@@ -1,56 +1,54 @@
 // ┌── APHOTIC CONTRACT ────────────────────────────────────────────────────────
-// @task       T3.4
-// @phase      3  [CUT-LINE CRITICAL]
+// @task       F1
+// @phase      0
 // @status     DONE
-// @spec       docs/APP.md §7 A4 (a Move abort renders as human text)
-// @rules      G2 G7 G8
-// @depends    ../src/lib/tx.ts (T3.4)
-// @facts      The abort tables mirror the `const E…: u64 = n;` blocks in
-// @facts        move/sources/{vault,gateway,envelope,router,journal}.move. If a Move
-// @facts        error constant is renumbered, one of these assertions fails — which
-// @facts        is the entire point of pinning the numbers here.
-// @facts      vault code 1 is VACANT (removed owner emergency withdraw) and must
-// @facts        never acquire a meaning.
-// @implements the A4 safety net for the shared send path
-// @forbidden  a network call — this file is pure parsing
-// @invariant  1. An unknown abort keeps the raw string; it is never explained away.
-// @ac         cd app && npm test
-// @verify     cd app && npm test
+// @spec       aphotic.md §9 (fail-soft) · docs/RECON.md R7 (Hashi #[error] strings)
+// @rules      G7 G8
+// @depends    ../src/lib/tx.ts (F1)
+// @facts      APHOTIC_ABORTS IS EMPTY ON PURPOSE while the v2 Move package is being
+// @facts        written. Every entry in the v1 table is now a WRONG ANSWER, and a
+// @facts        confidently wrong explanation of a failed transaction is worse than
+// @facts        a raw string. These cases pin that behaviour so the table cannot be
+// @facts        "helpfully" repopulated with guesses: an unmapped code degrades to
+// @facts        the raw text, never to an invented meaning.
+// @facts      Hashi's own constants are `#[error]` BYTE-STRINGS, so its abort codes
+// @facts        are CLEVER (high bit set) and encode a constant index plus a line
+// @facts        number — NOT a value we may interpret. We recognise them only by
+// @facts        the byte-string when the node echoes it.
+// @implements the abort-parser safety net
+// @forbidden  asserting a constant name that no shipped Move source defines
+// @invariant  1. A clever code never receives a guessed meaning.
+// @invariant  2. An unclassified error keeps its raw text.
+// @ac         parses both renderings; classifies rejection/gas/network.
+// @verify     cd app && npm test -- tx
 // └── END CONTRACT ───────────────────────────────────────────────────────────
 
 import { describe, expect, it } from 'vitest';
 
 import { APHOTIC_ABORTS, describeTxError, parseMoveAbort } from '../src/lib/tx';
 
-const gatewayAbort = (code: number): string =>
-  `MoveAbort(MoveLocation { module: ModuleId { address: 148a11915b86ebb79d0a98f81da666ba92edfc03ff0a3ef937a3441df66dee54, name: Identifier("gateway") }, function: 4, instruction: 27, function_name: Some("exit_to_bitcoin") }, ${code}) in command 2`;
+const vaultAbort = (code: number): string =>
+  `MoveAbort(MoveLocation { module: ModuleId { address: 148a11915b86ebb79d0a98f81da666ba92edfc03ff0a3ef937a3441df66dee54, name: Identifier("vault") }, function: 4, instruction: 27, function_name: Some("claim_deposit") }, ${code}) in command 2`;
 
 describe('parseMoveAbort', () => {
   it('pulls module, function and code out of the full rendering', () => {
-    const abort = parseMoveAbort(gatewayAbort(4));
+    const abort = parseMoveAbort(vaultAbort(4));
     expect(abort).not.toBeNull();
-    expect(abort?.module).toBe('gateway');
-    expect(abort?.functionName).toBe('exit_to_bitcoin');
+    expect(abort?.module).toBe('vault');
+    expect(abort?.functionName).toBe('claim_deposit');
     expect(abort?.code).toBe(4n);
     expect(abort?.clever).toBe(false);
-    expect(abort?.constantName).toBe('EBelowHashiMinimum');
   });
 
-  it('maps the write-once pinning abort to G2 copy', () => {
-    const abort = parseMoveAbort(gatewayAbort(2));
-    expect(abort?.constantName).toBe('EExitAddressAlreadySet');
-    expect(abort?.explanation).toMatch(/immutable/i);
-  });
-
-  it('reads the short `module: 0x…::vault` rendering', () => {
+  it('reads the short `module: 0x…::batch` rendering', () => {
     const abort = parseMoveAbort(
-      'MoveAbort(MoveLocation { module: 0x148a11::vault, function: 7, instruction: 3 }, 10) in command 0',
+      'MoveAbort(MoveLocation { module: 0x148a11::batch, function: 7, instruction: 3 }, 10) in command 0',
     );
-    expect(abort?.module).toBe('vault');
-    expect(abort?.constantName).toBe('EUnregisteredDepositor');
+    expect(abort?.module).toBe('batch');
+    expect(abort?.code).toBe(10n);
   });
 
-  it('reads the terse `abort code: n` rendering', () => {
+  it('reads the terse `abort code: n` rendering and assigns it no meaning', () => {
     const abort = parseMoveAbort('Transaction failed: ... abort code: 6');
     expect(abort?.code).toBe(6n);
     expect(abort?.module).toBeNull();
@@ -58,13 +56,15 @@ describe('parseMoveAbort', () => {
     expect(abort?.explanation).toBeNull();
   });
 
-  it('never gives vault abort 1 a meaning (the slot is vacant)', () => {
-    const abort = parseMoveAbort(
-      'MoveAbort(MoveLocation { module: 0x148a11::vault, function: 1, instruction: 1 }, 1)',
-    );
-    expect(abort?.code).toBe(1n);
-    expect(abort?.constantName).toBeNull();
-    expect(APHOTIC_ABORTS.vault[1]).toBeUndefined();
+  it('assigns NO meaning to an Aphotic code while the table is empty', () => {
+    // The v2 package is a rewrite. Until its error constants exist, a mapped
+    // explanation would be a fabrication, so there are none.
+    expect(Object.keys(APHOTIC_ABORTS)).toHaveLength(0);
+    for (const code of [1, 2, 4, 10]) {
+      const abort = parseMoveAbort(vaultAbort(code));
+      expect(abort?.constantName).toBeNull();
+      expect(abort?.explanation).toBeNull();
+    }
   });
 
   it('flags a clever (#[error] byte-string) code instead of guessing', () => {
@@ -84,17 +84,23 @@ describe('parseMoveAbort', () => {
     expect(abort?.explanation).toMatch(/only the address that requested/i);
   });
 
+  it('recognises the Hashi withdrawal minimum by its byte-string', () => {
+    const raw =
+      'MoveAbort(MoveLocation { module: 0xfcea10ca::withdraw, function: 3 }, 9223372105742876675): the amount is below the minimum';
+    expect(parseMoveAbort(raw)?.explanation).toMatch(/30,000 sat minimum/i);
+  });
+
   it('returns null for a non-abort string', () => {
     expect(parseMoveAbort('Failed to fetch')).toBeNull();
   });
 });
 
 describe('describeTxError', () => {
-  it('classifies a Move abort and renders human text', () => {
-    const failure = describeTxError(new Error(gatewayAbort(3)));
+  it('classifies a Move abort and names where it came from', () => {
+    const failure = describeTxError(new Error(vaultAbort(3)));
     expect(failure.kind).toBe('move-abort');
-    expect(failure.message).toMatch(/register one before exiting/i);
-    expect(failure.abort?.constantName).toBe('EExitAddressUnset');
+    expect(failure.message).toMatch(/vault::claim_deposit/);
+    expect(failure.abort?.code).toBe(3n);
   });
 
   it('classifies a user rejection', () => {
@@ -104,8 +110,7 @@ describe('describeTxError', () => {
   });
 
   it('classifies a transport failure', () => {
-    const failure = describeTxError(new Error('Failed to fetch'));
-    expect(failure.kind).toBe('network');
+    expect(describeTxError(new Error('Failed to fetch')).kind).toBe('network');
   });
 
   it('classifies a gas failure', () => {
@@ -121,10 +126,10 @@ describe('describeTxError', () => {
   });
 
   it('walks an error cause chain', () => {
-    const inner = new Error(gatewayAbort(1));
+    const inner = new Error(vaultAbort(1));
     const outer = new Error('Wallet execution failed', { cause: inner });
     const failure = describeTxError(outer);
     expect(failure.kind).toBe('move-abort');
-    expect(failure.abort?.constantName).toBe('EBadAddressLength');
+    expect(failure.abort?.code).toBe(1n);
   });
 });

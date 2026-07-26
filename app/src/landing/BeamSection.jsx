@@ -97,8 +97,8 @@ export default function BeamSection() {
           </div>
         </div>
         <div className="beam-text-side">
-          <h2><span className="line-1">Private Market Making,</span><br />Native Bitcoin</h2>
-          <p>Aphotic is a non-custodial vault that market-makes hBTC against DBUSDC on DeepBook v3, driven by a strategy that stays Seal-encrypted end to end. Native BTC enters and leaves through Hashi, and the Bitcoin exit address is pinned on-chain in Move at deposit — so the keeper, which holds only a DeepBook TradeCap, can trade but can never take or redirect. Sui testnet, Bitcoin signet.</p>
+          <h2><span className="line-1">Confidential Batch Clearing,</span><br />Native Bitcoin</h2>
+          <p>Aphotic buys the redemption claim below par and redeems it at par through Hashi's queue, and clears opposing flow at a uniform price twice a day before it ever reaches that queue. Orders are encrypted client-side under a Seal time-lock; clearing runs on-chain in Move and is deterministic, so anyone can recompute the price and check their own fill. hBTC is custodial-threshold wrapped BTC and we say so plainly. Sui testnet, Bitcoin signet.</p>
         </div>
       </div>
     </section>

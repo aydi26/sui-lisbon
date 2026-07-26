@@ -1,11 +1,15 @@
 // ┌── APHOTIC CONTRACT ────────────────────────────────────────────────────────
-// @task       T0.4, T5.2
-// @phase      5
+// @task       F1
+// @phase      0
 // @status     DONE
-// @spec       docs/APP.md §4.1 (<StaleBanner/>), §0 (GR9 row), §7 A9
-// @spec       docs/GOLDEN-RULES.md G9 · docs/ULTRACODE-BRIEF.md E-A7 (empty book)
+// @spec       docs/DESIGN-V2.md §6 step 4 (approve_nav asserts the clearing price
+//             does not deviate from the book mid beyond the governed bound)
+// @spec       aphotic.md §10 (NAV invariants), D2 (the hBTC book is empty)
 // @rules      G6 G9
-// @depends    ../theme.css (T0.4) · keeper/src/oracle/ (T2.8)
+// @depends    ../theme.css (F1)
+// @facts      UNUSED BY THE SHELL TODAY, kept for F2/F3: the moment a screen reads
+// @facts        the book mid or the oracle, this is the banner it must render
+// @facts        rather than showing a number that is no longer trustworthy.
 // @facts      NAV/collateral is valued at the DeepBook MID, never at raw Pyth —
 // @facts        hBTC can depeg under exit throttling (G9).
 // @facts      Breaker = Pyth BETA BTC/USD vs DeepBook TWAP divergence, plus a
@@ -62,7 +66,8 @@ const REASON_COPY: Record<BreakerReason, string> = {
     'Nothing on this screen is being refreshed. The figures below are exactly as old as stated, and we would rather say so than render them as if they were live.',
 };
 
-/** Coarse human age, matching screens/transparency/display.ts. */
+/** Coarse human age. Deliberately imprecise: "3 min" is honest, "3m12s" implies
+ *  a freshness we are not measuring. */
 function humanAge(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000));
   if (s < 90) return `${s} s`;
