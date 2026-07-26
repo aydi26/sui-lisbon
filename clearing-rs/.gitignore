@@ -1,0 +1,7 @@
+# Cargo build artefacts. The root .gitignore has no `target` rule, so it lives here.
+/target/
+
+# Simulator output. Regenerate with:
+#   cargo run -p sim -- --out latency.json --flow-out flow.json
+/latency.json
+/flow.json

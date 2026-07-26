@@ -1,0 +1,12 @@
+[workspace]
+resolver = "2"
+members = ["clearing", "sim"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.97"
+license = "MIT"
+
+[profile.test]
+opt-level = 1

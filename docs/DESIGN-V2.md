@@ -249,6 +249,44 @@ alone and breaks parity.
 
 ---
 
+### 5ter. ⚠ THE PARITY CLAIM DOES NOT CURRENTLY HOLD — measured 2026-07-26
+
+`aphotic.md` §9 says a divergence between clearing implementations is a **release
+blocker**. A third implementation was written in Rust specifically to check that, reading
+`sdk/fixtures/clearing.golden.json` in place, and it found that **`clearing.move` and §5bis
+above are not the same algorithm.**
+
+Do not claim bit-identical parity anywhere until these are resolved. The SDK and the Rust
+`spec` engine agree with each other and with all 46 fixtures; it is **Move** that differs,
+and Move is what settles.
+
+Seeded census over 4 000 random books: full agreement on **3 407 (85 %)**. Divergence is
+narrow and specific, which is exactly why it survived unnoticed:
+
+| # | Divergence | Consequence |
+|---|---|---|
+| **D1** | **Fill leaf layout.** Move `bcs(Fill)` is 73 bytes (`batch_id`, no `fee`); §5bis is 81 (`fee`, no `batch_id`, u128 price). | The two roots can **never** match for a non-empty fill set. This alone makes byte-comparison meaningless today. |
+| **D2** | **Allocation.** Move fills an overfull strictly-inside level **greedily**; §5bis **pro-rates** it. Bids 60@10 + 60@10 against ask 50@5 → Move 50/0, §5bis 25/25. | Two participants at the same price get different fills. 97 of 4 000 books (2.4 %). |
+| **D3** | **Fee.** Move folds rounding dust into the fee; §5bis keeps them separate. Asserted exactly: `move.fee_quote == spec.fee_quote + spec.dust_quote`. | 516 of 4 000 books (12.9 %) — the most frequent, and the least visible. |
+| **D4** | **Truncation timing.** Move truncates at **load**, before price discovery, so one under-funded account **moves the uniform clearing price**. Counterexample clears at 10 on Move and 12 on §5bis. | A funding shortfall changing the price for everyone is a design question, not a rounding one. |
+| **D5** | **Price width.** u64 in Move, u128 in §5bis. The fixture `u128-max-price-…` is not expressible against Move at all. | |
+
+**Which side is right is a human decision, not a mechanical one** — D2 and D4 in particular
+are genuine design choices, and the Rust crate deliberately implements BOTH engines rather
+than picking. What is not optional is saying so: a parity claim that has not been checked
+is a guess, and one that has been checked and failed is a bug.
+
+Two smaller corrections from the same pass:
+- **§5bis(d) miscounts its own layout** — it says "= 73 bytes" for a field list that sums to
+  81. The SDK's test asserts 81, so the code is right and the prose above is wrong.
+- The pre-existing Rust crate carried two dead constants: `0xA11CE` asserted as `659_406`
+  (it is **659 918**), and a reference to a hash-vector file that does not exist. Both
+  corrected. The replacement BLAKE2b vectors deliberately cross a block boundary: the three
+  published 256-bit vectors are all under 44 bytes and every fill leaf is under 128, so
+  nothing else in this repo could have caught a multi-block bug.
+
+---
+
 ## 6. `approve_nav` — the O(1) form
 
 It must **not** iterate requests; `object_runtime_max_num_store_entries = 1000` makes any

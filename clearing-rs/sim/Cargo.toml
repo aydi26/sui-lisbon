@@ -1,0 +1,16 @@
+[package]
+name = "sim"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Order-flow simulation and Hashi exit-latency calibration for Aphotic"
+
+# Only the in-repo `clearing` crate — for its seeded RNG, its JSON writer, and (in `flow`) the
+# real clearing engine. No third-party dependencies; see ../README.md.
+[dependencies]
+clearing = { path = "../clearing" }
+
+[[bin]]
+name = "sim"
+path = "src/main.rs"

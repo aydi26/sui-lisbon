@@ -147,13 +147,18 @@ export PATH="$LOCALAPPDATA/sui:$PATH"       # sui is not reliably on PATH
 cd move    && sui move build && sui move test    # 275 tests, 275 passed, 0 failed · 10 modules
 cd lending && sui move build && sui move test    #  37 tests,  37 passed, 0 failed
 cd sdk     && npm test                           # 15 files · 376 tests
-cd keeper  && npm test                           # 10 files · 178 tests
-cd app     && npm test                           # 12 files · 152 tests (fully offline)
+cd keeper  && npm test                           # 16 files · 252 tests
+cd app     && npm test                           # 12 files · 157 tests (fully offline)
 
 bash scripts/gates.sh                            # 12 PASS · 0 FAIL · 0 SKIP
 powershell -NoProfile -File scripts/gates.ps1    # must agree, verdict for verdict
 node scripts/verify-onchain.mjs                  # 28 PASS · 0 FAIL · 0 WARN · 4 INFO (needs network)
+
+powershell -NoProfile -File scripts/verify-all.ps1   # the master gate — all 12 of the above, ordered
 ```
+
+**Total: 275 Move + 37 lending + 376 SDK + 252 keeper + 157 app = 1 097 tests, all green**, plus 12
+structural gates that agree verdict-for-verdict across `bash` and PowerShell.
 
 Move tests, per module, measured individually: `vault` **42** · `batch` **45** · `clearing` **25** ·
 `notes` **32** · `balance` **27** · `caps` **24**, with `allocate` and `oracle` accounting for the
@@ -384,8 +389,8 @@ bar and the one we state.
 |---|---|---|
 | 1 | The **v2 `aphotic` package is not published**, and the reason is on-chain, not procedural: `clearing::Clearing` has 39 fields against a 32-field verifier cap (§5). A second blocker sits behind it — the LP share coin module was never written, so no `Vault` can be created either. | Everything on-chain in the demo runs against the local suite plus the published `aphotic_lending`. The **L3 Move↔TS parity gate needs a published package** and is therefore still owed. Both blockers are diagnosed, bounded and single-file; neither is a design problem. |
 | 2 | `scripts/measure-clearing.mjs` ran and reported **"NOTHING WAS MEASURED"** — the published package predates `clearing`. | `MAX_BATCH_SIZE = 256` is a **reasoned** default, not a measured one. The resumable cursor path exists from day one precisely so a measurement can lower it without a redesign. |
-| 3 | Six of the keeper's ten CLI commands are **declared but not wired** (`open` `close` `reveal` `drive` `nav` `claim`); they exit **2** naming the module they need. | The four that matter offline — `schedule` `seal-id` `clear` `verify-limiter` — run for real. A command that exits 0 having done nothing is how a demo fails without anyone noticing, so none does. |
-| 4 | `cd keeper && npm run build` was **failing `tsc`** while this was written (`src/batch/open.ts`, `src/vault/receipts.ts` were mid-write by a concurrent agent). `npm test` was green at 178. | Re-run before demoing. `docs/DEMO.md` §3 pre-flight covers it. |
+| 3 | Some of the keeper's CLI commands are **declared but not wired**; they exit **2** naming the module they need rather than exiting 0. | `schedule` `seal-id` `clear` `verify-limiter` run for real offline. A command that exits 0 having done nothing is how a demo fails without anyone noticing, so none does. Run `node dist/index.js --help` for the current split — the `!` marker is authoritative, not this table. |
+| 4 | The tree was being written by several agents while this was measured. Between two passes ~40 minutes apart, keeper went **178 → 252** tests and app **152 → 157**; earlier `verify-all.ps1` runs showed **9 PASS · 3 FAIL** where the three failures were `tsc` errors in files mid-write, and both cleared on re-run. | Every figure here is timestamped to 2026-07-26 and was re-measured at the end. **Re-run before quoting.** |
 | 5 | `clearing-rs/` (the Rust clearing twin) is written but **`cargo` and `rustc` are not installed on this machine**, so it was never compiled or tested here. | It is source, not evidence. Do not cite a Rust test count. |
 | 6 | `sui move build` emits **4 lint warnings** on a clean rebuild (`W99001` non-composable transfer to sender, 2× `W09014` unused `&mut`, `W02013` discarded return). Exit code is 0. `docs/DEPLOYED.md` records "zero warnings" from an earlier run of the same command; the tree moved. | Cosmetic; listed because "zero warnings" would have been the easy thing to copy. |
 | 7 | `scripts/verify-onchain.mjs`'s 28 assertions still check the **v1 legacy** `aphotic` package and vault ids alongside the live Hashi/DeepBook/Pyth ones. | Its Hashi, DeepBook, config, event and Pyth assertions are current and load-bearing; its two `aphotic` rows are historical. |

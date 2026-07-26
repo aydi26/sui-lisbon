@@ -67,11 +67,11 @@ These are load-bearing, not disclaimers. They appear in the product UI as well a
 | Move package `aphotic` — 10 modules, 275 tests | **written and green — and NOT published.** A publish was attempted and the validator rejected it: `VMVerificationOrDeserializationError`. `clearing::Clearing` declares 39 fields against a **32-field verifier cap**, and `sui move build` does not run that verifier. Bisection, proof and fix in [`docs/SUBMISSION.md` §5](docs/SUBMISSION.md). |
 | `aphotic_lending` — our hBTC counterparty | **published and live**: `0x39d038aea02ccc0bd25e97c7f1a715e87dd6ccae19b0bf9ac255379634b6ea8c`, shared `Market` `0x220ba0e5…` (isv `953314524`), publish tx `3PCybDwuxCCxEace2zSrNutPRSNvEKAazPZjbKPTqnJZ`. Live and empty — we cannot mint hBTC. |
 | `sdk/` clearing · Merkle · Seal identity · limiter | **written and green**, 376 tests, 46 shared golden fixtures |
-| Move ↔ TypeScript clearing parity, levels L1 + L2 | **green** — shared fixtures, and a 10 000-case seeded property test every commit |
-| Move ↔ TypeScript parity **L3** (`devInspect`, BCS byte-for-byte) | **owed** — it needs the package published |
+| Move ↔ TypeScript clearing parity | **FAILS, and we found it ourselves.** The TypeScript, the fixtures and the Rust spec engine all agree; **Move differs**, on 15 % of 4 000 seeded books. Five named divergences with hand-derived counterexamples in `clearing-rs/tests/divergence.rs` and `docs/DESIGN-V2.md` §5ter. The worst is structural: the two fill-leaf layouts are 73 and 81 bytes, so the Merkle roots can **never** match. This is the release blocker `aphotic.md` §9 says it is, and it is open. |
+| Move ↔ TypeScript parity **L3** (`devInspect`, BCS byte-for-byte) | **owed** — it needs the package published, and §5ter resolved first |
 | `MAX_BATCH_SIZE = 256` | a **reasoned** default, not a measured one. `scripts/measure-clearing.mjs` ran and reported *"NOTHING WAS MEASURED"* against a package that predates `clearing`. |
-| Keeper CLI | 4 of 10 commands run for real (`schedule` `seal-id` `clear` `verify-limiter`); the other 6 are **declared and exit 2** naming the module they need |
-| `clearing-rs/` (Rust clearing twin) | **source only** — `cargo` is not installed on this machine, so it has never been compiled here. Do not cite a Rust test count. |
+| Keeper CLI | **all 10 commands run**, 252 tests. Every test is offline against a fake client: the PTB shapes, decoders and local refusals are pinned; the wire behaviour against a real node is not. |
+| `clearing-rs/` (Rust clearing twin) | **built and green — 79 tests.** Two engines on purpose: one reproducing the deployed `clearing.move`, one reproducing the spec. A single engine could not have found the divergence above. `sim/` is standalone — Hashi's UTXO simulator is not in this repo, so the fragmentation leg is parameterised, not calibrated, and every emitted file says `"calibrated_against_hashi_sim": false`. |
 | The carry (Phase 2) | **not built**, deliberately — see above |
 | BTC in / BTC out on signet | **real but never live-demoable**: ~70 min in, ~1.5–2 h out. Pre-staged. |
 
@@ -126,13 +126,16 @@ cd lending && sui move build && sui move test   # 37 tests, 37 passed, 0 failed
 cd sdk     && npm install && npm test           # 15 files · 376 tests
 
 # Keeper (ESM, "type": "module")
-cd keeper  && npm install && npm run typecheck && npm run build && npm test   # 10 files · 178 tests
+cd keeper  && npm install && npm run typecheck && npm run build && npm test   # 16 files · 252 tests
 
 # App (React 19 + Vite 6)
 cd app     && npm install && npm run build      # tsc --noEmit && vite build
-cd app     && npm test                          # 12 files · 152 tests, fully offline
+cd app     && npm test                          # 12 files · 157 tests, fully offline
 cd app     && npm run dev                       # http://localhost:5173
 ```
+
+**275 Move + 37 lending + 376 SDK + 252 keeper + 157 app = 1 097 tests**, all green on 2026-07-26,
+plus 12 structural gates that agree verdict-for-verdict across both shells.
 
 Copy `keeper/.env.example` → `keeper/.env` and `app/.env.example` → `app/.env`. `keeper/.env` is gitignored and is the **only** file that may ever hold a private key.
 

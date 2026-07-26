@@ -1,0 +1,25 @@
+# Why this file exists — read before deleting it.
+#
+# The default host toolchain here is `stable-x86_64-pc-windows-msvc`. MSVC 14.41 IS installed
+# (VS 2022 Community, with link.exe), but the **Windows SDK is not**: there is no `kernel32.lib`
+# anywhere on this machine, `C:\Program Files (x86)\Windows Kits\10\Lib` is empty, and
+# `vcvarsall.bat` is missing next to `vcvars64.bat`. The MSVC linker therefore cannot resolve
+# any Windows import library, and every `cargo test` fails at link time with
+#
+#     error: linker `link.exe` not found
+#
+# (which is what rustc reports when the MSVC environment cannot be assembled).
+#
+# `stable-x86_64-pc-windows-gnu` is self-contained — rustup ships the MinGW import libraries and
+# the linker — so it builds and links here with no further installation. Nothing in this
+# workspace is target-specific: it is integer arithmetic, hashing and file I/O.
+#
+# TO REMOVE THIS PIN: install the "Windows 10/11 SDK" component in the Visual Studio Installer,
+# confirm `kernel32.lib` exists under Windows Kits\10\Lib, then delete this file. Both toolchains
+# must produce identical test results; if they ever do not, that is a finding.
+#
+# NOTE this pin names a Windows host triple, so it will not resolve on Linux or macOS. That is
+# consistent with the rest of this repository, which is Windows-pinned throughout (PowerShell
+# gates, %LOCALAPPDATA%\sui). On another host, delete this file.
+[toolchain]
+channel = "stable-x86_64-pc-windows-gnu"

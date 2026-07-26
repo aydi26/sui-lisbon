@@ -14,17 +14,87 @@
 
 ---
 
-## APHOTIC v2 — the 2026-07-26 product pivot — **NOT PUBLISHED — PUBLISH ATTEMPTED AND REJECTED ON CHAIN**
+## APHOTIC v2 — the 2026-07-26 product pivot — **PUBLISHED** (partial runtime graph)
 
-**Nothing has been deployed for the v2 product.** No package id, no shared objects, no
-digests. Recorded here as a section so that when the publish happens there is one place
-it goes, and so nobody mistakes the v1 ids below for a v2 deployment.
+**The package is live on Sui testnet.** The first publish attempt was rejected on chain; the
+cause was diagnosed, fixed in `clearing.move`, and the republish succeeded. Both the failure
+and the success are recorded below — the failure is the more useful of the two.
 
-### PUBLISH ATTEMPT — 2026-07-26 — **FAILED: `Clearing` has 39 fields, the on-chain limit is 32**
+### THE RECEIPT — publish, 2026-07-26
 
-A publish was attempted and **rejected by the Sui Move verifier**. This is a real, reproducible
-on-chain rejection, not a toolchain or network problem. Nothing was created; there is no
-package id and no digest to record, because no transaction was ever executed.
+| What | Id / value |
+|---|---|
+| **publish digest** | `Hyso18276VRqbDyt9DbvFBDvActna7mbUWutedzUgm7o` — status `success` |
+| **`aphotic` package (published-at)** | `0x2ebf955ea7398901eb2e5f6a81ca554e574d1a98575f0c272932b729275ed9a3` |
+| **`aphotic` original-id (type origin)** | `0x2ebf955ea7398901eb2e5f6a81ca554e574d1a98575f0c272932b729275ed9a3` |
+| **`UpgradeCap`** | `0x74a25d12b74fc33ac4699cf496d8d838c876ba9cbfa4166df51e6fe9d392cde5` → `AddressOwner` `0xd41b0cd8…f333d` |
+| modules (10) | `allocate` `balance` `batch` `caps` `carry` `clearing` `events` `notes` `oracle` `vault` |
+| gas | 0.40174988 SUI |
+| toolchain | `sui` 1.76.0, edition `2024.beta`, chain-id `4c78adac` |
+
+**published-at == original-id today, and they will diverge on the first upgrade.** This was a
+**fresh publish, not an upgrade** — every v1 public function is gone and Move's `compatible`
+policy forbids removals. Keep both ids wired separately: a `moveCall` targets **published-at**,
+while type arguments, type-string checks and event type strings resolve against **original-id**
+forever. Checking a vault's type against published-at breaks the moment we upgrade.
+
+### THE RECEIPT — runtime objects
+
+| Object | Id | Owner | Digest |
+|---|---|---|---|
+| shared **`AdapterRegistry`** | `0xd743861834773a8129301e766be83ba43c0fe4227aef6181c11a222618a0b9f1` | `Shared`, isv **953314528** | `CqeesXgjs8sFtKxTfjYSQb5ao1ePLGtDLVNTMfqahNGu` |
+| **`AdapterAdminCap`** | `0xb3dde8f1862de74c491ed8ad33b55d57abd37631087300848fbb1dffc6416614` | `AddressOwner` `0xd41b0cd8…f333d` | same tx |
+| shared **`Vault<B,Q,S>`** | — | — | **BLOCKED, see B26 below** |
+| shared **`BatchRegistry`** | — | — | **BLOCKED** (needs `vault_id`) |
+| **`AdminCap`** / **`KeeperCap`** | — | — | **BLOCKED** (minted only inside `vault::create`) |
+
+**The package has no `init` function**, so publishing created nothing but the `UpgradeCap`.
+Every runtime object is made by an explicit call. `allocate::create` is the only one that does
+not need a vault id first, which is why it is the only one that exists.
+
+### ⚠ There are THREE shared objects in this design, not seven
+
+Read from the Move source, not from the older env-var list: `NoteTree`, `NullifierSet`,
+`DenomLadder`, the `CapRegistry` and **both** `BalanceBook`s are embedded in `Vault`
+**by value** (`vault.move` fields `tree:` `nulls:` `ladder:` `caps:` `base_book:` `quote_book:`).
+They are struct fields — they have **no object id of their own and never will**. So
+`VITE_GOVERNANCE_ID`, `VITE_NOTE_TREE_ID`, `VITE_NULLIFIER_SET_ID` and `VITE_BALANCE_LEDGER_ID`
+all take the **vault id** and are read as fields of it. Only `Vault`, `BatchRegistry` and
+`AdapterRegistry` are separate shared objects. `Clearing` objects are shared per batch by
+`clearing::share_clearing`.
+
+### B26 — the remaining blocker: no LP share coin, so no `Vault` can be created
+
+```move
+public fun create<B, Q, S>(lp_treasury: TreasuryCap<S>, admin, keeper, fee_recipient, ctx)
+```
+
+`vault::create` consumes a `TreasuryCap<S>` **by value** and asserts `total_supply == 0`, but the
+`aphotic` package **defines no LP share coin**. `aphotic.md` L419 and `docs/MOVE-PACKAGE.md:466`
+both specify `Coin<APHOTIC_LP>` — that module was never written. The only `S` in the tree is
+`APLP`, declared `#[test_only]` in `move/tests/vault_tests.move`, which is not published.
+
+This blocks the rest of the graph, because everything hangs off the vault id:
+`batch::create_registry(vault_id, ctx)` needs it, and `AdminCap`/`KeeperCap` are minted only by
+`caps::new_registry`, which runs inside `vault::create`. **Fix: add a real, publishable LP-share
+coin module with a one-time witness, then re-run the create sequence.** Owner: the Move agent.
+
+⚠ When the vault is created, the **`AdminCap` must go to the admin multisig, not to the deployer
+EOA**. `scripts/verify-onchain.mjs` now asserts cap ownership from chain and **FAILS if the admin
+and keeper resolve to the same address** — same-address caps silently void the two-party NAV split
+that the whole governance claim rests on.
+
+---
+
+### THE FIRST ATTEMPT — **FAILED, then RESOLVED**: `Clearing` had 39 fields, the on-chain limit is 32
+
+Kept because the trap is invisible locally and will be walked into again. The first publish was
+**rejected by the Sui Move verifier**: a real, reproducible on-chain rejection, not a toolchain or
+network problem. Nothing was created — no transaction was ever executed.
+
+**Resolution:** `Clearing` was refactored to group correlated scalars into nested `Pricing` and
+`Allocation` structs (nested structs do not inherit the parent's field count), which brought it
+under the cap. The republish then succeeded — that is the receipt at the top of this section.
 
 ```
 Error executing transaction '2byvZDvZo2onDwLxQe2bxME9qn3iEscGUDfmWhu4vqmp':
@@ -127,25 +197,29 @@ and the v1 `vault` are **deleted**; the v2 package is ten different modules
 A module set that different is a **fresh publish, not an upgrade** — Move's `compatible`
 policy forbids removing a public function, and every v1 public function is gone.
 
-### What to fill in when it lands
+### What to fill in when it lands — **updated 2026-07-26, post-publish**
+
+⚠ This checklist was written before the object graph was read off the Move source, and it
+**overcounts the shared objects**. `BalanceBook`, `NoteTree` and `NullifierSet` are embedded in
+`Vault` by value and have no ids — the rows are kept, struck through, so nobody re-adds them.
 
 | What | Id |
 |---|---|
-| `aphotic` package (published-at) | *TBD* |
-| `aphotic` original-id (type origin) | *TBD* |
-| shared `Vault<hBTC, …>` | *TBD* (Shared, isv *TBD*) |
-| shared `BalanceBook<hBTC>` | *TBD* |
-| shared `NoteTree` · `NullifierSet` | *TBD* |
-| shared `BatchRegistry` | *TBD* |
-| shared `AdapterRegistry` | *TBD* |
-| `AdminCap` (→ **admin multisig**, not an EOA) | *TBD* |
-| `KeeperCap` (→ keeper address) | *TBD* |
-| `UpgradeCap` | *TBD* |
-| `aphotic_lending` package (`lending/`) | *TBD* |
-| shared lending market object | *TBD* |
-| Seal committee — 5 operators, t = 3, **excludes Enoki** | *TBD* |
-| Custody multisig (2-of-2) + pinned Bitcoin redemption address | *TBD* |
-| publish digest / `create_vault` digest | *TBD* |
+| `aphotic` package (published-at) | ✅ `0x2ebf955e…d9a3` |
+| `aphotic` original-id (type origin) | ✅ `0x2ebf955e…d9a3` (equal today; diverges on upgrade) |
+| shared `AdapterRegistry` | ✅ `0xd7438618…b9f1` (Shared, isv 953314528) |
+| `UpgradeCap` | ✅ `0x74a25d12…cde5` (AddressOwner, deployer) |
+| shared `Vault<B, Q, S>` | ⛔ **BLOCKED — B26**, no LP share coin exists |
+| shared `BatchRegistry` | ⛔ **BLOCKED** — `create_registry` needs `vault_id` |
+| `AdminCap` (→ **admin multisig**, not an EOA) | ⛔ **BLOCKED** — minted inside `vault::create` |
+| `KeeperCap` (→ keeper address) | ⛔ **BLOCKED** — same |
+| ~~shared `BalanceBook<hBTC>`~~ | **not an object** — `base_book`/`quote_book` fields of `Vault` |
+| ~~shared `NoteTree` · `NullifierSet`~~ | **not objects** — `tree`/`nulls` fields of `Vault` |
+| `aphotic_lending` package (`lending/`) | ✅ `0x39d038ae…6ea8c` — already live, see its own section |
+| shared lending market object | ✅ `0x220ba0e5…6677` (Shared, isv 953314524) |
+| Seal committee — 5 operators, t = 3, **excludes Enoki** | ✅ in `app/.env.local`, read off chain 2026-07-26 |
+| Custody multisig (2-of-2) + pinned Bitcoin redemption address | ⛔ not stood up |
+| publish digest / `create_vault` digest | ✅ `Hyso1827…gm7o` / ⛔ no vault yet |
 
 **Record both ids at publish, always.** A `moveCall` targets **published-at**; type
 arguments, type-string checks and events emitted by an earlier generation resolve against

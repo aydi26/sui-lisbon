@@ -1,0 +1,12 @@
+[package]
+name = "clearing"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Bit-identical Rust twin of aphotic::clearing (move/sources/clearing.move)"
+
+# ZERO dependencies, deliberately. BLAKE2b-256 and BCS are implemented here so the twin
+# cannot drift because an upstream crate changed a default, and so `cargo test` needs no
+# network. See README.md § "Why no dependencies".
+[dependencies]
