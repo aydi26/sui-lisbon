@@ -68,33 +68,34 @@
 
 /* ── sidebar ────────────────────────────────────────────────────────────────*/
 
+/* Under 900px the sidebar is a disclosure the toggle opens; at the desktop
+   breakpoint it is unconditionally present, whatever the toggle last said.
+   The collapse is CSS ONLY — the markup is always in the document, so the links
+   never leave the accessibility tree and a screen reader is never told the
+   contents do not exist. */
 .docs-sidebar {
   background: var(--bg-elevated);
   border: 0.5px solid var(--border-soft);
   border-radius: 20px;
   box-shadow: var(--shadow-md);
   padding: var(--space-5);
-  display: grid;
+  display: none;
   gap: var(--space-5);
   align-content: start;
 }
 
-/* Under 900px the sidebar is a disclosure; above it, it is always present. */
-.docs-sidebar[hidden] {
-  display: none;
+.docs-sidebar.docs-sidebar--open {
+  display: grid;
 }
 
 @media (min-width: 900px) {
-  .docs-sidebar {
+  .docs-sidebar,
+  .docs-sidebar.docs-sidebar--open {
+    display: grid;
     position: sticky;
     top: var(--space-5);
     max-height: calc(100vh - var(--space-7));
     overflow-y: auto;
-  }
-
-  /* The desktop layout never hides it, whatever the toggle last said. */
-  .docs-sidebar[hidden] {
-    display: grid;
   }
 }
 

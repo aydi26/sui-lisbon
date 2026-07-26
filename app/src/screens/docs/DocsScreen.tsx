@@ -18,9 +18,11 @@
 // @facts        is ALSO rendered in full at the foot of every other section, so it
 // @facts        is reachable in zero interactions from wherever a reader lands. It
 // @facts        is never behind a toggle and never collapsed by default.
-// @facts      The sidebar is ALWAYS in the DOM; under ~900px it is hidden behind
-// @facts        .docs-mobile-toggle via the `hidden` attribute, and docs.css
-// @facts        re-shows it unconditionally at the desktop breakpoint.
+// @facts      The sidebar is ALWAYS in the DOM. Under ~900px it collapses behind
+// @facts        .docs-mobile-toggle via a CLASS (.docs-sidebar--open), never the
+// @facts        `hidden` attribute — `hidden` would drop every link out of the
+// @facts        accessibility tree — and docs.css re-shows it unconditionally at
+// @facts        the desktop breakpoint.
 // @implements export function DocsScreen(): JSX.Element
 //             export default DocsScreen
 // @forbidden  a canonical id literal here — G7 (every id comes from config)
@@ -100,7 +102,10 @@ export function DocsScreen() {
         {menuOpen ? 'Hide contents' : 'Contents'}
       </button>
 
-      <aside className="docs-sidebar" id="docs-sidebar" hidden={!menuOpen}>
+      <aside
+        className={menuOpen ? 'docs-sidebar docs-sidebar--open' : 'docs-sidebar'}
+        id="docs-sidebar"
+      >
         <div className="docs-sidebar-header">Documentation</div>
 
         <nav className="docs-sidebar-nav" aria-label="Documentation">
