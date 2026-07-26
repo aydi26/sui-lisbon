@@ -271,15 +271,33 @@ function assertKeyServers(cfg: Config): readonly string[] {
   return keyServers;
 }
 
-function assertPackageId(cfg: Config): string {
+/**
+ * The package id Seal is namespaced to — the **FIRST-PUBLISHED** one, always.
+ *
+ * ⚠ NOT `published-at`. `@mysten/seal@1.3.4` fetches the package object and throws
+ * `InvalidPackageError: Package X is not the first version` unless `object.version === 1`
+ * (client.mjs `encrypt`, session-key.mjs `create`). An upgraded package is version 2, so feeding
+ * `APHOTIC_PACKAGE_ID` here makes every encrypt, every session key and therefore every reveal
+ * fail the moment the package is upgraded once.
+ *
+ * The `seal_approve` PTB target uses the same id on purpose: the key servers compare the dry-run
+ * transaction's package against the session key's namespace, so the two must agree.
+ */
+export function sealPackageId(cfg: Config): string {
+  const original = cfg.aphotic.originalPackageId;
+  if (original !== '') return original;
   if (cfg.aphotic.packageId === '') {
     throw new ConfigError(
-      'APHOTIC_PACKAGE_ID is unset — key servers dry-run `aphotic::vault::seal_approve` and need it',
-      ['APHOTIC_PACKAGE_ID'],
+      'APHOTIC_ORIGINAL_PACKAGE_ID is unset — Seal is namespaced to the FIRST-published package ' +
+        'and rejects any other version',
+      ['APHOTIC_ORIGINAL_PACKAGE_ID', 'APHOTIC_PACKAGE_ID'],
     );
   }
+  // Never upgraded ⇒ the two ids are the same package, and only then may they be conflated.
   return cfg.aphotic.packageId;
 }
+
+const assertPackageId = sealPackageId;
 
 /**
  * Threshold-encrypt an already-framed payload. The ONLY place plaintext is encrypted.

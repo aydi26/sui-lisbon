@@ -78,7 +78,7 @@ import { createSuiClient, type AnySuiClient } from './sui/client.js';
 import { bytesToHex } from './util/bytes.js';
 import { ConfigError } from './util/errors.js';
 import { runClaim } from './vault/claim.js';
-import { readVaultTypeArgs, type Deployment, type VaultTypeArgs } from './vault/context.js';
+import { readVaultTypeArgs, typeOrigin, type Deployment, type VaultTypeArgs } from './vault/context.js';
 import { deriveLimiterFromAdapter } from './verify/index.js';
 
 export interface CommandSpec {
@@ -108,7 +108,8 @@ export const COMMANDS: readonly CommandSpec[] = Object.freeze([
  * environment variable names are never something an operator has to grep for.
  */
 const COMMON_FLAGS: readonly (readonly [string, string])[] = Object.freeze([
-  ['--package <id>', 'aphotic package        (env APHOTIC_PACKAGE_ID)'],
+  ['--package <id>', 'aphotic package        (env APHOTIC_PACKAGE_ID)     — moveCall targets'],
+  ['--original-package <id>', 'FIRST-published pkg    (env APHOTIC_ORIGINAL_PACKAGE_ID) — type args/receipts/Seal'],
   ['--vault <id>', 'shared Vault<B,Q,S>    (env VAULT_ID)'],
   ['--registry <id>', 'shared BatchRegistry   (env BATCH_REGISTRY_ID)'],
   ['--batch <id>', 'shared Batch           (env BATCH_ID)          — close/reveal/drive'],
@@ -298,17 +299,62 @@ async function cmdClear(): Promise<number> {
   return 0;
 }
 
-async function cmdVerifyLimiter(): Promise<number> {
+/**
+ * ★ THE TWO WAYS THIS COMMAND USED TO LIE, both fixed here (both reproduced against testnet).
+ *
+ * 1. `HASHI_ADAPTER` unset defaults to `mock`. The mock's stream is empty unless a test seeds it,
+ *    so the replay walked ZERO events, `deriveLimiter` returned the GENESIS PRIOR unchanged, and
+ *    the command printed it under the words "Re-derived from Hashi's own ... stream" and exited 0.
+ *    The prior is `cfg.limiter`; the live guardian reports a bucket ~100x larger. An operator
+ *    reading that output would have believed a verified number that was never verified.
+ * 2. Even against the real adapter, an empty page is not evidence of an idle bridge — it is
+ *    equally the signature of a filter that matches nothing or a transport that returned nothing.
+ *
+ * So: refuse the mock, and refuse to call an empty replay a verification. A verifier that reports
+ * success having checked nothing is worse than no verifier, because it is believed (G5).
+ */
+async function cmdVerifyLimiter(flags: Map<string, string>): Promise<number> {
   const cfg = loadConfig(process.env as Record<string, string | undefined>);
+
+  if (cfg.hashi.adapter !== 'real' && flags.get('allow-mock') !== 'true') {
+    process.stderr.write(
+      `verify-limiter: HASHI_ADAPTER is "${cfg.hashi.adapter}", not "real".\n` +
+        '  The deterministic mock replays a stream it made up, so a trajectory derived from it\n' +
+        '  verifies NOTHING — and its empty-stream result is the genesis prior, which reads like a\n' +
+        '  successful verification. Set HASHI_ADAPTER=real, or pass --allow-mock to rehearse the\n' +
+        '  output shape with the result explicitly marked unverified.\n',
+    );
+    return 2;
+  }
+
   const hashi = createHashiAdapter(cfg);
   const trajectory = await deriveLimiterFromAdapter(hashi, { limiter: cfg.limiter });
 
   process.stdout.write(`${JSON.stringify(trajectory, jsonBig, 2)}\n`);
+
+  if (trajectory.samples.length === 0) {
+    process.stderr.write(
+      '\nverify-limiter: THE REPLAY WALKED ZERO LIMITER EVENTS — nothing was verified.\n' +
+        `  The bucket printed above (${cfg.limiter.maxBucketCapacitySats} sats cap, ` +
+        `${cfg.limiter.refillRateSatsPerSec} sats/s refill) is the CONFIGURED GENESIS PRIOR, not a\n` +
+        '  derived reading. An empty stream is indistinguishable from a filter that matches nothing,\n' +
+        '  so this exits non-zero rather than presenting a prior as a verification (G5).\n',
+    );
+    return 1;
+  }
+
   process.stdout.write(
-    '\nRe-derived from Hashi’s own WithdrawalRequested / PickedForProcessing / Signed /\n' +
-      'Cancelled stream. guardian.limiterStatus() was NOT consulted — it is an unverified\n' +
-      'hint, and the entire claim is that you can reproduce this without trusting us (G5).\n',
+    `\nRe-derived from ${trajectory.samples.length} boundaries of Hashi’s own WithdrawalRequested /\n` +
+      'PickedForProcessing / Signed / Cancelled stream. guardian.limiterStatus() was NOT consulted\n' +
+      '— it is an unverified hint, and the entire claim is that you can reproduce this without\n' +
+      'trusting us (G5).\n',
   );
+  if (trajectory.unresolvedCount > 0) {
+    process.stdout.write(
+      `\n⚠ ${trajectory.unresolvedCount} boundaries could not be joined to a requested amount — the\n` +
+        '  replay is INCOMPLETE there, so the final bucket is a lower bound, not the number.\n',
+    );
+  }
   return 0;
 }
 
@@ -367,14 +413,25 @@ interface OnChain {
  */
 async function connect(flags: Map<string, string>, env: Env): Promise<OnChain> {
   const cfg = loadConfig(env);
+  const packageId = resolveId(flags, env, 'package', 'APHOTIC_PACKAGE_ID', 'the published aphotic package', cfg.aphotic.packageId);
   const deployment: Deployment = {
-    packageId: resolveId(flags, env, 'package', 'APHOTIC_PACKAGE_ID', 'the published aphotic package', cfg.aphotic.packageId),
+    packageId,
+    // `published-at` moves on every upgrade; the type origin never does. Defaulting to
+    // `packageId` is correct ONLY for a package that was never upgraded — see ./vault/context.ts.
+    originalPackageId: resolveId(
+      flags,
+      env,
+      'original-package',
+      'APHOTIC_ORIGINAL_PACKAGE_ID',
+      'the FIRST-published aphotic package (type arguments, receipt filters and Seal resolve against it)',
+      cfg.aphotic.originalPackageId === '' ? packageId : cfg.aphotic.originalPackageId,
+    ),
     vaultId: resolveId(flags, env, 'vault', 'VAULT_ID', 'the shared Vault object', cfg.aphotic.vaultId),
     registryId: resolveId(flags, env, 'registry', 'BATCH_REGISTRY_ID', 'the shared BatchRegistry that governs the cadence'),
   };
   const signer = requireSigner(cfg);
   const client = createSuiClient(cfg);
-  const typeArgs = await readVaultTypeArgs({ cfg, client }, deployment.packageId, deployment.vaultId);
+  const typeArgs = await readVaultTypeArgs({ cfg, client }, typeOrigin(deployment), deployment.vaultId);
   return { cfg, client, deployment, signer, typeArgs, dryRun: flags.get('dry-run') === 'true' };
 }
 
@@ -640,7 +697,9 @@ export async function main(argv: readonly string[]): Promise<number> {
       case 'clear':
         return await cmdClear();
       case 'verify-limiter':
-        return await cmdVerifyLimiter();
+        // Takes `flags` for --allow-mock: a mock replay verifies nothing, so the
+        // command refuses one unless the caller says out loud it is a rehearsal.
+        return await cmdVerifyLimiter(flags);
       case 'open':
         return await cmdOpen(flags, process.env as Env);
       case 'close':

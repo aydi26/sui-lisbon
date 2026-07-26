@@ -60,9 +60,32 @@ export interface ChainDeps {
  * `../index.ts` on why it arrives as a flag/env at the composition root instead.
  */
 export interface Deployment {
+  /** `published-at`. EVERY `moveCall` target uses this, and it changes on every upgrade. */
   readonly packageId: ObjectId;
+  /**
+   * `original-id` — the first-published package. OMITTED ⇒ never upgraded ⇒ same as
+   * {@link packageId}. Read it through {@link typeOrigin}, never directly.
+   *
+   * ⚠ THIS IS NOT A REDUNDANT COPY OF `packageId`. Three things resolve against the original id
+   * and break silently against the published-at id once the package is upgraded:
+   *   1. the `Vault<B,Q,S>` type arguments (a struct tag keeps its defining package forever),
+   *   2. the `DepositReceipt`/`RedeemReceipt` type filter — a wrong one lists ZERO receipts and
+   *      the claim crank reports "nothing to do" instead of failing,
+   *   3. Seal's IBE namespace — `@mysten/seal` rejects any package whose version is not 1.
+   */
+  readonly originalPackageId?: ObjectId;
   readonly vaultId: ObjectId;
   readonly registryId: ObjectId;
+}
+
+/**
+ * The package that type arguments, struct-type filters and Seal identities resolve against.
+ *
+ * NEVER a `moveCall` target: after an upgrade, calling the original id executes the OLD code.
+ */
+export function typeOrigin(d: Deployment): ObjectId {
+  const original = d.originalPackageId;
+  return original === undefined || original.trim() === '' ? d.packageId : original;
 }
 
 /** `[B, Q, S]` — base asset, auction quote, LP share coin. Read off the Vault's own type. */
@@ -236,7 +259,13 @@ export function decodeAddress(bytes: Uint8Array, what: string): string {
  */
 export async function readVaultTypeArgs(
   deps: ChainDeps,
-  packageId: ObjectId,
+  /**
+   * ⚠ THE **ORIGINAL** PACKAGE ID (see {@link typeOrigin}), not `published-at`. A struct tag
+   * names the package that DEFINED it, so after any upgrade the vault's type origin stays on the
+   * original id while `published-at` moves on. Comparing against `published-at` rejects the
+   * keeper's own vault and takes every on-chain command down with it.
+   */
+  originPackageId: ObjectId,
   vaultId: ObjectId,
 ): Promise<VaultTypeArgs> {
   const { object } = await deps.client.core.getObject({ objectId: vaultId });
@@ -254,13 +283,15 @@ export async function readVaultTypeArgs(
       `vault::Vault must have 3 type arguments (B, Q, S) — ${vaultId} has ${parsed.typeArgs.length}`,
     );
   }
-  if (normalizeId(parsed.address) !== normalizeId(packageId)) {
-    // The type-origin package. An upgraded package keeps the ORIGINAL id in its types, so a
-    // mismatch here means the vault belongs to a different deployment entirely.
+  if (normalizeId(parsed.address) !== normalizeId(originPackageId)) {
+    // An upgraded package keeps the ORIGINAL id in its types, so a mismatch against the ORIGINAL
+    // id — and only against the original id — means the vault belongs to another deployment.
     throw new AphoticError(
       'PackageMismatch',
-      `vault ${vaultId} has type origin ${parsed.address} but APHOTIC_PACKAGE_ID is ${packageId} — ` +
-        'these are different deployments; nothing built against one will apply to the other',
+      `vault ${vaultId} has type origin ${parsed.address} but APHOTIC_ORIGINAL_PACKAGE_ID is ` +
+        `${originPackageId} — these are different deployments; nothing built against one will ` +
+        'apply to the other. (Set APHOTIC_ORIGINAL_PACKAGE_ID to the FIRST-published id, not the ' +
+        'upgraded published-at id.)',
     );
   }
 

@@ -48,7 +48,7 @@ import type { Signer } from '@mysten/sui/cryptography';
 import type { Millis } from '../types.js';
 import { AphoticError, ConfigError } from '../util/errors.js';
 
-import { requireSealBackend, type SealDeps, type SealIdentity } from './seal.js';
+import { requireSealBackend, sealPackageId, type SealDeps, type SealIdentity } from './seal.js';
 
 export interface SessionOptions {
   /** Must match `BatchRegistry.policy_version`. A bump invalidates every session. */
@@ -96,17 +96,13 @@ export async function createSession(
   if (!Number.isFinite(opts.createdAtMs) || opts.createdAtMs < 0) {
     throw new ConfigError(`session createdAtMs must be a non-negative epoch — got ${String(opts.createdAtMs)}`, []);
   }
-  if (deps.cfg.aphotic.packageId === '') {
-    throw new ConfigError(
-      'APHOTIC_PACKAGE_ID is unset — the session key is scoped to the package whose ' +
-        '`vault::seal_approve` gates every share release',
-      ['APHOTIC_PACKAGE_ID'],
-    );
-  }
+  // ⚠ The FIRST-published id, not `published-at` — `SessionKey.create` rejects any package whose
+  // on-chain version is not 1. See ./seal.ts `sealPackageId`.
+  const sealPackage = sealPackageId(deps.cfg);
 
   const key = await backend.createSessionKey({
     address: signer.toSuiAddress(),
-    packageId: deps.cfg.aphotic.packageId,
+    packageId: sealPackage,
     // Seal counts TTL in whole minutes; round UP so a sub-minute ttl is still usable once.
     ttlMinutes: Math.max(1, Math.ceil(opts.ttlMs / MS_PER_MINUTE)),
     signer,

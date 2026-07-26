@@ -513,3 +513,40 @@ judge.
 batch wants closing, and then `begin` / `step` / settle to free the registry (`live_batches` back to
 0). Every one of those is permissionless. An unsettled batch blocks the next `open_batch`
 (`EBatchAlreadyLive`), so this is a loose end, not a finished lifecycle.
+
+---
+
+## KEEPER ROTATION — the two-party NAV split is now LIVE (2026-07-26)
+
+`docs/STATUS.md` recorded the one real on-chain failure: `verify-onchain.mjs` reported
+`admin != keeper  FAIL`, because `Vault.caps.admin` and `.keeper` were **the same address**. G3's
+two-party NAV split was, on this deployment, one key that both proposes and approves. The Move was
+never at fault — the bytecode is byte-identical either way, which is exactly why nothing but an
+on-chain read could catch it.
+
+Closed with `scripts/rotate-keeper.mjs`, one transaction, signed by the AdminCap holder.
+
+| | |
+|---|---|
+| digest | `3zFxqJeCg1SoLUqsJDievQkCDacskrEevCVgf1zuB7kJ` |
+| status | Success |
+| function | `vault::rotate_keeper<BTC, DBUSDC, APHOTIC_LP>` |
+| admin (unchanged) | `0xd41b0cd83fc1a497a5899eb686e2c7561e75e6d62db2270860d72542f63f333d` |
+| keeper **before** | `0xd41b0cd8…f333d` — the admin, `keeper_epoch = 0` |
+| keeper **after** | `0x883ff25499d099a0e578a781acf03ff251647ca2430a2cef03257b080ea01125`, `keeper_epoch = 1` |
+| fresh `KeeperCap` | `0x0c64a5f5e3348e21fbdaa0c3e1912486bb9af625611ac75f998614782f6de5f2` (AddressOwner: the new keeper) |
+| verify-onchain | **34 PASS · 1 FAIL → 35 PASS · 0 FAIL · 0 WARN** |
+
+The old cap was **not clawed back** and did not need to be: `caps::rotate_keeper_cap` bumps
+`keeper_epoch`, so the previous `KeeperCap` is stale by epoch and no longer authorises anything.
+
+**Operational consequence, and it is not cosmetic.** `propose_nav` must now be signed by
+`0x883ff254…`; `approve_nav` stays with the admin. That is the point — the two roles are two
+*parties*, and the demo can no longer accidentally perform both with one key. `keeper/.env` carries
+`APHOTIC_KEEPER_ADDRESS` / `APHOTIC_KEEPER_CAP_ID` accordingly (gitignored; see
+`keeper/.env.example` for the names).
+
+`/vault` needs no change to reflect this: `NavPanel` reads the `CapRegistry` every time and renders
+whichever state is true. It now shows the guarantee **with both addresses** instead of the warning
+"The two-party NAV split is not live on this deployment" — because the deployment changed, not
+because the copy did.

@@ -218,7 +218,16 @@ export interface PythConfig {
 }
 
 export interface AphoticConfig {
+  /** `published-at` — what a `moveCall` target must name. Changes on every upgrade. */
   readonly packageId: string;
+  /**
+   * `original-id` — the FIRST-PUBLISHED package. Type arguments, struct-type filters and Seal's
+   * IBE namespace resolve against this FOREVER; it never changes across upgrades.
+   *
+   * Empty ⇒ never upgraded, so it equals {@link packageId}. Callers must use
+   * `originalPackageId || packageId`, never `packageId` alone, for anything type-shaped.
+   */
+  readonly originalPackageId: string;
   readonly vaultId: string;
 }
 
@@ -352,6 +361,13 @@ export function loadConfig(env: EnvRecord = process.env): Config {
     },
     aphotic: {
       packageId: readObjectId(env, 'APHOTIC_PACKAGE_ID', ''),
+      // Defaults to `published-at`: a package that was never upgraded has one id, and that is
+      // the ONLY case where the two may be conflated.
+      originalPackageId: readObjectId(
+        env,
+        'APHOTIC_ORIGINAL_PACKAGE_ID',
+        readObjectId(env, 'APHOTIC_PACKAGE_ID', ''),
+      ),
       vaultId: readObjectId(env, 'VAULT_ID', ''),
     },
     walrus: {

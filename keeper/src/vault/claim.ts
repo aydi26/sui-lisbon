@@ -45,7 +45,7 @@ import { Transaction } from '@mysten/sui/transactions';
 import { sendChecked } from '../sui/send.js';
 import type { ObjectId, SuiAddress } from '../types.js';
 
-import type { ChainDeps, Deployment, VaultTypeArgs } from './context.js';
+import { typeOrigin, type ChainDeps, type Deployment, type VaultTypeArgs } from './context.js';
 import { readVaultState } from './read.js';
 import { claimable, listReceipts, type Receipt } from './receipts.js';
 
@@ -110,8 +110,12 @@ export async function runClaim(
 ): Promise<ClaimReport> {
   const state = await readVaultState(deps, d, opts.typeArgs);
 
-  const deposits = await listReceipts(deps, d.packageId, opts.owner, 'deposit');
-  const redeems = await listReceipts(deps, d.packageId, opts.owner, 'redeem');
+  // ⚠ THE TYPE ORIGIN, NOT `published-at`. `DepositReceipt` keeps the id of the package that
+  // DEFINED it, so filtering owned objects by the upgraded id matches nothing — and a scan that
+  // matches nothing is reported as "0 claimable", indistinguishable from an empty vault.
+  const filterPackage = typeOrigin(d);
+  const deposits = await listReceipts(deps, filterPackage, opts.owner, 'deposit');
+  const redeems = await listReceipts(deps, filterPackage, opts.owner, 'redeem');
   const all = [...deposits, ...redeems];
   const ready = claimable(all, state.epoch, d.vaultId);
 

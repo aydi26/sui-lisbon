@@ -236,15 +236,21 @@ proven today.~~ All ten Move modules exist, are published, and were **upgraded t
 |---|---|
 | move `aphotic` | **283/283** · `lending` **37/37** · `sdk/` **376/376** · `keeper/` **252/252** · `app/` **345/345** — **1 293 total** |
 | gates | `bash scripts/gates.sh` → **12 PASS · 0 FAIL · 0 SKIP** (the four SKIPs are gone) |
-| on chain | `node scripts/verify-onchain.mjs` → **34 PASS · 1 FAIL · 0 WARN** |
+| on chain | `node scripts/verify-onchain.mjs` → **35 PASS · 0 FAIL · 0 WARN** (was 34 PASS · 1 FAIL until the keeper rotation below) |
 | cut line | **met** — deposit → `propose_nav` → `approve_nav` → claim has run to **epoch 4**, and **batch 0 is open** (closes 18:00:00.000Z, derived not passed) |
 
-**The one FAIL is worth reading before you touch governance:** `admin != keeper` fails because
-`Vault.caps.admin` and `.keeper` are both `0xd41b0cd8…f333d`. G3's two-party split is **not live on
-this deployment**, and no amount of Move review will show it — the bytecode is identical either
-way. `/vault` now reads the `CapRegistry` and discloses it rather than asserting the guarantee
-(`TwoPartyNote`, `app/test/capSplit.test.tsx`); `scripts/rotate-keeper.mjs <addr> --execute` fixes
-it in one transaction. **Do not re-add unconditional two-party copy anywhere.**
+**Governance — read this before you touch it.** That FAIL was `admin != keeper`: `Vault.caps.admin`
+and `.keeper` were both `0xd41b0cd8…f333d`, so G3's two-party split was **not live**, and no amount
+of Move review would have shown it — the bytecode is identical either way. **Closed 2026-07-26** by
+`scripts/rotate-keeper.mjs`, digest `3zFxqJeCg1SoLUqsJDievQkCDacskrEevCVgf1zuB7kJ`: keeper is now
+`0x883ff254…01125` at `keeper_epoch = 1`, admin unchanged. `propose_nav` must therefore be signed by
+the **keeper** address and `approve_nav` by the **admin** — one key can no longer do both, which is
+the entire point. Receipts in `docs/DEPLOYED.md § KEEPER ROTATION`.
+
+**The mechanism stays even though the state is now green.** `/vault` READS the `CapRegistry` on
+every load and renders whichever state is true (`TwoPartyNote`, `app/test/capSplit.test.tsx` pins
+both branches). **Do not replace it with unconditional two-party copy** — the guarantee is a
+property of a deployment, not of the code, and the next deployment may not hold it.
 
 ## SCOPE NOTES (do not get this wrong)
 
