@@ -30,7 +30,11 @@ app/vitest.config.ts
 app/probe-l2.mjs
 
 # ── Reference docs — not served by the app ──────────────────────────────────
-docs/
+# ⚠ ANCHORED. `docs/` unanchored also matched app/src/screens/docs/, which
+# silently dropped DocsScreen.tsx from the upload — the build then failed with
+# "Cannot find module ./screens/docs/DocsScreen" while compiling fine locally,
+# because locally the file is simply there. A leading slash pins it to the root.
+/docs/
 *.md
 !app/**/*.md
 
