@@ -85,22 +85,6 @@ function Chevron() {
   );
 }
 
-function HelpMark() {
-  return (
-    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden focusable="false">
-      <circle cx="8" cy="8" r="6.25" fill="none" stroke="currentColor" strokeWidth="1.25" />
-      <path
-        d="M6.4 6.2a1.6 1.6 0 1 1 1.9 1.7v1"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.25"
-        strokeLinecap="round"
-      />
-      <circle cx="8.3" cy="11.2" r="0.7" fill="currentColor" />
-    </svg>
-  );
-}
-
 /** The Google mark, drawn in one colour: this is a row cue, not a brand lockup. */
 function GoogleMark() {
   return (
@@ -129,16 +113,22 @@ function GoogleMark() {
   );
 }
 
-/**
- * The two Sui browser wallets worth naming when NOTHING is detected. They are
- * rendered as install links wearing a "not detected" pill — never as connect
- * rows, and never as "installed". An empty list is a dead end; a list that lies
- * is worse.
- */
-const INSTALLABLE: readonly { readonly name: string; readonly url: string }[] = [
-  { name: 'Slush', url: 'https://slush.app' },
-  { name: 'Phantom', url: 'https://phantom.com/download' },
-];
+/** The help glyph. Inline so the card needs no icon dependency. */
+function HelpMark() {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden focusable="false">
+      <circle cx="8" cy="8" r="6.25" fill="none" stroke="currentColor" strokeWidth="1.25" />
+      <path
+        d="M6.4 6.2a1.6 1.6 0 1 1 1.9 1.7v1"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.25"
+        strokeLinecap="round"
+      />
+      <circle cx="8.3" cy="11.2" r="0.7" fill="currentColor" />
+    </svg>
+  );
+}
 
 export function WalletGate({ children, purpose }: WalletGateProps) {
   const session = useAphoticSession();
@@ -164,6 +154,48 @@ export function WalletGate({ children, purpose }: WalletGateProps) {
     }
   };
 
+  // ONE list, three rows. The card was two labelled sections, an "or" rule, a help
+  // popover and two paragraphs of prose — and a connect dialog nobody reads is worse
+  // than a short one they do. What survived the cut is what a user acts on: which
+  // wallets are actually here, and the one line saying what connecting does not grant.
+  const rows: readonly {
+    key: string;
+    name: string;
+    icon: ReactNode;
+    installed: boolean;
+    disabled: boolean;
+    title: string;
+    onClick: () => void;
+  }[] = [
+    ...session.extensionWallets.map((wallet) => ({
+      key: wallet.name,
+      name: wallet.name,
+      icon: <WalletIcon wallet={wallet} />,
+      installed: true,
+      disabled: connecting,
+      title: connecting ? 'A connection is already in progress' : `Connect ${wallet.name}`,
+      onClick: () => void run(wallet.name, () => session.connectWallet(wallet)),
+    })),
+    {
+      key: 'google',
+      name: 'Sign in with Google',
+      icon: (
+        <span className="ap-wallet-icon ap-wallet-icon--mono" aria-hidden>
+          <GoogleMark />
+        </span>
+      ),
+      installed: false,
+      disabled: connecting || !session.googleAvailable,
+      // Invariant 2: a disabled control states its reason ON the control.
+      title:
+        session.zkLoginDisabledReason ??
+        (connecting
+          ? 'A connection is already in progress'
+          : 'Opens a Google popup; your Sui address is derived from the login, client-side'),
+      onClick: () => void run('google', session.signIn),
+    },
+  ];
+
   return (
     <div className="ap-gate">
       <section className="ap-panel ap-gate-card" role="dialog" aria-labelledby="ap-gate-title">
@@ -184,143 +216,50 @@ export function WalletGate({ children, purpose }: WalletGateProps) {
             className="ap-gate-icon"
             href="/"
             aria-label="Leave this screen"
-            title="Leave. /vault and /batch build transactions you sign, so they need an address; /verify needs none."
+            title="Leave. /vault and /batch build transactions you sign; /verify needs no address."
           >
             <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden focusable="false">
-              <path
-                d="m4.5 4.5 7 7m0-7-7 7"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-              />
+              <path d="m4.5 4.5 7 7m0-7-7 7" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
             </svg>
           </a>
         </header>
 
         {helpOpen ? (
           <p className="ap-gate-help">
-            A wallet here is an <strong>identity</strong>, not a permission. Aphotic never holds a
-            key, and no key held by this page or by the keeper can move another depositor&rsquo;s
-            funds. Redemption exits are composed in Move to an address pinned on chain, so even a
-            fully compromised keeper cannot redirect them.
+            A wallet here is an <strong>identity</strong>, not a permission. Aphotic holds no key,
+            and no key held by this page or by the keeper can move another depositor&rsquo;s funds:
+            redemption exits are composed in Move to an address pinned on chain.
+            {purpose === undefined ? '' : ` ${purpose}`}
           </p>
         ) : null}
 
-        <div className="ap-gate-body">
-          <p className="ap-gate-sub">
-            {purpose ?? 'Aphotic needs an address before it can build a transaction for you.'}
+        {walletRows.length === 0 ? null : (
+          <ul className="ap-rows ap-gate-rows">{walletRows.map(renderRow)}</ul>
+        )}
+
+        {session.extensionWallets.length === 0 ? (
+          <p className="ap-gate-note">
+            No wallet extension detected.{' '}
+            <a href="https://slush.app" target="_blank" rel="noreferrer">
+              Slush
+            </a>{' '}
+            or{' '}
+            <a href="https://phantom.com/download" target="_blank" rel="noreferrer">
+              Phantom
+            </a>
+            , then reload — this list is whatever your browser exposes, so a wallet appears only
+            once it is installed.
           </p>
+        ) : null}
 
-          <div className="ap-gate-section">
-            <span className="ap-label">Browser wallet</span>
-            {session.extensionWallets.length === 0 ? (
-              <>
-                <ul className="ap-rows ap-gate-rows">
-                  {INSTALLABLE.map((wallet) => (
-                    <li key={wallet.name}>
-                      <a
-                        className="ap-rowline"
-                        href={wallet.url}
-                        target="_blank"
-                        rel="noreferrer"
-                        title={`${wallet.name} is not detected in this browser. This opens its download page; reload afterwards and it appears here.`}
-                      >
-                        <span className="ap-wallet-icon ap-wallet-icon--mono" aria-hidden>
-                          {wallet.name.slice(0, 1)}
-                        </span>
-                        <span className="ap-wallet-name">{wallet.name}</span>
-                        <span className="ap-badge">not detected</span>
-                        <Chevron />
-                      </a>
-                    </li>
-                  ))}
-                </ul>
-                <p className="ap-gate-empty">
-                  This list is whatever your browser actually exposes through wallet-standard, so a
-                  wallet appears only once it is installed. Nothing above is labelled installed,
-                  because nothing above is.
-                </p>
-              </>
-            ) : (
-              <ul className="ap-rows ap-gate-rows">
-                {session.extensionWallets.map((wallet) => (
-                  <li key={wallet.name}>
-                    <button
-                      type="button"
-                      className="ap-rowline"
-                      disabled={connecting}
-                      title={
-                        connecting ? 'A connection is already in progress' : `Connect ${wallet.name}`
-                      }
-                      onClick={() => void run(wallet.name, () => session.connectWallet(wallet))}
-                    >
-                      <WalletIcon wallet={wallet} />
-                      <span className="ap-wallet-name">{wallet.name}</span>
-                      {/* wallet-standard reported this wallet to the page, so it IS
-                          present. This pill is the one claim on the card a user acts
-                          on, and nothing else may ever wear it. */}
-                      <span className="ap-badge ap-badge--live">installed</span>
-                      {busy === wallet.name ? (
-                        <span className="ap-row-cue" aria-hidden>
-                          &hellip;
-                        </span>
-                      ) : (
-                        <Chevron />
-                      )}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-
-          <div className="ap-gate-rule">
-            <span>or</span>
-          </div>
-
-          <div className="ap-gate-section">
-            <span className="ap-label">No wallet</span>
-            <ul className="ap-rows ap-gate-rows">
-              <li>
-                <button
-                  type="button"
-                  className="ap-rowline"
-                  disabled={connecting || !session.googleAvailable}
-                  title={
-                    session.zkLoginDisabledReason ??
-                    (connecting
-                      ? 'A connection is already in progress'
-                      : 'Opens a Google popup; your Sui address is derived from the login, client-side')
-                  }
-                  onClick={() => void run('google', session.signIn)}
-                >
-                  <span className="ap-wallet-icon ap-wallet-icon--mono" aria-hidden>
-                    <GoogleMark />
-                  </span>
-                  <span className="ap-wallet-name">
-                    {busy === 'google' ? 'Opening Google…' : 'Sign in with Google'}
-                  </span>
-                  <span className="ap-badge">zkLogin</span>
-                  <Chevron />
-                </button>
-              </li>
-            </ul>
-            <p className="ap-gate-note">
-              zkLogin derives a Sui address from your Google login in the browser. Google never sees
-              a key and never learns your address, and Aphotic never holds one either. It is a
-              different trust story from a browser wallet, which is why it sits below the rule
-              rather than in the list.
-            </p>
-            {session.problems.length === 0 ? null : (
-              <ul className="ap-gate-problems">
-                {session.problems.map((problem) => (
-                  <li key={problem}>{problem}</li>
-                ))}
-              </ul>
-            )}
-          </div>
+        {/* zkLogin sits BELOW the rule, not in the list. It is a different trust
+            story — a salt provider and an OAuth issuer are involved — and a row
+            inside the wallet list would read as one more wallet. */}
+        <div className="ap-gate-rule">
+          <span>or</span>
         </div>
+
+        <ul className="ap-rows ap-gate-rows">{googleRows.map(renderRow)}</ul>
 
         {failure === null ? null : <p className="ap-msg ap-msg--bad">{failure}</p>}
         {session.networkProblem === null ? null : (
@@ -328,8 +267,7 @@ export function WalletGate({ children, purpose }: WalletGateProps) {
         )}
 
         <footer className="ap-gate-foot">
-          Connecting identifies you; it grants nothing. Every Aphotic transaction is signed by you,
-          for you, and no key held here can move another depositor&rsquo;s funds.
+          Connecting identifies you; it grants nothing. Every transaction is signed by you, for you.
         </footer>
       </section>
     </div>

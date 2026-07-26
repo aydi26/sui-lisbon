@@ -34,7 +34,7 @@
 // @invariant  2. The digest comparison is a real byte comparison, or it says it
 //                could not be made.
 // @ac         renders unconfigured, reads nothing, and says why.
-// @verify     cd app && npm test -- vaultScreen
+// @verify     cd app && npm test -- vault
 // └── END CONTRACT ───────────────────────────────────────────────────────────
 
 import { bytesEqual, toHex } from '@aphotic/sdk/hash';

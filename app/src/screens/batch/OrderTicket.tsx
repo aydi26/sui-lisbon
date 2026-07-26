@@ -157,8 +157,15 @@ export function OrderTicket({ live, nowMs, onSubmitted }: OrderTicketProps) {
       <div className="ap-panel-head">
         <h3 className="ap-panel-title">Place a sealed order</h3>
         {batch === null ? null : (
-          <span className={insideCutoff ? 'ap-badge ap-badge--warn' : 'ap-badge'}>
-            {insideCutoff ? 'submission closed' : `batch ${batch.batchId.toString()} open`}
+          <span className={insideCutoff || batch.state !== 0 ? 'ap-badge ap-badge--warn' : 'ap-badge'}>
+            {/* The badge reports the batch's ACTUAL state. Saying "open" over a
+                SEALED batch would be the one thing this screen must never do:
+                describe a window as available when the contract has closed it. */}
+            {batch.state !== 0
+              ? `batch ${batch.batchId.toString()} ${['open', 'sealed', 'clearing', 'settled'][batch.state] ?? 'unknown'}`
+              : insideCutoff
+                ? 'submission closed'
+                : `batch ${batch.batchId.toString()} open`}
           </span>
         )}
       </div>

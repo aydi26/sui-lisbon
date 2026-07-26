@@ -47,8 +47,10 @@
 // @invariant  1. Money is bigint everywhere; no u64 is narrowed to number.
 // @invariant  2. The per-receipt conversion is the SAME round-down mul_div the
 //                contract runs, so the screen's preview cannot overstate a claim.
-// @ac         app/test/vault.test.ts — the snapshot decodes from injected BCS; the
-//             rounding twin matches Move's mul_div on the dust cases.
+// @ac         app/test/vault.test.tsx — the snapshot decodes from injected BCS; the
+//             rounding twin matches Move's mul_div on the dust cases; the digest
+//             twin is sensitive to all ten signed fields; every reader and builder
+//             throws NotWiredError before touching the wire.
 // @verify     cd app && npm run build
 // @verify     cd app && npm test -- vault
 // └── END CONTRACT ───────────────────────────────────────────────────────────

@@ -22,6 +22,12 @@
 // @facts        preview can therefore never overstate what you will receive.
 // @facts      ⚠ A PAUSED VAULT STILL LETS HOLDERS LEAVE. `request_redeem` and
 // @facts        `claim_redeem` are not pause-gated; only the deposit request is.
+// @facts      THE EPOCH TOTALS ARE THE WINDOW'S, NOT YOURS. `pending_deposit_assets`
+// @facts        and `pending_redeem_shares` are the vault's own running sums for the
+// @facts        open epoch, and `approve_nav` prices BOTH legs at the ONE price it
+// @facts        writes — which is exactly what removes the incentive to time a
+// @facts        request against the boundary. Shown beside the countdown for that
+// @facts        reason, and labelled as the epoch's rather than the address's.
 // @implements export function PositionPanel(): JSX.Element
 // @forbidden  a free-form amount field — the ladder is the only size control
 // @forbidden  a read on mount — the panel reads when the user asks
@@ -29,7 +35,7 @@
 // @invariant  1. Nothing numeric renders until a read returned it.
 // @invariant  2. No enabled control can abort for a reason we already know.
 // @ac         renders unconfigured with the read disabled and the reason stated.
-// @verify     cd app && npm test -- vaultScreen
+// @verify     cd app && npm test -- vault
 // └── END CONTRACT ───────────────────────────────────────────────────────────
 
 import { useState } from 'react';
@@ -234,6 +240,11 @@ export function PositionPanel() {
                 sub="idle + deployed + in flight + native BTC"
               />
               <Metric
+                label="This epoch’s pending legs"
+                value={`${formatBtc(data.snapshot.pendingDepositAssets)} in`}
+                sub={`${formatSats(data.snapshot.pendingRedeemShares)} shares out — the WINDOW's totals, not yours; approve_nav prices both legs at the one price`}
+              />
+              <Metric
                 label="Last approved price"
                 value={
                   data.snapshot.lastNavSupply === 0n
@@ -246,6 +257,48 @@ export function PositionPanel() {
                     : new Date(Number(data.snapshot.lastNavAtMs)).toUTCString()
                 }
               />
+            </div>
+
+            <div className="ap-gate-section">
+              <span className="ap-label">This epoch, so far</span>
+              <ul className="ap-rows ap-gate-rows">
+                <li>
+                  <div className="ap-rowline">
+                    <span className="ap-wallet-name">
+                      Pending deposits
+                      <br />
+                      <span className="aphotic-muted" style={{ fontSize: 'var(--text-xs)' }}>
+                        hBTC in the vault, not yet priced and not yet backing a share
+                      </span>
+                    </span>
+                    <span className="ap-num">
+                      {formatBtc(data.snapshot.pendingDepositAssets, { suffix: true })}
+                    </span>
+                  </div>
+                </li>
+                <li>
+                  <div className="ap-rowline">
+                    <span className="ap-wallet-name">
+                      Pending redemptions
+                      <br />
+                      <span className="aphotic-muted" style={{ fontSize: 'var(--text-xs)' }}>
+                        shares surrendered into escrow, burned at the next approval
+                      </span>
+                    </span>
+                    <span className="ap-num">
+                      {formatSats(data.snapshot.pendingRedeemShares)} shares
+                    </span>
+                  </div>
+                </li>
+              </ul>
+              <p className="ap-reason">
+                Both totals are the whole epoch&rsquo;s, not yours — every request in the window
+                prices at the <em>same</em> approved NAV, which is what removes the incentive to
+                time a deposit against the boundary. They clear together when the admin multisig
+                approves, and epoch{' '}
+                <strong>{data.snapshot.epoch.toString()}</strong> becomes epoch{' '}
+                {(data.snapshot.epoch + 1n).toString()}.
+              </p>
             </div>
 
             {data.snapshot.paused ? (

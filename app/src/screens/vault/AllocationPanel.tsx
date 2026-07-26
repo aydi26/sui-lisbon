@@ -26,7 +26,7 @@
 // @forbidden  a read on mount
 // @invariant  1. Nothing renders as an allowlisted destination that was not read.
 // @ac         renders unconfigured and names the missing variable.
-// @verify     cd app && npm test -- vaultScreen
+// @verify     cd app && npm test -- vault
 // └── END CONTRACT ───────────────────────────────────────────────────────────
 
 import { bcs } from '@mysten/sui/bcs';

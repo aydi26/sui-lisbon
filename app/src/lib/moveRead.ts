@@ -41,10 +41,11 @@
 //                suite drives the same code path the browser drives.
 // @invariant  2. A missing config id throws NotWiredError BEFORE any network call.
 // @invariant  3. Decoders never coerce a u64 to `number` — sats are bigint.
-// @ac         app/test/moveRead.test.ts — decoders round-trip; type-arg splitting
-//             survives nested generics; an unwired read throws before the wire.
+// @ac         app/test/vault.test.tsx — decoders round-trip a full-width u64 as
+//             bigint; type-arg splitting survives nested generics; an unwired read
+//             throws NotWiredError before the wire.
 // @verify     cd app && npm run build
-// @verify     cd app && npm test -- moveRead
+// @verify     cd app && npm test -- vault
 // └── END CONTRACT ───────────────────────────────────────────────────────────
 
 import { bcs } from '@mysten/sui/bcs';
@@ -108,15 +109,27 @@ export interface ReadOptions {
   readonly sender?: string | null;
 }
 
-/** The live transport: gRPC `simulateTransaction` with command outputs. */
+/**
+ * The live transport: gRPC `simulateTransaction` with command outputs.
+ *
+ * ⚠ A simulation that ABORTED comes back as `$kind: 'FailedTransaction'` rather
+ * than as a thrown error, and its command results are empty rather than absent.
+ * Returning those silently would turn a Move abort into a decode failure three
+ * frames later, so the abort is raised here with the node's own text — which is
+ * exactly what `describeTxError` knows how to render.
+ */
 function liveSimulate(sender: string): SimulateFn {
   return async (tx: Transaction) => {
     tx.setSenderIfNotSet(sender);
     const result = await getSuiClient().core.simulateTransaction({
       transaction: tx,
-      include: { commandResults: true },
+      include: { commandResults: true, effects: true },
       checksEnabled: false,
     });
+    if (result.$kind === 'FailedTransaction') {
+      const error = result.FailedTransaction.effects?.status.error ?? null;
+      throw new Error(error?.message ?? 'the simulation reported a failure');
+    }
     const commands = result.commandResults ?? [];
     return commands.map((command) => command.returnValues.map((value) => value.bcs));
   };

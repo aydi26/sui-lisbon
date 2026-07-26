@@ -35,6 +35,8 @@ export type { PendingCallProps } from './PendingCall';
 
 export { PinningExplainer } from './PinningExplainer';
 
+export { SealCommitteePanel } from './SealCommitteePanel';
+
 export { StaleBanner } from './StaleBanner';
 export type { BreakerReason, StaleBannerProps } from './StaleBanner';
 

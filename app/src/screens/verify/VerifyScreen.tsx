@@ -1,14 +1,16 @@
 // ┌── APHOTIC CONTRACT ────────────────────────────────────────────────────────
 // @task       F4
 // @phase      4
-// @status     PARTIAL
+// @status     DONE
 // @spec       aphotic.md §2 constraint 5 (clearing is deterministic and
 //             reproducible), §9 (keeper: clearing parity is a release blocker),
 //             §10 (invariants), §13 (limitations)
-// @spec       docs/DESIGN-V2.md §5 (clearing, exactly), §9 (why sdk/ is
-//             structural; parity at three levels), §6 (approve_nav checks)
+// @spec       docs/DESIGN-V2.md §5 (clearing, exactly), §5ter (THE PARITY CLAIM
+//             DOES NOT CURRENTLY HOLD), §9 (why sdk/ is structural; parity at
+//             three levels), §6 (approve_nav checks)
 // @rules      G5 G7 G8
 // @depends    ../../components (F1) · ../../config.ts (F1) · ../../lib/explorer.ts
+//             · ./ParityPanel (F4) · ./ConservationPanel (F4) · ./HistoryPanel (F4)
 // @facts      THE CLAIM THIS SCREEN HAS TO EARN: same order set, same price,
 // @facts        always — and anyone can recompute it. Determinism is the product,
 // @facts        so the verification surface is not a nicety.
@@ -43,6 +45,12 @@
 // @facts      ⚠ The clearing algorithm must exist in exactly ONE place and be
 // @facts        imported by Move, keeper and app alike. A second copy in this
 // @facts        screen would reintroduce the drift the parity tests exist to catch.
+// @facts      ⚠⚠ THE PARITY CLAIM ABOVE DOES NOT CURRENTLY HOLD (DESIGN-V2 §5ter,
+// @facts        measured 2026-07-26): a third implementation in Rust found Move
+// @facts        disagreeing with the SDK and the 46 golden fixtures on 15 % of
+// @facts        4 000 seeded books. <ParityPanel/> renders it FIRST, above
+// @facts        everything this screen gets right, because volunteering the one
+// @facts        failure is worth more than any tick beneath it.
 // @implements export function VerifyScreen(): JSX.Element
 // @forbidden  a second implementation of clearing, the Merkle tree or the Seal
 //             identity encoding in app/ — import the shared one or render
@@ -55,13 +63,12 @@
 // @verify     cd app && npm run build
 // └── END CONTRACT ───────────────────────────────────────────────────────────
 
-import {
-  LimitationsPanel,
-  PendingCall,
-  PinningExplainer,
-} from '../../components';
+import { LimitationsPanel, PinningExplainer, SealCommitteePanel } from '../../components';
 import { config } from '../../config';
 import { suiObjectUrl } from '../../lib/explorer';
+import ConservationPanel from './ConservationPanel';
+import HistoryPanel from './HistoryPanel';
+import ParityPanel from './ParityPanel';
 
 interface WiringRow {
   readonly label: string;
@@ -215,79 +222,23 @@ export function VerifyScreen() {
         <h1>Recompute it yourself</h1>
         <p>
           Same order set, same price, always. Everything on this page is either something you can
-          check without trusting us, or a statement that we cannot yet let you check it.
+          check without trusting us, or a statement that we cannot yet let you check it. The first
+          panel is the one we would most like to have been able to leave out.
         </p>
       </header>
 
+      {/* FIRST, deliberately. The one thing on this page that is NOT fine is
+          worth more than every green tick below it, and a verification surface
+          that buries its own failure has already stopped being one. */}
+      <ParityPanel />
+
       <DeterminismPanel />
 
-      <div className="ap-grid ap-grid--2">
-        {/* TODO(F4): fetch a settled batch's revealed orders, run the SHARED
-            clearing implementation locally, and compare the price and the fills
-            root byte-for-byte against the on-chain BatchSettled event. The
-            algorithm must be imported, never re-implemented here. */}
-        <PendingCall
-          title="Recompute a batch"
-          targets={['clearing::begin_clearing', 'clearing::price_step', 'clearing::compute_for_inspect']}
-          reason="There is no settled batch to recompute, and the clearing implementation lives in one shared place by design — a second copy in this screen is exactly the drift the parity tests exist to catch."
-        >
-          <p style={{ color: 'var(--text-secondary)', fontSize: 'var(--text-sm)', margin: 0 }}>
-            When this is wired it fetches the revealed order set, runs the same algorithm the
-            contract runs, and compares the clearing price and the Merkle root byte-for-byte. A
-            divergence between the two implementations is a release blocker, not a warning.
-          </p>
-        </PendingCall>
+      <ConservationPanel />
 
-        {/* TODO(F4): verify_fill — prove one fill against the published
-            fills_root without downloading the whole fill list. */}
-        <PendingCall
-          title="Prove a fill"
-          targets={['clearing::verify_fill']}
-          reason="No settled batch exists yet, so there is no root to prove against."
-        >
-          <p style={{ color: 'var(--text-secondary)', fontSize: 'var(--text-sm)', margin: 0 }}>
-            A fill is provable against the published root by a Merkle path, so you can check your
-            own execution without downloading everyone else&rsquo;s — and without us being able to
-            show you a different list from the one we settled.
-          </p>
-        </PendingCall>
-      </div>
+      <HistoryPanel />
 
-      <div className="ap-grid ap-grid--2">
-        {/* TODO(F4): re-derive the Guardian limiter from the on-chain
-            WithdrawalSigned event stream —
-            project_capacity() = min(cap, tokens + elapsed × refill_rate) — using
-            the shared implementation, and show it beside the advisory SDK read. */}
-        <PendingCall
-          title="Re-derive the queue limiter"
-          targets={['hashi withdrawal event stream', 'oracle::project_capacity']}
-          reason="This build does not stream Hashi events yet. The number matters too much to show from a trusted read in the meantime."
-        >
-          <p style={{ color: 'var(--text-secondary)', fontSize: 'var(--text-sm)', margin: 0 }}>
-            The Guardian&rsquo;s rate limiter is a token bucket, and its state is a deterministic
-            projection of an event stream that is already on-chain: capacity is the smaller of the
-            cap and the tokens plus elapsed time times the refill rate. That makes it{' '}
-            <strong>replayable by anyone</strong> rather than something you take on faith from an
-            SDK call — which is the whole reason the latency model can be audited at all.
-          </p>
-        </PendingCall>
-
-        {/* TODO(F4): read the last approved epoch price and the proposal digest,
-            and show the five approve_nav checks against their governed bounds. */}
-        <PendingCall
-          title="Check the last valuation"
-          targets={['vault::propose_nav', 'vault::approve_nav']}
-          reason="No vault is configured in this build, so there is no epoch price and no proposal digest to check."
-        >
-          <p style={{ color: 'var(--text-secondary)', fontSize: 'var(--text-sm)', margin: 0 }}>
-            Approval is not a rubber stamp on a number the keeper chose. The multisig signs an exact
-            digest, and the contract re-checks that digest, the proposal&rsquo;s age, the relative
-            NAV jump, the deviation between the clearing price and the book mid, and the cap on the
-            native-BTC leg — then asserts solvency against committed supply, which is the correct
-            denominator because total supply undercounts owed-but-unminted shares.
-          </p>
-        </PendingCall>
-      </div>
+      <SealCommitteePanel />
 
       <PinningExplainer />
 

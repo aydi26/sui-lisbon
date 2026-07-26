@@ -1,7 +1,7 @@
 // ┌── APHOTIC CONTRACT ────────────────────────────────────────────────────────
 // @task       F3
 // @phase      3
-// @status     PARTIAL
+// @status     DONE
 // @spec       aphotic.md §1 (sealed-order batch auction), §4.2 (the leak we route
 //             around), §7.1 (notes), §7.2 (the batch), §7.3 (cadence),
 //             §7.4 (what is and is not hidden), §7.5 (Seal committee)
@@ -51,7 +51,11 @@
 // @invariant  2. The cut-off state disables submission and says why.
 // @invariant  3. The linkability disclosure renders unconditionally.
 // @ac         renders with no wallet and no published package.
+// @ac         app/test/batch.test.tsx — 52 tests: the 1e8 price scale, the
+//             plaintext binding, both refusals (Seal, Walrus), the cut-off, and
+//             the unconditional linkability disclosure.
 // @verify     cd app && npm run build
+// @verify     cd app && npm test -- batch
 // └── END CONTRACT ───────────────────────────────────────────────────────────
 
 import { useCallback, useEffect, useState } from 'react';
@@ -60,6 +64,7 @@ import {
   EpochClock,
   LifecycleStepper,
   LimitationsPanel,
+  SealCommitteePanel,
   type LifecycleStage,
 } from '../../components';
 import { config } from '../../config';
@@ -133,56 +138,6 @@ function WhyPanel() {
   );
 }
 
-function SealCommitteePanel() {
-  const { keyServerIds, keyServerUrls, threshold, policyVersion } = config.seal;
-  const wired = keyServerIds.length > 0;
-
-  return (
-    <section className="aphotic-card">
-      <h3 style={{ fontSize: 'var(--text-md)', margin: 0 }}>The committee that holds the keys</h3>
-
-      <p style={{ color: 'var(--text-secondary)', fontSize: 'var(--text-sm)' }}>
-        Confidentiality before close is a <strong>{threshold}-of-n threshold</strong>, not a proof. n
-        is counted in <strong>distinct operators</strong>, never in servers — two servers run by one
-        party are one failure domain. The intended shape is 5 operators with a threshold of 3.
-      </p>
-
-      <p style={{ color: 'var(--text-secondary)', fontSize: 'var(--text-sm)' }}>
-        The committee deliberately excludes our zkLogin salt provider. Using one party for both
-        identity and decryption would hand it linkage <em>and</em> plaintext, which is precisely the
-        combination the design refuses.
-      </p>
-
-      {wired ? (
-        <ul className="ap-kv">
-          {keyServerIds.map((id, i) => (
-            <li key={id}>
-              <span className="aphotic-mono">{id}</span>
-              <span className="aphotic-muted">{keyServerUrls[i] ?? 'url not configured'}</span>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="ap-reason ap-reason--warn">
-          No key servers are configured in this build (<code>VITE_SEAL_KEY_SERVER_IDS</code> is
-          empty), so nothing here can be encrypted. That is a refusal, not a degraded mode: we never
-          fall back to plaintext, and a batch does not open below the threshold of live servers.
-        </p>
-      )}
-
-      {/* TODO(F3): probe /v1/service on each configured server and render live
-          health. The probe needs BOTH a Client-Sdk-Version header and a
-          ?service_id= query param or it answers 400. */}
-      <p className="ap-reason">
-        Policy version {policyVersion}. The identity a batch is encrypted under carries the close
-        timestamp, the policy version and the batch id; bumping the version invalidates every
-        outstanding identity at once. Liveness of the individual servers is not probed by this build
-        yet, so nothing on this panel should be read as "these servers are up".
-      </p>
-    </section>
-  );
-}
-
 export function BatchScreen() {
   const live = useAsyncAction<LiveBatch>();
   const typeArgs = useAsyncAction<VaultTypeArgs>();
@@ -234,7 +189,7 @@ export function BatchScreen() {
               className="ap-btn ap-btn--primary"
               disabled={registryGap !== null || live.state.status === 'loading'}
               title={registryGap ?? 'Read the registry and find the batch that was last opened'}
-              onClick={() => void live.run(readLiveBatch)}
+              onClick={reload}
             >
               {live.state.status === 'loading' ? 'Reading…' : 'Read the live batch'}
             </button>

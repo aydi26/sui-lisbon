@@ -1,7 +1,7 @@
 // ┌── APHOTIC CONTRACT ────────────────────────────────────────────────────────
 // @task       F2
 // @phase      1
-// @status     PARTIAL
+// @status     DONE
 // @spec       aphotic.md §1 (redemption-carry vault), §6.2 (NAV: two parties),
 //             §7.6 (the carry), §7.7 (NAV legs and the honest gap), §8 (fees)
 // @spec       docs/DESIGN-V2.md §6 (approve_nav, the O(1) form), D2 (do not demo
@@ -46,7 +46,12 @@
 // @invariant  1. No control is enabled that cannot complete.
 // @invariant  2. The carry is described as designed-and-not-demoed, never as running.
 // @ac         renders with no wallet and no published package.
+// @ac         app/test/vault.test.tsx — the rounding twin matches Move's mul_div
+//             on the dust cases, the digest twin is field-sensitive across all ten
+//             signed fields, every reader refuses before the wire when unwired, and
+//             the screen fires nothing on mount.
 // @verify     cd app && npm run build
+// @verify     cd app && npm test -- vault
 // └── END CONTRACT ───────────────────────────────────────────────────────────
 
 import {
