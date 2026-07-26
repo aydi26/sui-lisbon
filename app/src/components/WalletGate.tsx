@@ -43,7 +43,6 @@
 //             renders and explains both, rather than showing two dead buttons.
 // @verify     cd app && npm run build
 // └── END CONTRACT ───────────────────────────────────────────────────────────
-
 import { useState, type ReactNode } from 'react';
 
 import { useAphoticSession } from '../session';
@@ -134,7 +133,6 @@ export function WalletGate({ children, purpose }: WalletGateProps) {
   const session = useAphoticSession();
   const [busy, setBusy] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
-  const [helpOpen, setHelpOpen] = useState(false);
 
   if (session.status === 'connected') return <>{children}</>;
 
@@ -200,15 +198,6 @@ export function WalletGate({ children, purpose }: WalletGateProps) {
     <div className="ap-gate">
       <section className="ap-panel ap-gate-card" role="dialog" aria-labelledby="ap-gate-title">
         <header className="ap-panel-head ap-gate-head">
-          <button
-            type="button"
-            className="ap-gate-icon"
-            aria-expanded={helpOpen}
-            title="What connecting does, and what it does not do"
-            onClick={() => setHelpOpen((open) => !open)}
-          >
-            <HelpMark />
-          </button>
           <h1 className="ap-panel-title ap-gate-title" id="ap-gate-title">
             Connect Wallet
           </h1>
@@ -224,18 +213,26 @@ export function WalletGate({ children, purpose }: WalletGateProps) {
           </a>
         </header>
 
-        {helpOpen ? (
-          <p className="ap-gate-help">
-            A wallet here is an <strong>identity</strong>, not a permission. Aphotic holds no key,
-            and no key held by this page or by the keeper can move another depositor&rsquo;s funds:
-            redemption exits are composed in Move to an address pinned on chain.
-            {purpose === undefined ? '' : ` ${purpose}`}
-          </p>
-        ) : null}
-
-        {walletRows.length === 0 ? null : (
-          <ul className="ap-rows ap-gate-rows">{walletRows.map(renderRow)}</ul>
-        )}
+        <ul className="ap-rows ap-gate-rows">
+          {rows.map((row) => (
+            <li key={row.key}>
+              <button
+                type="button"
+                className="ap-rowline"
+                disabled={row.disabled}
+                title={row.title}
+                onClick={row.onClick}
+              >
+                {row.icon}
+                <span className="ap-wallet-name">{row.name}</span>
+                {/* The pill is a CLAIM, and the only one on this card a user acts on.
+                    It renders solely for wallets wallet-standard actually reported. */}
+                {row.installed ? <span className="ap-badge ap-badge--live">installed</span> : null}
+                {busy === row.key ? <span className="ap-row-cue">…</span> : <Chevron />}
+              </button>
+            </li>
+          ))}
+        </ul>
 
         {session.extensionWallets.length === 0 ? (
           <p className="ap-gate-note">
@@ -247,19 +244,10 @@ export function WalletGate({ children, purpose }: WalletGateProps) {
             <a href="https://phantom.com/download" target="_blank" rel="noreferrer">
               Phantom
             </a>
-            , then reload — this list is whatever your browser exposes, so a wallet appears only
-            once it is installed.
+            , then reload — the list above is whatever your browser actually exposes, which is why
+            nothing in it is claiming to be here right now.
           </p>
         ) : null}
-
-        {/* zkLogin sits BELOW the rule, not in the list. It is a different trust
-            story — a salt provider and an OAuth issuer are involved — and a row
-            inside the wallet list would read as one more wallet. */}
-        <div className="ap-gate-rule">
-          <span>or</span>
-        </div>
-
-        <ul className="ap-rows ap-gate-rows">{googleRows.map(renderRow)}</ul>
 
         {failure === null ? null : <p className="ap-msg ap-msg--bad">{failure}</p>}
         {session.networkProblem === null ? null : (

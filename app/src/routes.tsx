@@ -34,6 +34,7 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 import App from './App';
 import { WalletGate } from './components';
 import BatchScreen from './screens/batch/BatchScreen';
+import DocsScreen from './screens/docs/DocsScreen';
 import VaultScreen from './screens/vault/VaultScreen';
 import VerifyScreen from './screens/verify/VerifyScreen';
 
@@ -84,6 +85,7 @@ export function AppRoutes() {
           }
         />
         <Route path="verify" element={<VerifyScreen />} />
+        <Route path="docs" element={<DocsScreen />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

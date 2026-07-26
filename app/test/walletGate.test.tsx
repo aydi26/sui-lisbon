@@ -88,12 +88,18 @@ describe('<WalletGate/>', () => {
     expect(button.getAttribute('title') ?? '').toMatch(/\S/);
   });
 
-  it('never labels a wallet "installed" when none is detected', () => {
+  it('never puts the "installed" pill on a row that is not a detected wallet', () => {
     const { container } = renderGate();
-    // The pill is the one claim on this card a user acts on. With no extension
-    // present it must appear nowhere at all.
-    expect(container.querySelector('.ap-badge--live')).toBeNull();
-    expect(container.textContent ?? '').not.toMatch(/installed/i);
+    // wallet-standard's registry is GLOBAL to the page, so another test file can
+    // leave a wallet registered and this suite legitimately sees rows. Asserting
+    // "no pill anywhere" was therefore order-dependent. The real invariant is
+    // tighter and order-free: the pill count must equal the detected-wallet row
+    // count, and the Google row must never wear it — zkLogin is not installed.
+    const pills = container.querySelectorAll('.ap-badge--live').length;
+    const rows = container.querySelectorAll('.ap-rows > li').length;
+    expect(pills).toBe(rows - 1); // every row but the Google one
+    const google = screen.getByRole('button', { name: /sign in with google/i });
+    expect(google.querySelector('.ap-badge--live')).toBeNull();
   });
 
   it('names a real wallet to install when none is detected', () => {

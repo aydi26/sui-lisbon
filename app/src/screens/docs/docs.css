@@ -1,0 +1,293 @@
+/* ┌── APHOTIC CONTRACT ────────────────────────────────────────────────────────
+   @task       F5
+   @phase      5
+   @status     DONE
+   @spec       aphotic.md §13 (limitations are published)
+   @rules      G7
+   @depends    ../../theme.css (F1)
+   @facts      TOKENS ONLY. Every colour, space and radius below is a var() from
+   @facts        theme.css — --bg-elevated, --border-soft, --text-muted, --space-*,
+   @facts        --radius-*. No new palette, no Tailwind, no third-party CSS.
+   @facts      The surface grammar is the one already in use: 20px radius, HAIRLINE
+   @facts        0.5px borders, small quiet type. The hairline matters more than it
+   @facts        looks — 1px at this radius reads as a box, 0.5px reads as a plane.
+   @facts      The sidebar collapses under 900px behind .docs-mobile-toggle, which
+   @facts        is display:none above it. Same breakpoint as .ap-grid--2.
+   @implements .docs-page .docs-sidebar .docs-main and their children
+   @forbidden  a hex colour or a raw px space that is not a hairline border
+   @forbidden  hiding .docs-limitation behind a collapse — it renders unconditionally
+   @invariant  1. Nothing here restyles a .ap-* or .aphotic-* class; the docs page
+                  only adds .docs-* rules, so no other screen can be affected.
+   @verify     cd app && npm run build
+   └── END CONTRACT ─────────────────────────────────────────────────────────── */
+
+.docs-page {
+  width: 100%;
+  max-width: var(--page-max);
+  margin: 0 auto;
+  padding: var(--space-6) var(--space-5) var(--space-9);
+  display: grid;
+  gap: var(--space-5);
+  align-items: start;
+}
+
+@media (min-width: 900px) {
+  .docs-page {
+    grid-template-columns: 15rem minmax(0, 1fr);
+    gap: var(--space-6);
+  }
+}
+
+/* ── the mobile affordance ──────────────────────────────────────────────────*/
+
+.docs-mobile-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  background: var(--bg-elevated);
+  border: 0.5px solid var(--border-soft);
+  border-radius: var(--radius-pill);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--text-sm);
+  padding: var(--space-2) var(--space-4);
+  cursor: pointer;
+  justify-self: start;
+}
+
+.docs-mobile-toggle:hover {
+  color: var(--text-primary);
+  border-color: var(--border);
+}
+
+@media (min-width: 900px) {
+  .docs-mobile-toggle {
+    display: none;
+  }
+}
+
+/* ── sidebar ────────────────────────────────────────────────────────────────*/
+
+.docs-sidebar {
+  background: var(--bg-elevated);
+  border: 0.5px solid var(--border-soft);
+  border-radius: 20px;
+  box-shadow: var(--shadow-md);
+  padding: var(--space-5);
+  display: grid;
+  gap: var(--space-5);
+  align-content: start;
+}
+
+/* Under 900px the sidebar is a disclosure; above it, it is always present. */
+.docs-sidebar[hidden] {
+  display: none;
+}
+
+@media (min-width: 900px) {
+  .docs-sidebar {
+    position: sticky;
+    top: var(--space-5);
+    max-height: calc(100vh - var(--space-7));
+    overflow-y: auto;
+  }
+
+  /* The desktop layout never hides it, whatever the toggle last said. */
+  .docs-sidebar[hidden] {
+    display: grid;
+  }
+}
+
+.docs-sidebar-header {
+  font-size: 0.6875rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.docs-sidebar-nav {
+  display: grid;
+  gap: var(--space-5);
+}
+
+.docs-sidebar-category {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.docs-sidebar-category-label {
+  font-size: 0.625rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.docs-sidebar-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.docs-sidebar-link {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0.5px solid transparent;
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--text-sm);
+  padding: var(--space-2) var(--space-3);
+  cursor: pointer;
+}
+
+.docs-sidebar-link:hover {
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+}
+
+.docs-sidebar-link.active {
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+  border-color: var(--border-soft);
+}
+
+.docs-sidebar-cta {
+  display: block;
+  text-align: center;
+  border: 0.5px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  background: var(--accent-dim);
+  color: var(--accent);
+  font-size: var(--text-sm);
+  padding: var(--space-3) var(--space-4);
+  text-decoration: none;
+}
+
+.docs-sidebar-cta:hover {
+  color: var(--accent-hover);
+  border-color: var(--border);
+}
+
+/* ── content ────────────────────────────────────────────────────────────────*/
+
+.docs-main {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-5);
+}
+
+.docs-content {
+  background: var(--bg-elevated);
+  border: 0.5px solid var(--border-soft);
+  border-radius: 20px;
+  box-shadow: var(--shadow-md);
+  padding: var(--space-6) var(--space-5);
+  display: grid;
+  gap: var(--space-5);
+  min-width: 0;
+}
+
+.docs-content-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--text-lg);
+  font-weight: 500;
+  letter-spacing: var(--tracking-tight);
+  color: var(--text-primary);
+}
+
+.docs-content-body {
+  display: grid;
+  gap: var(--space-3);
+  max-width: 74ch;
+}
+
+.docs-content-body p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-base);
+  line-height: var(--leading-normal);
+}
+
+.docs-subsection {
+  display: grid;
+  gap: var(--space-3);
+  padding-top: var(--space-4);
+  border-top: 0.5px solid var(--border-soft);
+  min-width: 0;
+}
+
+.docs-subsection-title {
+  margin: 0;
+  font-size: 0.6875rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.docs-subsection-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-3);
+  max-width: 78ch;
+}
+
+.docs-subsection-list > li {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  padding-left: var(--space-4);
+  position: relative;
+  overflow-wrap: anywhere;
+}
+
+.docs-subsection-list > li::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0.6em;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--border);
+}
+
+.docs-subsection-list > li strong {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.docs-subsection-list code {
+  font-family: var(--font-mono);
+  font-size: 0.8em;
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+  border-radius: var(--radius-sm);
+  padding: 1px 5px;
+}
+
+.docs-unwired {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.docs-note {
+  color: var(--text-muted);
+}
+
+.docs-id-link {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.docs-id-link:hover {
+  color: var(--accent-hover);
+  text-decoration: underline;
+}
