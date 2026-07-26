@@ -20,7 +20,7 @@ ETHGlobal Lisbon 2026 · Sui track. Sui **testnet**, Bitcoin **signet**. Not aud
 | `bitcoin_address` | *where to* |
 | `created_timestamp_ms` | *when they decided* |
 
-Nothing is hidden and nothing needs to be decoded. A desk unwinding a position is **watched forming in real time**, request by request, before a single satoshi has moved on Bitcoin — and it stays visible for the ~1.5–2 hours the withdrawal takes to confirm. That is not a hypothetical: `node scripts/verify-onchain.mjs` pulls the live stream and, on 2026-07-26, printed 25 real `WithdrawalRequested` / `WithdrawalApproved` rows with a latest timestamp of `2026-07-26T05:07:09.822Z`.
+Nothing is hidden and nothing needs to be decoded. A desk unwinding a position is **watched forming in real time**, request by request, before a single satoshi has moved on Bitcoin — and it stays visible for the ~1.5–2 hours the withdrawal takes to confirm. That is not a hypothetical: `node scripts/verify-onchain.mjs` pulls the live stream and, on 2026-07-26, printed 25 real `WithdrawalRequested` / `WithdrawalApproved` rows with a latest envelope timestamp of `2026-07-26T06:37:26.319Z` — minutes old at the time of the run. Run it yourself and you will get a fresher one.
 
 Exiting is also queued and rate-limited, so `hBTC` trades below par. The discount is the market price of that latency.
 
@@ -52,8 +52,9 @@ These are load-bearing, not disclaimers. They appear in the product UI as well a
 - **`hBTC` is custodial-threshold wrapped BTC.** Threshold Schnorr across an opt-in stake-weighted validator subset, 2-of-2 with a Guardian enclave, a ~60-day recovery leaf. There is no light client. Aphotic inherits **every one** of Hashi's trust assumptions. Our differentiation is composing the bridge's on-chain machinery — never the token's trust model.
 - **v1 note spends are LINKABLE.** The Merkle path is supplied in the clear, so the leaf index names the note. v1 delivers **uniformity, not unlinkability**; privacy comes from the crowd, not from the ladder. Unlinkability needs the Groth16 membership proof, which is Phase 4 and is not built.
 - **We deployed the `hBTC` lending counterparty ourselves**, because none exists on Sui testnet — Suilend, Navi and Scallop have no testnet deployment at all. Its APY is *ours*, not a market rate, and `disclosure()` returns that admission **on-chain**.
-- **Validator collusion: protocol floor 7, live testnet today 32.** Always both numbers, always labelled. Measured 2026-07-26: 112 active validators, total voting power 10 000, and 32 of them taken largest-first to reach the 6 667 quorum.
-- **The carry is not executed in this version.** The DeepBook `hBTC/DBUSDC` book is empty on both sides — `mid_price` aborts `EEmptyOrderbook` — and we can mint neither leg. There is nothing to buy and no observable price, so `carry.move` ships as a compiling, guarded interface and the carry is not mimed.
+- **Validator collusion: protocol floor 7, live testnet today 32.** Always both numbers, always labelled. Measured 2026-07-26 at epoch 1172: 112 active validators, total voting power 10 000, largest single validator 515 (5.15 %), and 32 of them taken largest-first to reach the 6 667 quorum.
+- **The carry is not executed in this version.** The DeepBook `hBTC/DBUSDC` book is empty on both sides — `mid_price` aborts `EEmptyOrderbook` and `get_level2_range` returns 0 levels, both confirmed live on 2026-07-26 — and we can mint neither leg. There is nothing to buy and no observable price, so `carry.move` ships as a compiling, guarded interface and the carry is not mimed.
+- **The Move ↔ TypeScript clearing parity claim still does not hold.** The v2 upgrade closed the two divergences that *weakened the product* — allocation at an overfull marginal level is now pro-rata, and truncation happens after price discovery rather than before it. **Three remain open** (D1 the fill-leaf layout, D3 where rounding dust lives, D5 u64 vs u128 price width), and D1 alone means the two Merkle roots can never match for a non-empty fill set. `aphotic.md` §9 calls a clearing divergence a release blocker. It is one, and it is open. We found it by writing a third implementation specifically to check, and we are not going to describe it as a rounding difference.
 - **If the spread vanishes, the venue is worth little.** A generously-sized Guardian bucket means the queue clears in minutes and there is no discount. Aphotic is closer to **congestion insurance** than to a bridge, and should be judged as such.
 - **The redemption leg is gated at signing, not by Move.** `request_withdrawal` sets `sender: ctx.sender()`, the transaction *signer*, never the calling module — so a shared object can never hold a queue position. A Sui **2-of-2 multisig** (keeper + independent policy co-signer) gates it instead. Move cannot enforce this one boundary and we say so rather than implying otherwise.
 - **Aphotic is not trustless.** It is no less trustworthy than the venue it serves. That is the honest bar.
@@ -64,23 +65,27 @@ These are load-bearing, not disclaimers. They appear in the product UI as well a
 
 | | State |
 |---|---|
-| Move package `aphotic` — 10 modules, 275 tests | **PUBLISHED AND LIVE.** package `0xfa214c431cee927137422f042ed679eb6180c226d30fa3e98c6bea9e09597df2` (published-at == original-id, fresh publish, digest `DLW43Kvc8czoiWAfxWXomuHXmT7Cuysp5bSnkmsHBuhH`) · shared `Vault` `0x91660fb483ec6c8ee4f9c2b4be04872b5808955fdcda962b5be5905989b3efcf` · shared `BatchRegistry` `0x9967881e88d5e22fc790d3b761e8ca55c8fd87d1a07baa11eb4a4352cd356b35`. The first publish attempt WAS rejected — `VMVerificationOrDeserializationError`, because `clearing::Clearing` declared 39 fields against a **32-field verifier cap that `sui move build` never runs**. It was refactored into nested structs, and a second blocker behind it (no LP share coin, so `vault::create` had no `TreasuryCap` to consume) was closed by adding `aphotic_lp.move`. Bisection in `docs/SUBMISSION.md` §5.|
-| `aphotic_lending` — our hBTC counterparty | **published and live**: `0x39d038aea02ccc0bd25e97c7f1a715e87dd6ccae19b0bf9ac255379634b6ea8c`, shared `Market` `0x220ba0e5…` (isv `953314524`), publish tx `3PCybDwuxCCxEace2zSrNutPRSNvEKAazPZjbKPTqnJZ`. Live and empty — we cannot mint hBTC. |
-| `sdk/` clearing · Merkle · Seal identity · limiter | **written and green**, 376 tests, 46 shared golden fixtures |
-| Move ↔ TypeScript clearing parity | **FAILS, and we found it ourselves.** The TypeScript, the fixtures and the Rust spec engine all agree; **Move differs**, on 15 % of 4 000 seeded books. Five named divergences with hand-derived counterexamples in `clearing-rs/tests/divergence.rs` and `docs/DESIGN-V2.md` §5ter. The worst is structural: the two fill-leaf layouts are 73 and 81 bytes, so the Merkle roots can **never** match. This is the release blocker `aphotic.md` §9 says it is, and it is open. |
-| Move ↔ TypeScript parity **L3** (`devInspect`, BCS byte-for-byte) | **owed** — it needs the package published, and §5ter resolved first |
-| `MAX_BATCH_SIZE = 256` | a **reasoned** default, not a measured one. `scripts/measure-clearing.mjs` ran and reported *"NOTHING WAS MEASURED"* against a package that predates `clearing`. |
-| Keeper CLI | **all 10 commands run**, 252 tests. Every test is offline against a fake client: the PTB shapes, decoders and local refusals are pinned; the wire behaviour against a real node is not. |
-| `clearing-rs/` (Rust clearing twin) | **built and green — 79 tests.** Two engines on purpose: one reproducing the deployed `clearing.move`, one reproducing the spec. A single engine could not have found the divergence above. `sim/` is standalone — Hashi's UTXO simulator is not in this repo, so the fragmentation leg is parameterised, not calibrated, and every emitted file says `"calibrated_against_hashi_sim": false`. |
+| Move package `aphotic` — 11 modules, 283 tests | **PUBLISHED, AND SINCE UPGRADED TO v2.** Two ids, and they are no longer the same — keep both wired separately.<br>`published-at` **`0x653a81289672661facacae1b7740b333afc7c6a88198d38b916c20b14e855c55`** — a `moveCall` targets **this** (on-chain package `version: 2`, `prevTx` `GVMNWL56qNMR4WRSafnwfBaAFS3aSYvTjXuySFQowx6i`).<br>`original-id` **`0xfa214c431cee927137422f042ed679eb6180c226d30fa3e98c6bea9e09597df2`** — type arguments, type-string checks and event types resolve **here forever** (on-chain `version: 1`, publish digest `DLW43Kvc8czoiWAfxWXomuHXmT7Cuysp5bSnkmsHBuhH`).<br>Both read from `move/Published.toml` and confirmed with `sui client object` on 2026-07-26. |
+| Runtime object graph | **live.** shared `Vault<BTC, DBUSDC, APHOTIC_LP>` `0x91660fb483ec6c8ee4f9c2b4be04872b5808955fdcda962b5be5905989b3efcf` (isv `953314532`) · shared `BatchRegistry` `0x9967881e88d5e22fc790d3b761e8ca55c8fd87d1a07baa11eb4a4352cd356b35` (isv `953314533`, and it reads back `cadence_ms 43 200 000` / `offset_ms 21 600 000` / `max_batch_size 256`) · shared `AdapterRegistry` `0x216b878d592129d6c5ce7c5c2b1f72d77cef8ed852db5934cb5a559a2eec29ca` (isv `953314534`). All three report their type origin as the **original** id, which is the divergence working as intended. |
+| `aphotic_lending` — our hBTC counterparty | **published and live**: `0x39d038aea02ccc0bd25e97c7f1a715e87dd6ccae19b0bf9ac255379634b6ea8c`, shared `Market` `0x220ba0e5…` (isv `953314524`), publish tx `3PCybDwuxCCxEace2zSrNutPRSNvEKAazPZjbKPTqnJZ`. Live and **empty** — `cash 0`, `total_borrows_sats 0`, read off chain today. We cannot mint hBTC. |
+| The front-end | **deployed** at `https://aphotic-taupe.vercel.app`. All five routes return 200: `/` `/vault` `/batch` `/verify` `/docs`. |
+| `sdk/` clearing · Merkle · Seal identity · limiter | **written and green**, 15 files · 376 tests, 46 shared golden fixtures |
+| Move ↔ TypeScript clearing parity | **Four of the five divergences are closed. D1 remains, and it is structural — so the *root* claim still must not be made.** D2 (greedy → **pro-rata** allocation at an overfull marginal level) and D4 (truncation moved from load time to **after** price discovery, so an under-funded account can no longer move the uniform price for everyone) were closed by the **v2 upgrade**, in Move. D3 and D5 were closed on 2026-07-26 by correcting the **Rust spec to Move**, which is the authority because it is the deployed contract: the fee is charged **per ask on its own gross** with the published `quote` **net** of it and `fee_quote` the residual that absorbs the dust (D3), and a `limit_price` above `u64::MAX` is refused **at input**, since `Order.limit_price` is a `u64` on chain (D5). Measured after: `cargo test` **exit 0, 79 tests**, and **all 47 shared golden fixtures agree on price, matched base and quote, fee, dust, truncation and every fill field**. **D1 is untouched and cannot be fixed by arithmetic:** Move's leaf is `bcs(Fill)` = **73** bytes and commits to `batch_id` but carries **no fee**; the spec's is **81** and commits to the fee but not the batch id. Two different pre-images, so the Merkle roots can **never** match for a non-empty fill set — the golden suite therefore compares every value *except* the root, and says so at the line where it skips it. Detail in `docs/DESIGN-V2.md` §5ter. |
+| Move ↔ TypeScript parity **L3** (`devInspect`, BCS byte-for-byte) | **owed.** The package is now published, so the blocker is no longer the deployment — it is D1. |
+| `MAX_BATCH_SIZE = 256` | still a **reasoned** default, not a measured one. Re-run today against the live package, `scripts/measure-clearing.mjs` again reports *"NOTHING WAS MEASURED"* — for a **new** reason: the published `clearing` module is found and exposes 44 functions, but not the `sort_step` / `price_step` the script devInspects. The shipped state machine is a single budgeted `step`. The script targets names that no longer exist. |
+| Keeper CLI | **10 commands, all wired** — `schedule` `seal-id` `clear` `verify-limiter` `open` `close` `reveal` `drive` `nav` `claim`; each runs and reports its missing argument rather than exiting silently. 16 files · 252 tests, all offline against a fake client: the PTB shapes, decoders and local refusals are pinned; the wire behaviour against a real node is not. |
+| `clearing-rs/` (Rust clearing twin) | **built and green — 79 tests.** Two engines on purpose: one reproducing `clearing.move`, one reproducing the spec. A single engine could not have found the divergence above. ⚠ its `engine.rs` is now the twin of package **v1**, not of the deployed v2 — it says so in its own banner — so the census figures below describe v1. `sim/` is standalone: Hashi's UTXO simulator is not in this repo, so the fragmentation leg is parameterised, not calibrated, and every emitted file says `"calibrated_against_hashi_sim": false`. |
 | The carry (Phase 2) | **not built**, deliberately — see above |
 | BTC in / BTC out on signet | **real but never live-demoable**: ~70 min in, ~1.5–2 h out. Pre-staged. |
 
-Two blockers stand between the tree and a deployment, both diagnosed and both single-file. `Clearing`
-must lose seven fields to reach the 32-field cap — nested `has store` structs cost one field each and
-do not inherit the parent's count. And `vault::create` consumes a `TreasuryCap<S>` while the package
-**defines no LP share coin**, so no `Vault` can be created; the only `S` that exists is `#[test_only]`.
-Neither is a design problem, and finding the second one corrected our own architecture doc: the app
-needs **three** shared objects, not the seven we had listed.
+The two rejections it took to publish are the best technical story in the repo, and they are kept
+rather than tidied away: `clearing::Clearing` declared **39** fields against a **32-field on-chain
+verifier cap that `sui move build` never runs**, and behind it `vault::create` consumed a
+`TreasuryCap<S>` while the package defined no LP share coin. The first was fixed by nesting
+correlated scalars into `has store` structs (a nested struct costs one field and does not inherit
+the parent's count); the second by adding `aphotic_lp.move`. Bisection in `docs/SUBMISSION.md` §5.
+Finding the second one corrected our own architecture doc: the app needs **three** shared objects,
+not the seven we had listed.
 
 ⚠ `vault::Vault` declares **31** fields — one under the same cap. Adding two breaks the publish the
 same way, with the same uninformative error.
@@ -93,12 +98,12 @@ same way, with the same uninformative error.
 
 | Path | What |
 |---|---|
-| `move/` | Move 2024 package **`aphotic`** — `events` `caps` `notes` `balance` `allocate` `oracle` `carry` `vault` `batch` `clearing`. Tests at the package root in `move/tests/`. |
+| `move/` | Move 2024 package **`aphotic`** — 11 modules: `events` `caps` `notes` `balance` `allocate` `oracle` `carry` `vault` `batch` `clearing` `aphotic_lp`. Tests at the package root in `move/tests/`. `move/Published.toml` holds `published-at` and `original-id`; read them from there, never from prose. |
 | `lending/` | A **second** Move package, `aphotic_lending` — our own `hBTC` lending counterparty, with the honesty disclosure returned on-chain. Published. |
 | `sdk/` | The single home of every algorithm that must be byte-identical across languages: clearing, the Merkle tree, the Seal inner id, the limiter. A second copy anywhere is the bug. |
 | `keeper/` | TypeScript, one process. Proposes NAV, cranks the schedule — and holds **no discretion**. |
 | `clearing-rs/` | The offline Rust clearing twin — **two** engines, one per candidate algorithm, plus `sim/`. 79 tests. ⚠ `cargo` is installed but not on the default PATH: `export PATH="$HOME/.cargo/bin:$PATH"`. |
-| `app/` | React 19 + Vite 6 — `/` landing, `/vault`, `/batch`, `/verify`, plus its own fully offline vitest suite. |
+| `app/` | React 19 + Vite 6 — `/` landing, `/vault`, `/batch`, `/verify`, `/docs`, plus its own fully offline vitest suite. **Deployed at `https://aphotic-taupe.vercel.app`**; all five routes answered 200 on 2026-07-26. |
 | `scripts/` | `gates.{ps1,sh}` (12 invariant gates), `verify-all.ps1` (master gate, 12 steps), `verify-onchain.mjs` (live testnet assertions), `measure-clearing.mjs`, `register-deposit.ps1`, `seed-book.mjs`, `check-enoki.mjs`. |
 | `docs/` | All specifications. See the read order below. |
 
@@ -116,11 +121,12 @@ Prereqs: `sui` **1.76.0** (`sui client active-env` = `testnet`, gas-funded), Nod
 
 ```bash
 # Move package                                    measured 2026-07-26
-cd move    && sui move build && sui move test   # 275 tests, 275 passed, 0 failed
-cd move    && sui move test batch               # per-module, positional filter (45)
+cd move    && sui move build                    # exit 0, zero warnings on a clean rebuild
+cd move    && sui move test                     # Total tests: 283; passed: 283; failed: 0
+cd move    && sui move test batch_tests         # per-module, positional filter (42)
 
 # The lending counterparty — a second, published package
-cd lending && sui move build && sui move test   # 37 tests, 37 passed, 0 failed
+cd lending && sui move build && sui move test   # Total tests: 37; passed: 37; failed: 0
 
 # The shared algorithms
 cd sdk     && npm install && npm test           # 15 files · 376 tests
@@ -130,18 +136,24 @@ cd keeper  && npm install && npm run typecheck && npm run build && npm test   # 
 
 # App (React 19 + Vite 6)
 cd app     && npm install && npm run build      # tsc --noEmit && vite build
-cd app     && npm test                          # 12 files · 157 tests, fully offline
+cd app     && npm test                          # 18 files · 327 tests, fully offline
 cd app     && npm run dev                       # http://localhost:5173
 ```
 
 ```bash
 # The Rust clearing twin — cargo is installed but NOT on the default PATH here
 export PATH="$HOME/.cargo/bin:$PATH"
-cd clearing-rs && cargo test                    # 79 passed, 0 failed
+cd clearing-rs && cargo test                    # 79 passed, 0 failed (47 + 11 + 9 + 7 + 5 across 5 binaries)
 ```
 
-**275 Move + 37 lending + 376 SDK + 252 keeper + 157 app + 79 Rust = 1 176 tests**, all green on
+**283 Move + 37 lending + 376 SDK + 252 keeper + 327 app + 79 Rust = 1 354 tests**, all green on
 2026-07-26, plus 12 structural gates that agree verdict-for-verdict across both shells.
+
+Move tests per test module, from one `sui move test` run: `allocate_tests` **51** · `oracle_tests`
+**47** · `batch_tests` **42** · `vault_tests` **35** · `notes_tests` **32** · `balance_tests` **25** ·
+`clearing_tests` **24** · `caps_tests` **24** · `aphotic_lp_tests` **3**. (Do not add up the counts a
+*positional filter* prints — the filter matches test names, so `vault` and `balance` overlap and the
+subtotals sum to more than 283.)
 
 Copy `keeper/.env.example` → `keeper/.env` and `app/.env.example` → `app/.env`. `keeper/.env` is gitignored and is the **only** file that may ever hold a private key.
 
@@ -160,11 +172,23 @@ cd keeper && node dist/index.js clear < orders.json   # uniform-price clearing, 
 ## VERIFY
 
 ```bash
-powershell -NoProfile -File scripts/verify-all.ps1   # the master gate — 12 PASS · 0 FAIL · 0 SKIP
-bash scripts/gates.sh                                # 12 PASS · 0 FAIL · 0 SKIP
+powershell -NoProfile -File scripts/verify-all.ps1   # the master gate — 12 steps
+bash scripts/gates.sh                                # the 12 invariant gates
 powershell -NoProfile -File scripts/gates.ps1        # must agree, verdict for verdict
-node scripts/verify-onchain.mjs                      # 28 PASS · 0 FAIL · 0 WARN · 4 INFO (needs network)
+node scripts/verify-onchain.mjs                      # 35 PASS · 0 FAIL · 0 WARN · 5 INFO (needs network)
 ```
+
+`verify-onchain.mjs` is the one to run first: on 2026-07-26 it returned **35 PASS · 0 FAIL · 0 WARN ·
+5 INFO**, and it now checks *our own* deployment — `aphotic pkg (callable) v2`, `aphotic pkg
+(original) v1`, and the type origin of `Vault`, `BatchRegistry`, `AdapterRegistry`, `AdminCap` and
+`KeeperCap` against the **original** id rather than against whatever is callable today. A registry
+that exists but resolves to a superseded package is exactly the failure an existence check misses.
+
+⚠ **The gates were `13 PASS · 0 FAIL · 0 SKIP` at 08:37 and `13 PASS · 0 FAIL` twenty minutes later**,
+and the difference is not ours: a scratch file `scripts/.probe.mjs`, left by another process, carries
+a literal `hBTC` coin type and trips the `ids` gate. That is the gate doing its job — a hardcoded id
+anywhere outside its six declared homes is a fail, whoever wrote it and whatever it was for. Re-run
+before quoting; the master gate reads whatever is in the tree at that second.
 
 The gates are the interesting part, because each one guards an invariant that a comment cannot:
 

@@ -2,13 +2,18 @@
 // @task       T6.3
 // @phase      3  [CUT-LINE CRITICAL]
 // @status     DONE
+// @spec       move/sources/clearing.move <- ★ THE AUTHORITY these cases now pin
 // @spec       docs/DESIGN-V2.md#9 L1 (shared golden fixtures — the same JSON drives the Move
-//             generator, so a fixture edit updates both sides or fails)
+//             generator and clearing-rs, so a fixture edit updates every side or fails)
 // @spec       docs/DESIGN-V2.md#5 (every clause of the algorithm)
 // @rules      G5 G10
 // @depends    ../src/clearing.ts · ../fixtures/clearing.golden.json
-// @facts      46 cases. Every scalar and every fill row was HAND-DERIVED from §5; the fixture
-// @facts        generator verifies them and only ever writes `fillsRoot`.
+// @facts      47 cases. Every scalar and every fill row was HAND-DERIVED from clearing.move; the
+// @facts        fixture generator verifies them and only ever writes `fillsRoot`.
+// @facts      ⚠ The fill `quote` column is the PUBLISHED quote_sats — an ask's is NET of its fee —
+// @facts        and `fee` is the un-committed audit column. feeQuote is Move's residual and
+// @facts        absorbs the dust, so `Σ fill.fee + dustQuote == feeQuote` is the identity to
+// @facts        assert, NOT `Σ fill.fee == feeQuote`.
 // @implements describe('clearing golden fixtures')
 // @verify     npx vitest run clearing.golden
 // └── END CONTRACT ───────────────────────────────────────────────────────────
@@ -19,6 +24,8 @@ import {
   clear,
   discoverPrice,
   encodeFillLeaf,
+  feeForAsk,
+  FILL_LEAF_LEN,
   fillsRoot,
   hashFillLeaf,
   HARD_MAX_BATCH_SIZE,
@@ -28,13 +35,13 @@ import {
   quoteForBid,
   SIDE_ASK,
   SIDE_BID,
+  type Fill,
   type RevealedOrder,
 } from '../src/clearing.js';
 import { hashLeafBytes, toHex, ZERO32 } from '../src/hash.js';
 import { binaryRootDuplicatingOdd } from '../src/merkle.js';
 import {
-  buildBalances,
-  buildOrders,
+  buildInput,
   expectedFills,
   loadClearingGolden,
 } from './support/clearingFixtures.js';
@@ -77,6 +84,7 @@ describe('constants', () => {
       'u64-boundary',
       'u128',
       'batch-256',
+      'batch-id-is-committed-to-the-leaf',
     ]) {
       expect(names).toContain(needle);
     }
@@ -87,17 +95,9 @@ describe('constants', () => {
 describe('clearing golden fixtures', () => {
   for (const c of golden.cases) {
     it(`${c.name} — ${c.why.slice(0, 90)}`, () => {
-      const orders = buildOrders(c, golden.addresses);
-      const balances = buildBalances(c, golden.addresses);
-      // priceScale is EXPLICIT here, never inherited. A fixture that adopts whatever
-      // the default happens to be re-pins the default instead of testing it — which
-      // is precisely how a 1e9-in-the-SDK / 1e8-in-Move split survived 46 green cases.
-      const input = {
-        orders,
-        balances,
-        feeMatchedBps: BigInt(c.feeMatchedBps),
-        priceScale: BigInt(golden.priceScale),
-      };
+      // ONE decoder builds the input — the same one gen-golden.mjs uses, so the two
+      // verifiers cannot be checking the fixtures at two different price scales.
+      const input = buildInput(c, golden);
 
       if (c.expectThrow) {
         expect(() => clear(input)).toThrow(c.expectThrow);
@@ -134,24 +134,20 @@ describe('per-case value conservation', () => {
   for (const c of golden.cases) {
     if (c.expectThrow) continue;
     it(`${c.name} preserves value`, () => {
-      const orders = buildOrders(c, golden.addresses);
-      const r = clear({
-        orders,
-        balances: buildBalances(c, golden.addresses),
-        feeMatchedBps: BigInt(c.feeMatchedBps),
-        // EXPLICIT, never inherited from the default. A fixture that silently
-        // adopts whatever PRICE_SCALE happens to be re-pins the default instead of
-        // testing it, which is how a 1e9/1e8 split survived 46 green cases.
-        priceScale: BigInt(golden.priceScale),
-      });
+      const input = buildInput(c, golden);
+      const orders = input.orders;
+      const scale = BigInt(golden.priceScale);
+      const r = clear(input);
 
       let bidBase = 0n;
       let askBase = 0n;
       let bidQuote = 0n;
       let askCredit = 0n;
       let feeSum = 0n;
+      let grossSum = 0n;
       for (const f of r.fills) {
         expect(f.price).toBe(r.price);
+        expect(f.batchId).toBe(input.batchId);
         expect(f.qtyBase).toBeGreaterThan(0n);
         const o = orders.find((x) => x.index === f.index)!;
         if (f.side === SIDE_BID) {
@@ -159,22 +155,29 @@ describe('per-case value conservation', () => {
           expect(f.fee).toBe(0n);
           bidBase += f.qtyBase;
           bidQuote += f.quote;
-          expect(f.quote).toBe(quoteForBid(f.qtyBase, r.price, BigInt(golden.priceScale)));
+          expect(f.quote).toBe(quoteForBid(f.qtyBase, r.price, scale));
         } else {
           expect(r.price).toBeGreaterThanOrEqual(o.limitPrice);
           askBase += f.qtyBase;
-          askCredit += f.quote - f.fee;
+          // ⚠ `quote` is already NET on an ask — the gross is quote + fee.
+          const gross = quoteForAsk(f.qtyBase, r.price, scale);
+          expect(f.fee).toBe(feeForAsk(gross, input.feeMatchedBps));
+          expect(f.quote).toBe(gross - f.fee);
+          askCredit += f.quote;
           feeSum += f.fee;
-          expect(f.quote).toBe(quoteForAsk(f.qtyBase, r.price, BigInt(golden.priceScale)));
-          expect(f.fee).toBeLessThanOrEqual(f.quote);
+          grossSum += gross;
         }
       }
 
       expect(bidBase).toBe(askBase);
       expect(bidBase).toBe(r.matchedBase);
-      expect(feeSum).toBe(r.feeQuote);
+      expect(grossSum).toBe(r.matchedQuote);
+      expect(bidQuote).toBe(r.quotePaid);
+      expect(askCredit).toBe(r.quoteRecv);
       expect(r.dustQuote).toBeGreaterThanOrEqual(0n);
-      expect(bidQuote).toBe(askCredit + r.feeQuote + r.dustQuote);
+      // Move's fee is the RESIDUAL and absorbs the dust — there is no fourth term.
+      expect(feeSum + r.dustQuote).toBe(r.feeQuote);
+      expect(bidQuote).toBe(askCredit + r.feeQuote);
       expect(r.fills.length).toBeLessThanOrEqual(orders.length);
     });
   }
@@ -261,53 +264,108 @@ describe('discoverPrice', () => {
   });
 });
 
+describe('the fill leaf is bcs(aphotic::clearing::Fill), 73 bytes', () => {
+  const sample: Fill = {
+    batchId: 1n,
+    index: 2,
+    submitter: '0xb0b',
+    side: SIDE_BID,
+    qtyBase: 0x0102_0304_0506_0708n,
+    quote: 990_000n,
+    price: 99_000_000n,
+    fee: 0n,
+  };
+
+  it('is 73 bytes, not the 81 the old §5bis layout produced', () => {
+    expect(FILL_LEAF_LEN).toBe(73);
+    expect(8 + 8 + 32 + 1 + 8 + 8 + 8).toBe(73);
+    expect(encodeFillLeaf(sample).length).toBe(73);
+    // The old layout was u64 ‖ address ‖ u8 side ‖ u128 price ‖ u64 ‖ u64 ‖ u64 = 81. While
+    // that stood, no root comparison against Move could ever have succeeded.
+    expect(FILL_LEAF_LEN).not.toBe(8 + 32 + 1 + 16 + 8 + 8 + 8);
+  });
+
+  /**
+   * Built BY HAND from the BCS rules, field by field, so this cannot pass by agreeing with a
+   * mistake in `encodeFillLeaf`. It is the exact twin of the Rust `matches_a_hand_built_preimage`
+   * vector in clearing-rs/clearing/src/bcs.rs.
+   */
+  it('matches a hand-built pre-image, field by field', () => {
+    const want = [
+      // batch_id: u64 = 1, LITTLE-endian.
+      0x01, 0, 0, 0, 0, 0, 0, 0,
+      // order_index: u64 = 2, LITTLE-endian.
+      0x02, 0, 0, 0, 0, 0, 0, 0,
+      // submitter: @0xb0b — 32 bytes, BIG-endian, right-aligned.
+      ...new Array<number>(30).fill(0), 0x0b, 0x0b,
+      // is_bid: SIDE_BID ⇒ the BOOL true ⇒ 0x01, even though SIDE_BID is the number 0.
+      0x01,
+      // base_sats: 0x0102030405060708 reversed by the little-endian rule.
+      0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01,
+      // quote_sats: 990_000 = 0x0F1B30.
+      0x30, 0x1b, 0x0f, 0, 0, 0, 0, 0,
+      // price: 99_000_000 = 0x05E69EC0.
+      0xc0, 0x9e, 0xe6, 0x05, 0, 0, 0, 0,
+    ];
+    expect(want.length).toBe(73);
+    expect([...encodeFillLeaf(sample)]).toEqual(want);
+  });
+
+  it('writes the BOOL is_bid, so a BID is 0x01 and an ASK is 0x00', () => {
+    // The inversion trap: SIDE_BID is 0 but the leaf byte is 1. Writing `side` into that byte
+    // would flip every leaf in the tree with nothing red anywhere.
+    expect(encodeFillLeaf(sample)[48]).toBe(0x01);
+    expect(encodeFillLeaf({ ...sample, side: SIDE_ASK })[48]).toBe(0x00);
+    expect(SIDE_BID).toBe(0);
+  });
+});
+
 describe('the fills root', () => {
+  const base: Fill = {
+    batchId: 3n,
+    index: 1,
+    submitter: '0x1',
+    side: SIDE_BID,
+    qtyBase: 2n,
+    quote: 3n,
+    price: 10n,
+    fee: 0n,
+  };
+
   it('is 32 zero bytes for an empty fill set', () => {
     expect(toHex(fillsRoot([]))).toBe(toHex(ZERO32));
   });
 
-  it('hashes 0x00 || bcs(FillLeaf) and roots with odd-node duplication', () => {
-    const fill = {
-      index: 7,
-      submitter: '0x2a',
-      side: SIDE_ASK,
-      price: 10_000_000_000n,
-      qtyBase: 100n,
-      quote: 1000n,
-      fee: 3n,
-    };
-    const leaf = encodeFillLeaf(fill);
-    expect(leaf.length).toBe(8 + 32 + 1 + 16 + 8 + 8 + 8);
-    expect(toHex(hashFillLeaf(fill))).toBe(toHex(hashLeafBytes(leaf)));
-    expect(toHex(fillsRoot([fill, fill, fill]))).toBe(
-      toHex(binaryRootDuplicatingOdd([fill, fill, fill].map(hashFillLeaf))),
-    );
+  it('hashes 0x00 || bcs(Fill) and roots with odd-node duplication', () => {
+    const three = [base, base, base];
+    expect(toHex(hashFillLeaf(base))).toBe(toHex(hashLeafBytes(encodeFillLeaf(base))));
+    expect(toHex(fillsRoot(three))).toBe(toHex(binaryRootDuplicatingOdd(three.map(hashFillLeaf))));
   });
 
-  it('changes when ANY field of ANY fill changes', () => {
-    const base = {
-      index: 1,
-      submitter: '0x1',
-      side: SIDE_BID,
-      price: 10n,
-      qtyBase: 2n,
-      quote: 3n,
-      fee: 0n,
-    };
+  it('changes when ANY COMMITTED field of ANY fill changes', () => {
     const root = toHex(fillsRoot([base]));
+    expect(toHex(fillsRoot([{ ...base, batchId: 4n }]))).not.toBe(root);
     expect(toHex(fillsRoot([{ ...base, index: 2 }]))).not.toBe(root);
     expect(toHex(fillsRoot([{ ...base, submitter: '0x2' }]))).not.toBe(root);
     expect(toHex(fillsRoot([{ ...base, side: SIDE_ASK }]))).not.toBe(root);
     expect(toHex(fillsRoot([{ ...base, price: 11n }]))).not.toBe(root);
     expect(toHex(fillsRoot([{ ...base, qtyBase: 3n }]))).not.toBe(root);
     expect(toHex(fillsRoot([{ ...base, quote: 4n }]))).not.toBe(root);
-    expect(toHex(fillsRoot([{ ...base, fee: 1n }]))).not.toBe(root);
+  });
+
+  /**
+   * ⚠ Stated as a positive claim rather than left as an absence: `fee` is NOT committed, because
+   * `aphotic::clearing::Fill` has no fee field and the struct is frozen by the `compatible`
+   * upgrade policy. The old 81-byte leaf DID commit to it, and asserting the old direction here
+   * is what would silently reintroduce the divergence.
+   */
+  it('does NOT change when the un-committed `fee` changes', () => {
+    expect(toHex(fillsRoot([{ ...base, fee: 1n }]))).toBe(toHex(fillsRoot([base])));
   });
 
   it('is order-sensitive — the canonical order is part of the commitment', () => {
-    const a = { index: 1, submitter: '0x1', side: SIDE_BID, price: 10n, qtyBase: 1n, quote: 1n, fee: 0n };
-    const b = { ...a, index: 2 };
-    expect(toHex(fillsRoot([a, b]))).not.toBe(toHex(fillsRoot([b, a])));
+    const b = { ...base, index: 2 };
+    expect(toHex(fillsRoot([base, b]))).not.toBe(toHex(fillsRoot([b, base])));
   });
 });
 

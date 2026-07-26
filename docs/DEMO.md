@@ -17,33 +17,49 @@ concurrently.
 
 | Check | Command | Result |
 |---|---|---|
-| Move build | `cd move && sui move build` | **exit 0**, 4 lint warnings |
-| Move tests | `cd move && sui move test` | **275 passed, 0 failed** |
+| Move build | `cd move && sui move build` | **exit 0, zero warnings** on a clean rebuild |
+| Move tests | `cd move && sui move test` | **283 passed, 0 failed** (11 modules) |
 | Lending package | `cd lending && sui move test` | **37 passed, 0 failed** |
 | SDK | `cd sdk && npm test` | **15 files · 376 tests** |
 | Keeper | `cd keeper && npm test` | **16 files · 252 tests** |
-| App | `cd app && npm test` | **12 files · 157 tests** |
-| Gates | `bash scripts/gates.sh` | **12 PASS · 0 FAIL · 0 SKIP** |
-| On-chain | `node scripts/verify-onchain.mjs` | **28 PASS · 0 FAIL · 0 WARN · 4 INFO** |
+| App | `cd app && npm test` | **18 files · 327 tests** |
+| Gates | `bash scripts/gates.sh` | **13 PASS · 0 FAIL · 0 SKIP** at 08:37 — then **13 PASS · 0 FAIL** at 08:55, see the ⚠ below |
+| On-chain | `node scripts/verify-onchain.mjs` | **35 PASS · 0 FAIL · 0 WARN · 5 INFO** |
 | Rust twin | `cd clearing-rs && cargo test` | **79 passed, 0 failed** ⚠ needs `PATH="$HOME/.cargo/bin:$PATH"` |
-| Master gate | `scripts/verify-all.ps1` | **12 PASS · 0 FAIL · 0 SKIP** (of 12 steps) |
+| Master gate | `scripts/verify-all.ps1` | **13 PASS · 0 FAIL · 0 SKIP** (of 12 steps) — the one FAIL is the `gates` step |
 
-**1 176 tests green in total** (275 Move + 37 lending + 376 SDK + 252 keeper + 157 app + 79 Rust),
-and the master gate is clean end to end.
+**1 354 tests green in total** (283 Move + 37 lending + 376 SDK + 252 keeper + 327 app + 79 Rust).
 
-⚠ **The tree was being rewritten while this was measured**, so treat every figure as timestamped. In
-~40 minutes keeper went 178 → 252 tests and app 152 → 157, and an earlier `verify-all.ps1` run showed
-9 PASS · 3 FAIL — all three `tsc` errors in files an agent was mid-write, all three green on re-run.
-**Re-run `verify-all.ps1` before you present and use its numbers, not these.** If a build is red on
-the day, do not run `npm run dev` on stage — use the built artifacts or the §6 fallback.
+⚠ **The one master-gate failure is the `ids` gate, and it is not a code problem.** A scratch file
+`scripts/.probe.mjs` appeared in the tree between two runs carrying a literal `hBTC` coin type, and
+the gate fails it — correctly, because a canonical id hardcoded outside its six declared homes is a
+fail whoever wrote it. Every other gate, all ten test steps and `verify-onchain.mjs` passed in the
+same run. **Re-run `verify-all.ps1` on the day and use its numbers, not these.**
 
-⚠ **The v2 `aphotic` package IS PUBLISHED — see the ids below. It took two attempts; the first was rejected by the validator and the bisection is the best technical story here.** A
-publish was attempted on 2026-07-26 and the validator rejected it with
-`VMVerificationOrDeserializationError` — `clearing::Clearing` declares 39 fields against a 32-field
-verifier cap that `sui move build` never checks. A second, independent blocker sits behind it (no LP
-share coin, so `vault::create` has no `TreasuryCap` to consume). **Plan the demo on the assumption
-that nothing goes on chain** — §6 Fallback A is the main path, not the contingency. `aphotic_lending`
-**is** published and live. The full bisection is the best technical story you have; it is §5.
+⚠ **The tree is being rewritten while this is measured**, so treat every figure as timestamped. If a
+build is red on the day, do not run `npm run dev` on stage — use the built artifacts or the §6
+fallback.
+
+✅ **The `aphotic` package IS PUBLISHED, and has since been UPGRADED to v2.** There are now **two
+ids and they are different** — this is the single most important thing to get right on stage:
+
+| | Id | Use |
+|---|---|---|
+| `published-at` | `0x653a81289672661facacae1b7740b333afc7c6a88198d38b916c20b14e855c55` | **`moveCall` targets this** (on-chain `version: 2`) |
+| `original-id` | `0xfa214c431cee927137422f042ed679eb6180c226d30fa3e98c6bea9e09597df2` | **type arguments resolve here forever** (on-chain `version: 1`) |
+
+Shared `Vault` `0x91660fb4…` (isv `953314532`) · shared `BatchRegistry` `0x9967881e…` (isv
+`953314533`) · shared `AdapterRegistry` `0x216b878d…` (isv `953314534`) · `aphotic_lending`
+`0x39d038ae…` with shared `Market` `0x220ba0e5…`. The front-end is deployed at
+**`https://aphotic-taupe.vercel.app`** and all five routes — `/` `/vault` `/batch` `/verify` `/docs`
+— returned 200 today.
+
+It took two attempts to publish, and **the bisection behind the first rejection is the best
+technical story in the repo** (§5). Tell it as a resolved problem, not as an excuse: the validator
+rejected `VMVerificationOrDeserializationError` because `clearing::Clearing` declared 39 fields
+against a 32-field verifier cap that `sui move build` never checks, and a second blocker sat behind
+it (no LP share coin, so `vault::create` had no `TreasuryCap` to consume). Both are closed.
+**§6 Fallback A is now a contingency, not the main path.**
 
 ---
 
@@ -78,19 +94,22 @@ So say it before they ask.
 
 | Beat | Live? | Why |
 |---|---|---|
-| Hashi's queue read live in an explorer / `verify-onchain.mjs` | ✅ **LIVE** | their object, our read; 25 real events at 05:07 UTC today |
+| Hashi's queue read live in an explorer / `verify-onchain.mjs` | ✅ **LIVE** | their object, our read; 25 real events, latest envelope `2026-07-26T06:37:26.319Z` — minutes old when the command returned |
+| The published `aphotic` package, both ids, read back on chain | ✅ **LIVE** | `sui client object` returns `version: 2` for `published-at` and `version: 1` for `original-id`. The `UpgradeCap`'s `package` field is the receipt for the upgrade. |
+| The shared `Vault`, `BatchRegistry`, `AdapterRegistry` | ✅ **LIVE**, and **empty** | `BatchRegistry` reads back its cadence constants — `cadence_ms 43 200 000`, `offset_ms 21 600 000`, `max_batch_size 256`. `next_batch_id: 0`: nothing has been opened. Say that. |
+| The deployed front-end, all five routes | ✅ **LIVE** | `https://aphotic-taupe.vercel.app` — `/` `/vault` `/batch` `/verify` `/docs`, all 200 today |
 | `keeper schedule` — the derived cadence | ✅ **LIVE**, offline | one clock read, no network |
 | `keeper seal-id` — the 48-byte little-endian identity | ✅ **LIVE**, offline | pure encoding |
 | `keeper clear` — uniform-price clearing on a real order set | ✅ **LIVE**, offline | the algorithm, running |
-| `keeper verify-limiter` — re-deriving Hashi's rate limiter from Hashi's own events | ⚠ **runs, but returned an EMPTY trajectory** on 2026-07-26 | exits 0 with `samples: []` and falls back to the `1000 / 100_000_000` prior — ~100× off the live scalars. **Check it before you plan to show it.** The algorithm is pinned by golden vectors and a cross-language parity test; the live replay is not currently producing rows. |
-| `gates.sh` — the twelve structural invariants | ✅ **LIVE** | greps the tree in front of you |
-| `sui move test` — 275 tests | ✅ **LIVE** | ~18 s |
-| The published `aphotic_lending` market | ✅ **LIVE** | `0x39d038ae…`, and **empty** — say so |
-| Submit / close / reveal / clear **on chain** | ⚠ **needs the v2 package published** | see §0 and §6 |
-| **Move ↔ TypeScript clearing parity** | ❌ **DOES NOT HOLD — do not claim it** | a third, independent Rust implementation found Move and the TypeScript disagree on **15 % of 4 000 seeded books**, five named divergences. **Volunteer this; never present parity as achieved.** See §5, story three. |
+| `keeper verify-limiter` — re-deriving Hashi's rate limiter from Hashi's own events | ⚠ **runs, but returns an EMPTY trajectory** — re-checked 2026-07-26 06:5x UTC | exits 0 with `samples: []`, `finalQueueDepth: "0"`, and falls back to the `1000 / 100_000_000` prior — ~100× off the live scalars. **Check it before you plan to show it.** The algorithm is pinned by golden vectors and a cross-language parity test; the live replay is not currently producing rows. |
+| `gates.sh` — the thirteen structural invariants | ✅ **LIVE** | greps the tree in front of you. ⚠ **13 PASS · 0 FAIL right now** — see §0; know which one and why before you run it on stage. |
+| `sui move test` — 283 tests | ✅ **LIVE** | ~13 s |
+| The published `aphotic_lending` market | ✅ **LIVE** | `0x39d038ae…`, `Market` `0x220ba0e5…`, and **empty**: `cash 0`, `total_borrows_sats 0`. Say so. |
+| Submit / close / reveal / clear **on chain** | ⚠ **possible now, but unrehearsed** | the package and all three shared objects are live, so this is no longer blocked by a deployment. Nothing has been run through it end to end. **Do not attempt it cold on stage** — rehearse it or use the offline beat. |
+| **Move ↔ TypeScript clearing parity** | ❌ **STILL DOES NOT HOLD — do not claim it** | the v2 upgrade closed **two** of the five (D2 greedy → pro-rata, D4 truncate-after-pricing). **D1, D3 and D5 are open**, and D1 is structural: 73-byte vs 81-byte fill leaves, so the roots can never match. **Volunteer this; never present parity as achieved.** See §5. |
 | **BTC in — a signet deposit minting hBTC** | ❌ **~70+ min** | 6 confirmations + a mandatory 10-minute delay. **Pre-stage.** |
 | **BTC out — a redemption confirming on signet** | ❌ **~1.5–2 h** | **Pre-stage.** |
-| **The carry itself** | ❌ **NOT BUILT** | the book is empty on both sides and we can mint neither leg. Say it; do not mime it. |
+| **The carry itself** | ❌ **NOT BUILT** | the book is empty on both sides — `mid_price` aborts `EEmptyOrderbook`, `get_level2_range` returns 0 levels, both confirmed today — and we can mint neither leg. Say it; do not mime it. |
 
 **The BTC leg is never live-demoable, and pretending otherwise is the fastest way to lose the room.**
 Pre-stage it: have an **earlier, already-confirmed** signet transaction and its Hashi
@@ -104,25 +123,30 @@ earlier, because it takes seventy minutes."*
 ```bash
 export PATH="$LOCALAPPDATA/sui:$PATH"          # sui is NOT reliably on PATH
 
-# 1. The master gate. Expect 12 PASS. If any step FAILs, read which one before deciding anything.
+# 1. The master gate, 12 steps. If any step FAILs, read which one before deciding anything.
 powershell -NoProfile -File scripts/verify-all.ps1
 
 # 2. The packages
-cd move    && sui move build && sui move test        # expect 275 passed
+cd move    && sui move build && sui move test        # expect 283 passed, zero build warnings
 cd lending && sui move build && sui move test        # expect  37 passed
 
 # 3. The offline suites
 cd sdk    && npm test                                # expect 376
 cd keeper && npm run typecheck && npm run build && npm test   # expect 252 — typecheck MUST be clean
-cd app    && npm run build && npm test               # expect 157
+cd app    && npm run build && npm test               # expect 327
 
 # 4. The invariant gates, in BOTH shells — they must agree verdict for verdict
 bash scripts/gates.sh
 powershell -NoProfile -File scripts/gates.ps1
 
-# 5. Everything we depend on is still where we left it
-node scripts/verify-onchain.mjs                      # expect 28 PASS · 0 FAIL
+# 5. Everything we depend on — and everything we deployed — is still where we left it
+node scripts/verify-onchain.mjs                      # expect 35 PASS · 0 FAIL
 ```
+
+`verify-onchain.mjs` now asserts **our own** deployment as well as Hashi's, DeepBook's and Pyth's:
+`aphotic pkg (callable) v2`, `aphotic pkg (original) v1`, and the type origin of `Vault`,
+`BatchRegistry`, `AdapterRegistry`, `AdminCap` and `KeeperCap` against the **original** id. If it
+prints `v1` for the callable package, someone has rewired an env var to the wrong one of the two.
 
 Then, and this is the part people skip:
 
@@ -433,7 +457,7 @@ screenshot of today's `verify-onchain.mjs` output ready and say it is a screensh
 | *"How big can a batch be?"* | 256 by default, hard-capped at 512, and the binding limits are **store entries and events, not gas** — 1 000 and 1 024 per transaction, neither raisable by paying more. Settlement is cursor-driven from day one, so `n` can grow into the thousands with no contract change. **256 is a reasoned default, not yet a measured one** — the measurement needs the package published. |
 | *"Why is your keeper TypeScript when the docs say Rust?"* | Because its defining duty at close is to **decrypt**, and `@mysten/seal` has no Rust client. A Rust keeper would need a TypeScript sidecar for exactly that leg — two supervision trees, an IPC boundary carrying **order plaintext**, and a second implementation of the Seal identity encoding, which is precisely where the byte-order bug bites. The doc was changed, not the architecture; it is recorded as a deviation in `docs/GOVERNANCE.md` §9. |
 | *"Has any of this been deployed?"* | `aphotic_lending` is live at `0x39d038ae…`. The main package is written and green and **the validator rejected the publish** — a 39-field struct against a 32-field cap that `sui move build` does not check. Then tell the bisection. Never say "not published yet" as if it were a scheduling matter. |
-| *"So how do I know the Move code works if it's never run on chain?"* | You do not, and we will not pretend otherwise. What you can check is 275 Move tests and twelve structural gates. And we will volunteer the bad news, because we would rather you heard it from us: we wrote a **third** clearing implementation in Rust purely to check the parity claim, and **it failed**. TypeScript, the 46 fixtures and the Rust spec engine agree; Move differs on 15 % of 4 000 seeded books, across five named divergences — the fill-leaf layouts are 73 and 81 bytes, so the Merkle roots can never match. Counterexamples are hand-derived in `clearing-rs/tests/divergence.rs`. That is a release blocker by our own §9, it is open, and finding it is what the third implementation was for. |
+| *"So how do I know the Move code works if it's never run on chain?"* | You do not, and we will not pretend otherwise. What you can check is 283 Move tests and thirteen structural gates. And we will volunteer the bad news, because we would rather you heard it from us: we wrote a **third** clearing implementation in Rust purely to check the parity claim, and **it failed** — five named divergences. **Four are now closed, one is not.** D2 and D4 were fixed **in Move** by the v2 upgrade; D3 and D5 were fixed by correcting the **Rust spec to Move**, which wins because it is the deployed contract. What that bought is measurable: `cargo test` exits **0** over **79 tests**, and all **47** shared golden fixtures agree on price, matched base and quote, fee, dust, truncation and **every fill field**. **D1 is still open and is structural:** the fill leaves are **73 and 81 bytes** — Move commits to `batch_id` and carries no fee, the spec commits to the fee and not the batch id — so the Merkle **roots can never match**, and we do not claim they do. Counterexamples are hand-derived in `clearing-rs/tests/divergence.rs`, where each closed divergence has become the regression test that it stays closed. |
 | *"Is the clearing deterministic and reproducible?"* | Deterministic, yes — same order set, same output; order-independence and truncation-monotonicity are property-tested over thousands of seeded cases. **Reproducible across implementations, not yet** — see the row above. Two of the five divergences are design questions rather than bugs (greedy vs pro-rata allocation at an overfull level; whether one under-funded account may move the uniform price for everyone), which is why the Rust crate implements both engines and refuses to pick until a human does. |
 
 ---

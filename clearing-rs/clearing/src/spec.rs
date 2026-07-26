@@ -503,6 +503,19 @@ pub fn clear(input: &ClearingInput) -> Result<ClearingResult, SpecError> {
         return Err(SpecError::BadFeeBps(input.fee_matched_bps));
     }
 
+    // ⚠ A PRICE MOVE CANNOT HOLD IS REJECTED AT THE DOOR — this is D5.
+    //
+    // `limit_price` is a u128 in this spec but a **u64** in `clearing.move`, because a
+    // Move `Order` stores `limit_price: u64`. A book carrying a price above u64::MAX is
+    // therefore not a book Move can express, and clearing it here would produce a
+    // confident result for a batch that could never exist on chain — the worst possible
+    // output, since it looks like agreement. Move rejects it at submit; so does this.
+    for o in &input.orders {
+        if o.limit_price > u64::MAX as u128 {
+            return Err(SpecError::NotAU64("limitPrice", U256::from_u128(o.limit_price)));
+        }
+    }
+
     let orders = validate(&input.orders)?;
     let discovery = discover_price(&orders);
 
@@ -652,24 +665,32 @@ pub fn clear(input: &ClearingInput) -> Result<ClearingResult, SpecError> {
         matched_quote_wide = matched_quote_wide
             .checked_add(&q)
             .ok_or(SpecError::NotAU64("matchedQuote", U256::ZERO))?;
-        // Each individual quote must fit a u64 Balance, and so must their sum. The sum is
-        // checked below; checking each one here would report the wrong field name.
-        ask_quotes.push(q.checked_to_u64().unwrap_or(u64::MAX));
+        // ⚠ EACH FILL'S QUOTE IS CHECKED **HERE**, BEFORE THE SUM. Move stores a
+        // per-fill `quote_sats: u64`, so it aborts on the FILL that does not fit and
+        // never reaches an aggregate. Clamping to u64::MAX and letting the sum fail
+        // later reported `matchedQuote` for what is really a single overflowing fill —
+        // a true failure with the wrong cause, which is the hardest kind to debug.
+        ask_quotes.push(to_u64(q, "fillQuote")?);
     }
     let matched_quote = to_u64(matched_quote_wide, "matchedQuote")?;
 
-    let fee_quote = to_u64(
-        mul_div_floor(matched_quote as u128, input.fee_matched_bps, BPS_DENOM)
-            .expect("BPS_DENOM != 0"),
-        "feeQuote",
-    )?;
-    let fee_shares = if fee_quote == 0 {
-        vec![0u64; ask_quotes.len()]
-    } else {
-        largest_remainder(fee_quote, &ask_quotes).ok_or_else(|| {
-            SpecError::ValueNotPreserved(format!("fee {fee_quote} exceeds Σ ask quote"))
-        })?
-    };
+    // ⚠ THE FEE IS CHARGED PER ASK ON ITS OWN GROSS — it is NOT a batch total
+    // apportioned across the asks by largest remainder.
+    //
+    // This was divergence D3. The two rules agree only when every gross divides
+    // evenly; otherwise `floor(Σgross · bps)` and `Σ floor(gross_i · bps)` differ by
+    // the dropped remainders, and every fill leaf downstream hashes differently, so
+    // the Merkle roots can never match. `clearing.move` computes each ask's fee from
+    // that ask's own gross, and Move is the authority here — it is the deployed
+    // contract. Pinned by the fixture case `fee-charged-per-ask-on-its-own-gross`.
+    let mut fee_of_ask: Vec<u64> = Vec::with_capacity(ask_quotes.len());
+    for gross in &ask_quotes {
+        fee_of_ask.push(to_u64(
+            mul_div_floor(*gross as u128, input.fee_matched_bps, BPS_DENOM)
+                .expect("BPS_DENOM != 0"),
+            "fillFee",
+        )?);
+    }
 
     let mut fills: Vec<Fill> = Vec::new();
     let mut bid_quote_total = U256::ZERO;
@@ -706,9 +727,9 @@ pub fn clear(input: &ClearingInput) -> Result<ClearingResult, SpecError> {
         if p < s.order.limit_price {
             return Err(SpecError::FillOutsideLimit(s.order.index));
         }
-        let quote = ask_quotes[i];
-        let fee = fee_shares[i];
-        if fee > quote {
+        let gross = ask_quotes[i];
+        let fee = fee_of_ask[i];
+        if fee > gross {
             return Err(SpecError::FeeExceedsProceeds(s.order.index));
         }
         fee_total += fee as u128;
@@ -718,30 +739,43 @@ pub fn clear(input: &ClearingInput) -> Result<ClearingResult, SpecError> {
             side: SIDE_ASK,
             price: p,
             qty_base: s.qty,
-            quote,
+            // ⚠ THE PUBLISHED `quote` OF AN ASK IS **NET** OF ITS FEE. The gross is
+            // `quote + fee`. Move writes the net figure into the fill leaf, so
+            // publishing the gross here changes the leaf bytes and therefore the
+            // root. At the 10 000 bps boundary the net is legitimately 0.
+            quote: gross - fee,
             fee,
         });
     }
     let bid_quote_total = to_u64(bid_quote_total, "bidQuoteTotal")?;
-    if fee_total != fee_quote as u128 {
-        return Err(SpecError::ValueNotPreserved(format!(
-            "apportioned fee {fee_total} != {fee_quote}"
-        )));
-    }
+
     // @invariant 4 — rounding both sides toward the vault makes this non-negative.
     let dust_quote = bid_quote_total
         .checked_sub(matched_quote)
         .ok_or_else(|| SpecError::ValueNotPreserved("negative dust".into()))?;
 
-    // @invariant 3 — the §5 identity, asserted rather than assumed.
+    // ⚠ MOVE'S FEE IS THE RESIDUAL, AND IT ABSORBS THE DUST. There is no fourth
+    // term in the identity: the bids pay `bid_quote_total`, the asks are credited
+    // their NET quotes, and whatever is left over IS the fee — rounding crumbs
+    // included. So the identity to assert is `Σ fill.fee + dustQuote == feeQuote`,
+    // never `Σ fill.fee == feeQuote`. Deriving it the other way round (fee first,
+    // dust as a separate leftover) is what made this implementation disagree.
+    let fee_quote = to_u64(
+        U256::from_u128(fee_total + dust_quote as u128),
+        "feeQuote",
+    )?;
+
+    // @invariant 3 — the §5 identity, asserted rather than assumed. An ask's
+    // published `quote` is ALREADY NET, so its credit is `f.quote` itself; the
+    // earlier `f.quote - f.fee` here double-subtracted the fee.
     let credits: u128 = fills
         .iter()
         .filter(|f| f.side == SIDE_ASK)
-        .map(|f| (f.quote - f.fee) as u128)
+        .map(|f| f.quote as u128)
         .sum();
-    if bid_quote_total as u128 != credits + fee_quote as u128 + dust_quote as u128 {
+    if bid_quote_total as u128 != credits + fee_quote as u128 {
         return Err(SpecError::ValueNotPreserved(format!(
-            "quote {bid_quote_total} != {credits} + {fee_quote} + {dust_quote}"
+            "quote {bid_quote_total} != {credits} + {fee_quote}"
         )));
     }
 

@@ -177,17 +177,23 @@ fn p2_value_is_preserved() {
                         assert_eq!(f.fee, 0);
                     } else {
                         ask_base += f.qty_base as u128;
-                        credits += (f.quote - f.fee) as u128;
+                        // `quote` is ALREADY NET of the fee; the gross is quote + fee.
+                        credits += f.quote as u128;
                         fee_sum += f.fee as u128;
-                        assert!(f.fee <= f.quote, "seed {seed} iter {iter}: fee > proceeds");
                     }
                 }
                 assert_eq!(bid_base, ask_base, "seed {seed} iter {iter}: base not preserved");
                 assert_eq!(bid_base, res.matched_base as u128, "seed {seed} iter {iter}");
-                assert_eq!(fee_sum, res.fee_quote as u128, "seed {seed} iter {iter}: Σfee != feeQuote");
+                // The fee is Move's RESIDUAL and absorbs the dust — there is no
+                // fourth term, and `Σfee == feeQuote` is NOT the identity.
+                assert_eq!(
+                    fee_sum + res.dust_quote as u128,
+                    res.fee_quote as u128,
+                    "seed {seed} iter {iter}: Σfee + dust != feeQuote"
+                );
                 assert_eq!(
                     bid_quote,
-                    credits + res.fee_quote as u128 + res.dust_quote as u128,
+                    credits + res.fee_quote as u128,
                     "seed {seed} iter {iter}: quote not preserved"
                 );
                 if res.fee_quote > 0 {

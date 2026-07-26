@@ -8,7 +8,7 @@
 # @rules      G7 (the sdk/ parity run is the release gate) · G10 (edition/typing discipline)
 # @depends    scripts/gates.ps1 · scripts/verify-onchain.mjs · scripts/measure-clearing.mjs
 # @facts      12 ordered steps:
-# @facts        move build · move test · sdk typecheck · sdk test · keeper typecheck ·
+# @facts        move build · move test · normalize Move.lock · sdk typecheck · sdk test · keeper typecheck ·
 # @facts        keeper build · keeper test · clearing parity · app build · app test ·
 # @facts        gates · verify-onchain
 # @facts      ⚠ B14 (FIXED HERE): this script used to run 8 steps and NOT `cd app && npm test`,
@@ -104,6 +104,15 @@ function Invoke-Step {
 $Steps = @(
     [pscustomobject]@{ Name = 'move build'; Dir = 'move'; Command = 'sui move build'; NeedsFile = 'Move.toml'; NeedsTool = 'sui'; NpmScript = $null; NeedsTestMatching = $null }
     [pscustomobject]@{ Name = 'move test'; Dir = 'move'; Command = 'sui move test'; NeedsFile = 'Move.toml'; NeedsTool = 'sui'; NpmScript = $null; NeedsTestMatching = $null }
+    # ⚠ MUST SIT DIRECTLY AFTER THE TWO MOVE STEPS, AND BEFORE `gates`.
+    # `sui move build`/`test` on Windows REWRITE Move.lock with backslashed subdirs,
+    # which do not resolve off Windows — the package then does not build at all on
+    # macOS or Linux. So the two steps above actively corrupt a tracked file every
+    # time they run here, and the `movelock` gate below would report it forever.
+    # This repairs it in the open: it PRINTS every path it rewrites, so the damage is
+    # visible rather than silently laundered, and `gates` then verifies the repair.
+    # A lockfile committed dirty from anywhere else still fails the gate.
+    [pscustomobject]@{ Name = 'normalize Move.lock'; Dir = '.'; Command = 'node scripts\normalize-move-lock.mjs'; NeedsFile = 'scripts/normalize-move-lock.mjs'; NeedsTool = 'node'; NpmScript = $null; NeedsTestMatching = $null }
     [pscustomobject]@{ Name = 'sdk typecheck'; Dir = 'sdk'; Command = 'npm run typecheck'; NeedsFile = 'package.json'; NeedsTool = 'npm'; NpmScript = 'typecheck'; NeedsTestMatching = $null }
     [pscustomobject]@{ Name = 'sdk test'; Dir = 'sdk'; Command = 'npm test'; NeedsFile = 'package.json'; NeedsTool = 'npm'; NpmScript = 'test'; NeedsTestMatching = @('sdk', '\.test\.ts$') }
     [pscustomobject]@{ Name = 'keeper typecheck'; Dir = 'keeper'; Command = 'npm run typecheck'; NeedsFile = 'package.json'; NeedsTool = 'npm'; NpmScript = 'typecheck'; NeedsTestMatching = $null }

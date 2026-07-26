@@ -19,7 +19,9 @@
 // @implements describe('L2 property — 10 000 cases')
 // @forbidden  Math.random() · Date.now() · any I/O
 // @invariant  1. No fill outside its limit price.
-// @invariant  2. Σ debits == Σ credits + fee (+ dust), per asset.
+// @invariant  2. Σ quote debits == Σ quote credits (asks NET) + feeQuote — Move's
+//                `total_debits == total_credits`, with NO fourth term. `feeQuote` itself splits
+//                into `Σ fill.fee + dustQuote`, which is asserted separately.
 // @invariant  3. n_fills <= n_revealed.
 // @invariant  4. Re-running gives an identical (price, root).
 // @invariant  5. Truncation is monotone in the frozen balance.
@@ -29,6 +31,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   clear,
+  feeForAsk,
   PRICE_SCALE,
   quoteForAsk,
   quoteForBid,
@@ -125,6 +128,7 @@ function assertInvariants(input: ClearingInput, r: ReturnType<typeof clear>): nu
   let bidQuote = 0n;
   let askCredit = 0n;
   let feeSum = 0n;
+  let grossSum = 0n;
   const seen = new Set<number>();
 
   for (const f of r.fills) {
@@ -141,6 +145,9 @@ function assertInvariants(input: ClearingInput, r: ReturnType<typeof clear>): nu
     expect(f.qtyBase).toBeLessThanOrEqual(o!.qtyBase);
     expect(f.price).toBe(r.price);
 
+    // The leaf commits to the batch, and every fill in one clearing shares it.
+    expect(f.batchId).toBe(input.batchId ?? 0n);
+
     // INV 1: nobody is filled outside their limit price.
     if (f.side === SIDE_BID) {
       expect(f.price).toBeLessThanOrEqual(o!.limitPrice);
@@ -150,11 +157,15 @@ function assertInvariants(input: ClearingInput, r: ReturnType<typeof clear>): nu
       bidQuote += f.quote;
     } else {
       expect(f.price).toBeGreaterThanOrEqual(o!.limitPrice);
-      expect(f.quote).toBe(quoteForAsk(f.qtyBase, r.price, PRICE_SCALE));
-      expect(f.fee).toBeLessThanOrEqual(f.quote);
+      // ⚠ `quote` is the PUBLISHED value and is already NET on an ask. Asserting it equals the
+      // gross would silently reinstate the pre-D3 leaf.
+      const gross = quoteForAsk(f.qtyBase, r.price, PRICE_SCALE);
+      expect(f.fee).toBe(feeForAsk(gross, input.feeMatchedBps));
+      expect(f.quote).toBe(gross - f.fee);
       askBase += f.qtyBase;
-      askCredit += f.quote - f.fee;
+      askCredit += f.quote;
       feeSum += f.fee;
+      grossSum += gross;
     }
     expect(f.quote).toBeLessThanOrEqual(U64_MAX);
   }
@@ -163,11 +174,14 @@ function assertInvariants(input: ClearingInput, r: ReturnType<typeof clear>): nu
   expect(bidBase).toBe(askBase);
   expect(bidBase).toBe(r.matchedBase);
 
-  // INV 2, quote leg: debits == credits + fee + dust, with the fee an EXPLICIT term.
-  expect(feeSum).toBe(r.feeQuote);
+  // INV 2, quote leg: Move's `total_debits == total_credits`, the fee being one credit.
+  expect(bidQuote).toBe(r.quotePaid);
+  expect(askCredit).toBe(r.quoteRecv);
+  expect(bidQuote).toBe(askCredit + r.feeQuote);
+  // The fee credit ABSORBS the dust — one term on chain, two in the report.
   expect(r.dustQuote).toBeGreaterThanOrEqual(0n);
-  expect(bidQuote).toBe(askCredit + r.feeQuote + r.dustQuote);
-  expect(askCredit + r.feeQuote).toBe(r.matchedQuote);
+  expect(feeSum + r.dustQuote).toBe(r.feeQuote);
+  expect(grossSum).toBe(r.matchedQuote);
 
   // INV 3: n_fills <= n_revealed.
   expect(r.fills.length).toBeLessThanOrEqual(input.orders.length);

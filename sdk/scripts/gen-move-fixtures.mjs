@@ -28,6 +28,7 @@ import { clear } from '../src/clearing.ts';
 import { toHex } from '../src/hash.ts';
 import {
   buildBalances,
+  buildInput,
   buildOrders,
   loadClearingGolden,
 } from '../test/support/clearingFixtures.ts';
@@ -76,15 +77,18 @@ w('// @facts        Editing this file instead of the JSON reintroduces blocker B
 w('// @facts        copy of the clearing expectations that can drift from the TS twin.');
 w('// @facts      ASSUMED MOVE SURFACE (implement on aphotic::clearing, #[test_only]):');
 w('// @facts        public struct GoldenOutcome has drop {');
-w('// @facts            cleared: bool, price: u128, matched_base: u64, matched_quote: u64,');
+w('// @facts            cleared: bool, price: u64, matched_base: u64, matched_quote: u64,');
 w('// @facts            fee_quote: u64, dust_quote: u64, fills_root: vector<u8>,');
+w('// @facts            ⚠ fill_quote is the PUBLISHED quote_sats — an ASK\'s is NET of its own');
+w('// @facts            fee — and fill_fee is NOT a field of aphotic::clearing::Fill at all; it');
+w('// @facts            is emitted for audit. fee_quote is quote_paid − quote_recv, dust included.');
 w('// @facts            fill_index: vector<u64>, fill_side: vector<u8>, fill_qty: vector<u64>,');
 w('// @facts            fill_quote: vector<u64>, fill_fee: vector<u64>,');
 w('// @facts            matched_base_before_truncation: u64,');
 w('// @facts        }');
 w('// @facts        public fun clear_golden(');
 w('// @facts            indices: vector<u64>, submitters: vector<address>, sides: vector<u8>,');
-w('// @facts            prices: vector<u128>, qtys: vector<u64>,');
+w('// @facts            prices: vector<u64>, qtys: vector<u64>,');
 w('// @facts            has_balances: bool, bal_who: vector<address>,');
 w('// @facts            bal_base: vector<u64>, bal_quote: vector<u64>,');
 w('// @facts            fee_matched_bps: u64,');
@@ -140,7 +144,7 @@ for (const c of file.cases) {
   w(`        ${vecWrapped(indices, '', 12)},`);
   w(`        ${vecWrapped(submitters, '', 12)},`);
   w(`        ${vecWrapped(sides, 'u8', 12)},`);
-  w(`        ${vecWrapped(prices, 'u128', 12)},`);
+  w(`        ${vecWrapped(prices, '', 12)},`);
   w(`        ${vecWrapped(qtys, '', 12)},`);
   w(`        ${hasBalances},`);
   w(`        ${vecWrapped(balWho, '', 12)},`);
@@ -160,7 +164,10 @@ for (const c of file.cases) {
 
   // Recompute from the TS implementation so the emitted Move expectations can never drift
   // from the fixture the TS suite asserts.
-  const r = clear({ orders, balances, feeMatchedBps: feeBps });
+  // ⚠ THROUGH `buildInput`, so this generator clears at the FIXTURE's price scale and batch id.
+  // It used to build its own input and omit both, which silently evaluated every case at the
+  // 1e8 default while the vitest suite evaluated the same case at 1e9.
+  const r = clear(buildInput(c, file));
   const e = c.expect;
   if (toHex(r.fillsRoot) !== e.fillsRoot) {
     throw new Error(
@@ -169,7 +176,7 @@ for (const c of file.cases) {
   }
 
   w(`    assert!(clearing::golden_cleared(&outcome) == ${r.cleared}, 0);`);
-  w(`    assert!(clearing::golden_price(&outcome) == ${r.price.toString()}u128, 1);`);
+  w(`    assert!(clearing::golden_price(&outcome) == ${r.price.toString()}, 1);`);
   w(`    assert!(clearing::golden_matched_base(&outcome) == ${r.matchedBase.toString()}, 2);`);
   w(`    assert!(clearing::golden_matched_quote(&outcome) == ${r.matchedQuote.toString()}, 3);`);
   w(`    assert!(clearing::golden_fee_quote(&outcome) == ${r.feeQuote.toString()}, 4);`);

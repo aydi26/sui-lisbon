@@ -4,15 +4,21 @@
 // @status     DONE
 // @spec       docs/DESIGN-V2.md#9 L1 (ONE fixture file, read by the TS test, the Move generator
 //             and the golden regenerator — a fixture edit must update every side or fail)
+// @spec       move/sources/clearing.move (struct Fill) <- the row decoder builds a Move-shaped
+//             `Fill`: `quote` is the PUBLISHED quote (an ask's is NET of its fee) and `fee` is
+//             the un-committed audit column.
 // @rules      G5
 // @depends    ../../fixtures/clearing.golden.json · ../../src/clearing.ts
 // @facts      This is the SINGLE decoder for the compact fixture rows. If the test and the
 // @facts        generator each parsed the JSON their own way, a fixture could pass one and fail
 // @facts        the other — the same duplication B6 punished us for.
+// @facts      `batchId` is per-CASE and defaults to 0. It is the first field of every Merkle
+// @facts        leaf, so `batch-id-is-committed-to-the-leaf` sets it non-zero deliberately.
 // @implements export interface GoldenCase
 // @implements export function loadClearingGolden(): GoldenFile
 // @implements export function buildOrders(c: GoldenCase, addresses): RevealedOrder[]
 // @implements export function buildBalances(c: GoldenCase, addresses): FrozenBalance[] | undefined
+// @implements export function buildInput(c: GoldenCase, file: GoldenFile): ClearingInput
 // @implements export function expectedFills(c: GoldenCase, addresses): Fill[] | undefined
 // @forbidden  a second parser for this file anywhere
 // @verify     npx vitest run clearing.golden
@@ -23,6 +29,7 @@ import { fileURLToPath } from 'node:url';
 import {
   SIDE_ASK,
   SIDE_BID,
+  type ClearingInput,
   type Fill,
   type FrozenBalance,
   type RevealedOrder,
@@ -59,6 +66,8 @@ export interface GoldenCase {
   readonly name: string;
   readonly why: string;
   readonly feeMatchedBps: string;
+  /** `Clearing.batch_id`, the FIRST field of every leaf. Absent ⇒ 0. */
+  readonly batchId?: string;
   readonly orders?: readonly OrderRow[];
   readonly balances?: readonly BalanceRow[];
   readonly generate?: GenerateSpec;
@@ -147,7 +156,32 @@ export function buildBalances(
   }));
 }
 
-/** The hand-written expected fills, resolved into full `Fill` objects. */
+/** The batch id a case clears under — the first field of every Merkle leaf. Absent ⇒ 0. */
+export function batchIdOf(c: GoldenCase): bigint {
+  return c.batchId === undefined ? 0n : BigInt(c.batchId);
+}
+
+/** The ONE way to turn a fixture case into a `clear()` input. Never inline a second one. */
+export function buildInput(c: GoldenCase, file: GoldenFile): ClearingInput {
+  return {
+    orders: buildOrders(c, file.addresses),
+    balances: buildBalances(c, file.addresses),
+    feeMatchedBps: BigInt(c.feeMatchedBps),
+    // EXPLICIT, never inherited. A fixture that adopts whatever PRICE_SCALE happens to be
+    // re-pins the default instead of testing it — which is how a 1e9/1e8 split survived 46
+    // green cases.
+    priceScale: BigInt(file.priceScale),
+    batchId: batchIdOf(c),
+  };
+}
+
+/**
+ * The hand-written expected fills, resolved into full Move-shaped `Fill` objects.
+ *
+ * Row column 4 is the PUBLISHED `quote_sats`: a bid's debit, an ask's credit NET of its fee.
+ * Column 5 is `fee`, which is NOT in the Merkle leaf — it is the audit column that makes the
+ * ask's net hand-checkable.
+ */
 export function expectedFills(
   c: GoldenCase,
   addresses: Readonly<Record<string, string>>,
@@ -157,16 +191,18 @@ export function expectedFills(
   const orders = buildOrders(c, addresses);
   const byIndex = new Map(orders.map((o) => [o.index, o]));
   const price = BigInt(c.expect!.price);
+  const batchId = batchIdOf(c);
   return rows.map(([index, side, qty, quote, fee]) => {
     const o = byIndex.get(index);
     if (!o) throw new Error(`${c.name}: expected fill for unknown order index ${index}`);
     return {
+      batchId,
       index,
       submitter: o.submitter,
       side: asSide(side),
-      price,
       qtyBase: BigInt(qty),
       quote: BigInt(quote),
+      price,
       fee: BigInt(fee),
     };
   });

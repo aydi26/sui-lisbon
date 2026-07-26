@@ -226,9 +226,20 @@ fn the_two_engines_agree_when_no_level_is_overfull() {
 
 // ── D3 — the fee ────────────────────────────────────────────────────────────
 
-/// Move charges each ask individually and folds the rounding dust into `fee_quote`;
-/// §5bis(c) computes one aggregate and keeps `dust_quote` separate. With two asks whose
-/// individual fees each round down, the two totals part company.
+/// **D3 IS CLOSED, AND THIS CASE IS WHAT CLOSED IT.**
+///
+/// It used to assert the two implementations DISAGREED: Move charges each ask on its
+/// own gross and folds the rounding dust into `fee_quote`, while §5bis(c) computed one
+/// aggregate fee and kept `dust_quote` as a separate fourth term. With two asks whose
+/// individual fees each round down, the totals parted company — and because the fee
+/// lands in every ask's fill leaf, the Merkle roots could never match.
+///
+/// Move is the authority: it is the deployed contract and cannot be changed to suit a
+/// spec. So `spec.rs` was corrected to Move's rule — fee per ask on its own gross,
+/// published `quote` NET of it, `fee_quote` the residual that absorbs the dust. The
+/// assertions below now demand AGREEMENT, and the counterexample is kept exactly as it
+/// was: this is the book that used to break, so it is the sharpest available guard
+/// against the old rule creeping back.
 #[test]
 fn d3_the_fee_is_computed_from_a_different_base() {
     // Three sats at a price that makes ceil and floor differ, and a fee that rounds.
@@ -241,7 +252,7 @@ fn d3_the_fee_is_computed_from_a_different_base() {
 
     assert_eq!(b.mv.clearing_price as u128, b.sp.price);
     assert_eq!(b.mv.matched_base_sats, b.sp.matched_base);
-    assert_eq!(mv_alloc(&b.mv), sp_alloc(&b.sp), "the allocation agrees; only the fee differs");
+    assert_eq!(mv_alloc(&b.mv), sp_alloc(&b.sp), "the allocation agrees");
 
     // Move: fee_quote is the residual Σbid_ceil − Σask_net, so it ABSORBS the dust.
     assert_eq!(
@@ -249,19 +260,25 @@ fn d3_the_fee_is_computed_from_a_different_base() {
         b.mv.quote_paid_sats - b.mv.quote_recv_sats,
         "Move defines the fee as the residual"
     );
-    // §5bis: fee and dust are two separate terms and both are reported.
-    assert_eq!(
-        b.sp.fee_quote as u128 + b.sp.dust_quote as u128,
-        (b.mv.fee_quote_sats) as u128,
-        "the Move fee equals the spec fee PLUS the spec dust — that is exactly the difference"
-    );
+    // This book still produces dust — otherwise it would prove nothing, because the
+    // two rules agree trivially whenever nothing rounds.
     assert!(
         b.sp.dust_quote > 0,
         "this counterexample must actually produce dust, or it proves nothing"
     );
-    assert_ne!(
-        b.mv.fee_quote_sats, b.sp.fee_quote,
-        "D3 would be resolved: the two fee totals now agree"
+    // ── the closure of D3 ──
+    assert_eq!(
+        b.sp.fee_quote as u128, b.mv.fee_quote_sats as u128,
+        "D3 HAS REGRESSED: the spec fee no longer equals Move's residual"
+    );
+    // And it equals Move's residual computed from Move's OWN totals, not merely from
+    // the spec's bookkeeping — the check is worthless if both sides derive it the
+    // same way. (Move's `Fill` carries no `fee` field at all, which is D1 and is still
+    // open, so a per-fill fee comparison is not available here.)
+    assert_eq!(
+        b.sp.fee_quote as u128,
+        (b.mv.quote_paid_sats - b.mv.quote_recv_sats) as u128,
+        "the spec fee must equal Move's paid-minus-received residual"
     );
 }
 
@@ -329,7 +346,13 @@ fn d4_underfunding_moves_the_move_price_but_never_the_spec_price() {
 fn d5_a_u128_price_is_not_expressible_on_the_move_side() {
     let huge = u128::MAX;
     assert!(u64::try_from(huge).is_err(), "u128::MAX does not fit a u64");
-    // The spec engine accepts it and refuses for the right reason: the QUOTE overflows u64.
+
+    // ⚠ D5 IS CLOSED. This used to assert the spec ACCEPTED the book and then failed
+    // deep inside on `matchedQuote` overflow — a true rejection reached for the wrong
+    // reason. `clearing.move` stores `Order.limit_price: u64`, so a price above
+    // u64::MAX is not a book Move can express at all, and it is refused at SUBMIT.
+    // The spec now refuses at the same place and names the same field, so the two
+    // reject identically instead of coincidentally.
     let r = spec::clear(
         &ClearingInput::new(
             vec![
@@ -340,11 +363,26 @@ fn d5_a_u128_price_is_not_expressible_on_the_move_side() {
         )
         .with_price_scale(1_000_000_000),
     );
-    let e = r.expect_err("a u128::MAX price must overflow the quote");
+    let e = r.expect_err("a price Move cannot hold must be rejected");
     assert!(
-        e.to_string().contains("matchedQuote is not a u64"),
-        "unexpected error: {e}"
+        e.to_string().contains("limitPrice is not a u64"),
+        "D5 HAS REGRESSED — rejected, but not at the input and not by field: {e}"
     );
+
+    // And a price that DOES fit a u64 still clears, so the guard rejects only what
+    // Move cannot express rather than quietly narrowing the accepted book.
+    let ok = spec::clear(
+        &ClearingInput::new(
+            vec![
+                RevealedOrder { index: 0, submitter: a(1), side: SIDE_BID, limit_price: 10 * SCALE as u128, qty_base: 1 },
+                RevealedOrder { index: 1, submitter: a(2), side: SIDE_ASK, limit_price: 10 * SCALE as u128, qty_base: 1 },
+            ],
+            0,
+        )
+        .with_price_scale(SCALE as u128),
+    )
+    .expect("a u64 price must still clear");
+    assert!(ok.cleared, "the guard must not reject an expressible book");
 }
 
 // ── the sweep ───────────────────────────────────────────────────────────────

@@ -4,19 +4,36 @@
     "@task       T6.3",
     "@phase      3  [CUT-LINE CRITICAL]",
     "@status     DONE",
-    "@spec       docs/DESIGN-V2.md#9 L1 — the shared golden fixtures. Move and TS read THIS file.",
-    "@spec       docs/DESIGN-V2.md#5 — the algorithm each case pins.",
-    "@facts      priceScale = 1_000_000_000 (clearing.PRICE_SCALE). quote = qty * price / scale.",
-    "@facts      order  = [index, submitterKey, side, limitPrice, qtyBase]   side 0 = BID, 1 = ASK",
-    "@facts      balance= [submitterKey, base, quote]                        (the FROZEN snapshot)",
-    "@facts      fill   = [index, side, qtyBase, quote, fee]                 in CANONICAL order",
-    "@facts      Every scalar and every `fills` row below was derived BY HAND from docs/DESIGN-V2",
-    "@facts        §5 and is VERIFIED by scripts/gen-golden.mjs, which fails loudly on a mismatch.",
-    "@facts        `fillsRoot` is the one field the generator WRITES — it is a regression lock on",
-    "@facts        the hashing, not a hand computation. Cases marked \"pinned\": true also let the",
-    "@facts        generator write `fills` (256/512-order batches are not hand-writable); their",
-    "@facts        SCALARS are still hand-derived.",
-    "@forbidden  editing a `fillsRoot` by hand — regenerate it",
+    "@spec       move/sources/clearing.move — ★ THE AUTHORITY. These cases pin the DEPLOYED Move.",
+    "@spec       docs/DESIGN-V2.md#9 L1 — the shared golden fixtures. Move, TS and Rust read THIS file.",
+    "@spec       docs/DESIGN-V2.md#5ter/#5quater — the D1-D5 census these cases now close.",
+    "@facts      priceScale = 1_000_000_000, passed EXPLICITLY by every reader, so the cases pin the",
+    "@facts        algorithm SCALE-INDEPENDENCE and never re-pin clearing.PRICE_SCALE (1e8).",
+    "@facts      order   = [index, submitterKey, side, limitPrice, qtyBase]   side 0 = BID, 1 = ASK",
+    "@facts      balance = [submitterKey, base, quote]                        (the FROZEN snapshot)",
+    "@facts      fill    = [index, side, qtyBase, quote, fee]                 in CANONICAL order",
+    "@facts      batchId = the case-level Clearing.batch_id (absent => 0). It is LEAF FIELD 1, so",
+    "@facts        two identical books in two batches publish different roots.",
+    "@facts      ⚠ THE `quote` COLUMN IS THE PUBLISHED quote_sats. On a BID it is the debit (rounded",
+    "@facts        UP); on an ASK it is the credit NET of that ask fee — clearing.move stores the",
+    "@facts        NET in the leaf, never the gross.",
+    "@facts      ⚠ THE `fee` COLUMN IS floor(gross * bps / 10_000) FOR THAT ONE ASK, and it is NOT",
+    "@facts        IN THE MERKLE LEAF. Move has no fee field on `Fill`. It is the audit column that",
+    "@facts        makes the net hand-checkable: gross = quote + fee.",
+    "@facts      ⚠ feeQuote IS Move quote_paid − quote_recv, so it ABSORBS the rounding dust: a case",
+    "@facts        with dust reports feeQuote > 0 even at ZERO bps, because settle_step credits the",
+    "@facts        fee recipient exactly that residual and there is no separate dust credit on chain.",
+    "@facts        dustQuote is the REPORTED component of it (quote_paid − Σ ask gross), never a term.",
+    "@facts        matchedQuote is Σ ask GROSS = quote_recv + Σ fee.",
+    "@facts      Every scalar and every fill row below was derived BY HAND from clearing.move and is",
+    "@facts        VERIFIED by scripts/gen-golden.mjs, which fails loudly on a mismatch and also",
+    "@facts        re-derives Move fee identity so a stale fee model cannot pass as merely different.",
+    "@facts        fillsRoot is the ONE field the generator WRITES — a regression lock on the",
+    "@facts        hashing, not a hand computation. Cases marked \"pinned\" also let it write `fills`",
+    "@facts        (256/512-order batches are not hand-writable); their SCALARS stay hand-derived.",
+    "@forbidden  editing a fillsRoot by hand — regenerate it",
+    "@forbidden  \"fixing\" a scalar by copying whatever clear() emits — that turns this file from a",
+    "            check into a mirror, which is exactly how the 1e9/1e8 split survived 46 green cases",
     "@verify     node --import ./scripts/register-ts.mjs scripts/gen-golden.mjs --check",
     "@verify     npx vitest run clearing.golden"
   ],
@@ -188,7 +205,7 @@
             "0"
           ]
         ],
-        "fillsRoot": "0x4493b2a4f8eea48b7e2ab3d56574f3e2a0b7f794a9d0c1d8a5b5b24944c42afb"
+        "fillsRoot": "0x4db3154217ac17d922415774fd9b7e4e0d1f8be31a45921e6db791b14073d7d9"
       }
     },
     {
@@ -235,7 +252,7 @@
             "0"
           ]
         ],
-        "fillsRoot": "0xdfaa5d23a09a6bcd3ed263548dccd630c5e8e46e6417077aea3f595731d298ab"
+        "fillsRoot": "0x048496bac44d3c52af9b4e89aff29baa0e17bc6cb8df44e8dce1e42af69ebdb8"
       }
     },
     {
@@ -282,7 +299,7 @@
             "0"
           ]
         ],
-        "fillsRoot": "0x32590e27cf764d5010d091a63e1faf0bf6ed490253a83a8cb82659d416af335e"
+        "fillsRoot": "0x08aad2252df2aec73dd0b7753eb78d84eccd546c3a5b59c33384fa55d5ebcb33"
       }
     },
     {
@@ -329,7 +346,7 @@
             "0"
           ]
         ],
-        "fillsRoot": "0xecf9dc905111142ba3932c680b6d4933399781d3c0d0765d9c6e6a4b840e79a5"
+        "fillsRoot": "0x044b50966b53dbf9be53286b4486084f70aa66c842b7ec952b45b59886f9bd9a"
       }
     },
     {
@@ -404,7 +421,7 @@
             "0"
           ]
         ],
-        "fillsRoot": "0xf03bd423bfb2b923df17c557064a48b027fb2648d7ec4b4ff03c86ab8228b6ec"
+        "fillsRoot": "0xf8747f0f879772ad2904846189bc7000288dc3c10d1dfeca1bf41c1302e7fa2d"
       }
     },
     {
@@ -479,7 +496,7 @@
             "0"
           ]
         ],
-        "fillsRoot": "0xb4d105e0ee898b6ab22aab3ae15af203ab71848324d74b52fbc55cea4ad41080"
+        "fillsRoot": "0x68a367058a1d86a62e53eecdb05babc88cafe5c067c70c584aeb887bebc50226"
       }
     },
     {
@@ -554,7 +571,7 @@
             "0"
           ]
         ],
-        "fillsRoot": "0x688c333f8094415e508eec631b36385702ead1603a3d43e307c1a5c8b5c220c7"
+        "fillsRoot": "0x5cf6883eb9df997ab41f6717acf264e37069f1e64316074c9b94b09bb960d1ed"
       }
     },
     {
@@ -615,7 +632,7 @@
             "0"
           ]
         ],
-        "fillsRoot": "0xfd741ac4aa05380a960507d4347f92f17331654b67f4c6c4384d65427630793a"
+        "fillsRoot": "0x4d62c48fe379f1c7345eef28817ae567fc3e468eea4d2ba9e7eac726bcdf5857"
       }
     },
     {
@@ -676,7 +693,7 @@
             "0"
           ]
         ],
-        "fillsRoot": "0xd550281ffb4ab1be8924b1d8eab56863210a667a59f953568ffbb88f95da3c90"
+        "fillsRoot": "0xb3cfaf3699128c3fa5a80ac96972562db01464fc815b2a8ff25b728828e1334e"
       }
     },
     {
@@ -737,7 +754,7 @@
             "0"
           ]
         ],
-        "fillsRoot": "0xb2658deac5bd6df64f10cf83c79590bad1b64bdaa6f62e078895595ee61289e4"
+        "fillsRoot": "0xa78ac57bf9b9ed2fdf11631d22b7e347e445cc60d219cc5929ea9b5468f073fa"
       }
     },
     {
@@ -798,7 +815,7 @@
             "0"
           ]
         ],
-        "fillsRoot": "0x69b993e4e7b7119c9aabefa5bea7093ce39b946a6f71802d6c93a8f9315ce64e"
+        "fillsRoot": "0x021ed638205cfb2bd68308994ea78e6f7ea8b2c3b19806016009961b9b16720d"
       }
     },
     {
@@ -845,7 +862,7 @@
             "0"
           ]
         ],
-        "fillsRoot": "0x2e65622a6c9762348136e398993a6230bc7226cc5642ffe26cf0ed076d5e6284"
+        "fillsRoot": "0xa72bdb9def697b268a5c769133b75dd8006ff0c273b12d3c9b165d011fd1b0ec"
       }
     },
     {
@@ -934,7 +951,7 @@
             "0"
           ]
         ],
-        "fillsRoot": "0x4be45f961719a948dd5278556a255072081b4a26306eff7735d7110a04d9d234"
+        "fillsRoot": "0xb9b8d99a52759736d4288df879d8b1207c0edffbe0faf7af16e60174f4d7918b"
       }
     },
     {
@@ -995,7 +1012,7 @@
             "0"
           ]
         ],
-        "fillsRoot": "0x169cca96ee9ae7ea97accc3d654feaa7fbc4c940cda13eff662b7f22aa6ede47"
+        "fillsRoot": "0x2c3e320ead852bf6c3e79285cef3a34a0c2d8479d96d2b4aa394873eb7fcc863"
       }
     },
     {
@@ -1042,12 +1059,12 @@
             "0"
           ]
         ],
-        "fillsRoot": "0xd79a0898ccb7c6d09969b1132c345424001c0c1db2aeef6bcb32b2172e3c05a1"
+        "fillsRoot": "0x79bd02d8db7781114555d4a10781bfde7464457056c200e22384da607c830f7b"
       }
     },
     {
       "name": "fee-30-bps-on-a-single-fill",
-      "why": "fee = mul_div(40_000_000, 30, 10_000) = 120_000, charged as an EXPLICIT term on the ask fill. The seller is credited quote - fee = 39_880_000; the buyer still debits the full 40_000_000.",
+      "why": "One ask, gross 40_000_000. Move charges THAT ask floor(40_000_000*30/10_000) = 120_000 and publishes the NET 39_880_000 in the leaf; the buyer still debits the full 40_000_000. fee_quote = quote_paid - quote_recv = 120_000, with no dust to absorb.",
       "feeMatchedBps": "30",
       "orders": [
         [
@@ -1085,16 +1102,16 @@
             1,
             1,
             "1000000",
-            "40000000",
+            "39880000",
             "120000"
           ]
         ],
-        "fillsRoot": "0xba049b66dc83e39288c19161072edda4be2a0162ac8fbb622b26f6d525b8d461"
+        "fillsRoot": "0xedd49c38fa9cefa317594bc9b2b28f3e99e02062c9fa5ee59e7449f443b165e4"
       }
     },
     {
-      "name": "fee-apportioned-across-two-asks-largest-remainder",
-      "why": "matchedQuote 3500, fee = floor(3500*33/10000) = 11. Shares floor(11*1000/3500)=3 (r 500) and floor(11*2500/3500)=7 (r 3000): 10 assigned, 1 leftover to the LARGER remainder ⇒ 3 and 8. Sum is exactly 11 — the fee is never a silent shortfall.",
+      "name": "fee-charged-per-ask-on-its-own-gross",
+      "why": "Move charges each ask individually: floor(1000*33/10_000) = 3 and floor(2500*33/10_000) = 8, published NET as 997 and 2492. Sum 11. The old spec computed ONE floor(3500*33/10_000) = 11 apportioned by largest remainder, which happened to give 3/8 too — the totals coincide here and the per-ask rule is what is pinned.",
       "feeMatchedBps": "33",
       "orders": [
         [
@@ -1139,23 +1156,23 @@
             1,
             1,
             "100",
-            "1000",
+            "997",
             "3"
           ],
           [
             2,
             1,
             "250",
-            "2500",
+            "2492",
             "8"
           ]
         ],
-        "fillsRoot": "0x0230fa72b54f336e3b173d22ac7ae0fba24b2d30454f14023513652d7c2e602f"
+        "fillsRoot": "0xd196cd333357b7848d0f35cb30f200bf1a94313fe13a45a29f72b174b6593d85"
       }
     },
     {
       "name": "fee-at-the-10000-bps-boundary",
-      "why": "The maximum legal fee takes the whole matched quote; the ask's net credit is exactly 0 and never negative. Guards the apportionment against an off-by-one at the boundary.",
+      "why": "The maximum legal fee takes the whole gross, so the ask publishes a quote_sats of exactly 0 and is never negative. settle_step skips a zero credit, so the boundary is also the only case where an ask fill moves no quote at all.",
       "feeMatchedBps": "10000",
       "orders": [
         [
@@ -1193,11 +1210,11 @@
             1,
             1,
             "100",
-            "1000",
+            "0",
             "1000"
           ]
         ],
-        "fillsRoot": "0xcdf4f0db00cc30f012be772bb66dd10ee4c7c84a2fadc549c507d0e14cef3015"
+        "fillsRoot": "0x94a4d1670f6457e3d874ef5d3fc2543921403b84817ce53b997067db2c7d7ab4"
       }
     },
     {
@@ -1244,12 +1261,60 @@
             "0"
           ]
         ],
-        "fillsRoot": "0x6adaa30ee4cd280424a821cf195dec708196a4991be9356ac1fe7679f3f2c953"
+        "fillsRoot": "0x323bbbee7ea14bd21eccc7a27d287b9e5411504b571235cda8abf245fb9740ec"
       }
     },
     {
+      "name": "batch-id-is-committed-to-the-leaf",
+      "why": "Byte-for-byte the fee-zero-bps book, cleared under batch_id 7. Every scalar and every fill row is identical; only the ROOT may differ, because batch_id is the FIRST field of bcs(Fill). If the two roots ever match, the leaf has stopped committing to the batch.",
+      "feeMatchedBps": "0",
+      "orders": [
+        [
+          0,
+          "A1",
+          0,
+          "10000000000",
+          "100"
+        ],
+        [
+          1,
+          "A2",
+          1,
+          "10000000000",
+          "100"
+        ]
+      ],
+      "expect": {
+        "cleared": true,
+        "price": "10000000000",
+        "matchedBase": "100",
+        "matchedQuote": "1000",
+        "feeQuote": "0",
+        "dustQuote": "0",
+        "matchedBaseBeforeTruncation": "100",
+        "fills": [
+          [
+            0,
+            0,
+            "100",
+            "1000",
+            "0"
+          ],
+          [
+            1,
+            1,
+            "100",
+            "1000",
+            "0"
+          ]
+        ],
+        "fillsRoot": "0x4a11d802992f4c84007c91f5451adcad72212114fef8c6b93b552e85c79ff475"
+      },
+      "batchId": "7"
+    },
+    {
       "name": "rounding-toward-the-vault-creates-dust",
-      "why": "price 1 and qty 1.5e9 make the exact quote 1.5. The bid rounds UP to 2, the ask rounds DOWN to 1, and the 1-unit residual stays with the VAULT. §5.5 exists so this residual can never be negative.",
+      "why": "price 1 and qty 1.5e9 make the exact quote 1.5. The bid rounds UP to 2, the ask DOWN to 1. Move credits the 1-unit residual to the FEE RECIPIENT as part of fee_quote = quote_paid - quote_recv — there is no separate dust credit on chain, which is why feeQuote is 1 at ZERO bps.",
       "feeMatchedBps": "0",
       "orders": [
         [
@@ -1272,7 +1337,7 @@
         "price": "1",
         "matchedBase": "1500000000",
         "matchedQuote": "1",
-        "feeQuote": "0",
+        "feeQuote": "1",
         "dustQuote": "1",
         "matchedBaseBeforeTruncation": "1500000000",
         "fills": [
@@ -1291,12 +1356,12 @@
             "0"
           ]
         ],
-        "fillsRoot": "0xe986f97a7333833d346677d4bd3e56f35406dd554b14baece0ed1ad67984a08a"
+        "fillsRoot": "0x61357a09a14e908b973afcf6954d8d0e49bd1d7c79d34ca8aa3184d7f76490fd"
       }
     },
     {
       "name": "dust-across-multiple-fills-with-a-zero-fee-base",
-      "why": "Splitting the ask in two makes BOTH ask quotes floor to 0 while the bid still pays 2 — dust 2, matchedQuote 0. The fee base can legitimately be 0 on a non-empty match; the apportionment must not divide by it.",
+      "why": "Splitting the ask in two makes BOTH ask quotes floor to 0 while the bid still pays 2 — matchedQuote 0, dust 2, and fee_quote = 2 - 0 = 2 at zero bps. The fee base can legitimately be 0 on a non-empty match.",
       "feeMatchedBps": "0",
       "orders": [
         [
@@ -1326,7 +1391,7 @@
         "price": "1",
         "matchedBase": "1500000000",
         "matchedQuote": "0",
-        "feeQuote": "0",
+        "feeQuote": "2",
         "dustQuote": "2",
         "matchedBaseBeforeTruncation": "1500000000",
         "fills": [
@@ -1352,7 +1417,7 @@
             "0"
           ]
         ],
-        "fillsRoot": "0xe662424ef4195c1eba4c37ee7917c8261dab64d3e8391967baf32ee75f4d2dab"
+        "fillsRoot": "0x1079d6fe1a20d6051987cfb32e63b8be76fb2f58a70d4738fc481114e7e461e4"
       }
     },
     {
@@ -1411,7 +1476,7 @@
             "0"
           ]
         ],
-        "fillsRoot": "0x8b027619427edb79a3351ee1c7afa5cc98b1e37ed7fc6f9d78daeea796d451be"
+        "fillsRoot": "0xa3732fafe663a39dafacc8a942e13346fb0cdfacf085ee84663fe65a2f546d26"
       }
     },
     {
@@ -1470,7 +1535,7 @@
             "0"
           ]
         ],
-        "fillsRoot": "0x44a41d37c910800a68b4398cf2e4b3870aacf02e6f88084e6671a10132fad4d2"
+        "fillsRoot": "0xd864381eb42f3e3bdda789db8d340968f8f23f314b8b2b4f028e58d7161485e0"
       }
     },
     {
@@ -1543,7 +1608,7 @@
             "0"
           ]
         ],
-        "fillsRoot": "0x48d90c1768059f5fada8566d8a1a98b7f574a03f3c38f3cbb07a25025d7a7fd2"
+        "fillsRoot": "0x90e5dd7518623a90ff67ac23aff65c8a937cc5bb139b8d0595ab09403b9c71bc"
       }
     },
     {
@@ -1673,12 +1738,12 @@
             "0"
           ]
         ],
-        "fillsRoot": "0x6adaa30ee4cd280424a821cf195dec708196a4991be9356ac1fe7679f3f2c953"
+        "fillsRoot": "0x323bbbee7ea14bd21eccc7a27d287b9e5411504b571235cda8abf245fb9740ec"
       }
     },
     {
       "name": "u64-boundary-quantity-on-one-side",
-      "why": "A bid of u64::MAX against an ask of 1000. Every cumulative sum stays a bigint; matched is 1000. Also produces dust: ceil(1000/1e9) = 1 vs floor = 0.",
+      "why": "A bid of u64::MAX against an ask of 1000; matched is 1000. ceil(1000/1e9) = 1 vs floor = 0, so the whole quote leg is the 1-unit dust, and fee_quote = 1 - 0 = 1 at zero bps.",
       "feeMatchedBps": "0",
       "orders": [
         [
@@ -1701,7 +1766,7 @@
         "price": "1",
         "matchedBase": "1000",
         "matchedQuote": "0",
-        "feeQuote": "0",
+        "feeQuote": "1",
         "dustQuote": "1",
         "matchedBaseBeforeTruncation": "1000",
         "fills": [
@@ -1720,7 +1785,7 @@
             "0"
           ]
         ],
-        "fillsRoot": "0xbb343dc4084e250aad86e018a863a129ff0ddde24016f62d293952e6bfda010c"
+        "fillsRoot": "0xd0394f2db86dbd2053fb3c19939674f55b932abd2b87fe9b276c1bca00069bdc"
       }
     },
     {
@@ -1767,12 +1832,12 @@
             "0"
           ]
         ],
-        "fillsRoot": "0xe0a04c0b67b6be991aeaf29f3ff7a240209dbe688d4676825afb6df0abdbedc5"
+        "fillsRoot": "0xbf61751b1372cb886b842171f65531480984ad2a939925fdf9f7f59b3c5f6842"
       }
     },
     {
       "name": "u64-boundary-quantity-both-sides-quote-overflows",
-      "why": "One tick above the previous case the quote no longer fits a u64 Balance. It must ABORT, loudly, not wrap — Move would abort on the same widening.",
+      "why": "One tick above the exact-fit case the quote no longer fits a u64 Balance. Move aborts inside ceil_mul_div (EOverflow) on the FIRST fill it roots, not on a sum — so the guard that fires is the per-fill one.",
       "feeMatchedBps": "0",
       "orders": [
         [
@@ -1790,11 +1855,11 @@
           "18446744073709551615"
         ]
       ],
-      "expectThrow": "matchedQuote is not a u64"
+      "expectThrow": "fillQuote is not a u64"
     },
     {
-      "name": "u128-boundary-price-no-cross",
-      "why": "An ask at u128::MAX is accepted and simply never crosses. Pins that a u128 price round-trips through discovery without overflow.",
+      "name": "u128-price-rejected-move-holds-a-u64",
+      "why": "This case used to assert that a u128 price round-trips through discovery. It does not exist on chain: aphotic::clearing holds limit_price in a u64, so a u128 price is rejected at validation rather than accepted into a book the settlement layer cannot represent.",
       "feeMatchedBps": "0",
       "orders": [
         [
@@ -1812,85 +1877,75 @@
           "1"
         ]
       ],
-      "expect": {
-        "cleared": false,
-        "price": "0",
-        "matchedBase": "0",
-        "matchedQuote": "0",
-        "feeQuote": "0",
-        "dustQuote": "0",
-        "matchedBaseBeforeTruncation": "0",
-        "fills": [],
-        "fillsRoot": "0x0000000000000000000000000000000000000000000000000000000000000000"
-      }
+      "expectThrow": "limitPrice is not a u64"
     },
     {
-      "name": "u128-max-price-crossing-overflows-quote",
-      "why": "Both sides at u128::MAX DO cross, and the resulting quote is ~3.4e29 — far outside u64. Abort.",
+      "name": "u64-max-price-with-quantity-overflows-the-quote",
+      "why": "With a u64 price the quote can still leave u64 — it just needs quantity too: 2e9 base at u64::MAX / 1e9 is 3.689e19 > u64::MAX. Move aborts inside floor_mul_div (EOverflow); here the per-fill guard fires with the same effect.",
       "feeMatchedBps": "0",
       "orders": [
         [
           0,
           "A1",
           0,
-          "340282366920938463463374607431768211455",
-          "1"
+          "18446744073709551615",
+          "2000000000"
         ],
         [
           1,
           "A2",
           1,
-          "340282366920938463463374607431768211455",
-          "1"
+          "18446744073709551615",
+          "2000000000"
         ]
       ],
-      "expectThrow": "matchedQuote is not a u64"
+      "expectThrow": "fillQuote is not a u64"
     },
     {
-      "name": "large-u128-price-whose-quote-still-fits",
-      "why": "price 1e28, qty 1 ⇒ quote 1e19, just under u64::MAX (1.8446e19). The largest price that can actually settle a single unit — the boundary between the two aborting cases above.",
+      "name": "u64-max-price-still-settles-a-single-unit",
+      "why": "u64::MAX / 1e9 = 18_446_744_073.709…, so one base unit settles: the bid ceils to 18_446_744_074 and the ask floors to 18_446_744_073. The largest price the deployed contract can hold, and it pins the ceil/floor asymmetry at the very top of the u64 range — dust 1, credited to the fee recipient at zero bps.",
       "feeMatchedBps": "0",
       "orders": [
         [
           0,
           "A1",
           0,
-          "10000000000000000000000000000",
+          "18446744073709551615",
           "1"
         ],
         [
           1,
           "A2",
           1,
-          "10000000000000000000000000000",
+          "18446744073709551615",
           "1"
         ]
       ],
       "expect": {
         "cleared": true,
-        "price": "10000000000000000000000000000",
+        "price": "18446744073709551615",
         "matchedBase": "1",
-        "matchedQuote": "10000000000000000000",
-        "feeQuote": "0",
-        "dustQuote": "0",
+        "matchedQuote": "18446744073",
+        "feeQuote": "1",
+        "dustQuote": "1",
         "matchedBaseBeforeTruncation": "1",
         "fills": [
           [
             0,
             0,
             "1",
-            "10000000000000000000",
+            "18446744074",
             "0"
           ],
           [
             1,
             1,
             "1",
-            "10000000000000000000",
+            "18446744073",
             "0"
           ]
         ],
-        "fillsRoot": "0x8050769582e7020324cf8815c4572203d13e1d498eb4076a4fc7f3ec3b7835a8"
+        "fillsRoot": "0x5e665981ef64124a0b74f2dba87b9ad01ec822f04c10eadbd64c3012cb60fe48"
       }
     },
     {
@@ -1951,7 +2006,7 @@
             "0"
           ]
         ],
-        "fillsRoot": "0x44f2454a073f97efaa544ab94b3f79803e223b0ca8155c324b6fc6c6cc440230"
+        "fillsRoot": "0x48d29378cd474f8f3320b4d8b585de33e505101fb7f2f2b331e181b29515e6b7"
       }
     },
     {
@@ -1984,7 +2039,7 @@
         "dustQuote": "0",
         "matchedBaseBeforeTruncation": "12800",
         "fillsCount": 256,
-        "fillsRoot": "0x38f25c24dffe1092f83aae73dc8dbe84c11f7f996fbec9d3f67c135ca636ef10",
+        "fillsRoot": "0x566ff977ef303c509d78a6dd78c30e8b74e210caf826a435c06ca88c61357ee5",
         "fills": [
           [
             0,
@@ -3809,11 +3864,11 @@
         "price": "10000000000",
         "matchedBase": "12800",
         "matchedQuote": "128000",
-        "feeQuote": "320",
+        "feeQuote": "256",
         "dustQuote": "0",
         "matchedBaseBeforeTruncation": "12800",
         "fillsCount": 256,
-        "fillsRoot": "0x10045d5d27d0b6e0993e76caffea5daf4ea6e703261d2254b1534a67492746c0",
+        "fillsRoot": "0xb9b9dcb76bee45e9a90482577b4f960782193d35ca8251f25a15a6df48f6b7de",
         "fills": [
           [
             0,
@@ -4715,896 +4770,896 @@
             128,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             130,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             132,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             134,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             136,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             138,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             140,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             142,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             144,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             146,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             148,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             150,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             152,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             154,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             156,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             158,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             160,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             162,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             164,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             166,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             168,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             170,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             172,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             174,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             176,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             178,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             180,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             182,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             184,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             186,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             188,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             190,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             192,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             194,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             196,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             198,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             200,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             202,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             204,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             206,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             208,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             210,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             212,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             214,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             216,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             218,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             220,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             222,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             224,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             226,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             228,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             230,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             232,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             234,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             236,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             238,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             240,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             242,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             244,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             246,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             248,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             250,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             252,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             254,
             1,
             "100",
-            "1000",
-            "3"
+            "998",
+            "2"
           ],
           [
             129,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ],
           [
             131,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ],
           [
             133,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ],
           [
             135,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ],
           [
             137,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ],
           [
             139,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ],
           [
             141,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ],
           [
             143,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ],
           [
             145,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ],
           [
             147,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ],
           [
             149,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ],
           [
             151,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ],
           [
             153,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ],
           [
             155,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ],
           [
             157,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ],
           [
             159,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ],
           [
             161,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ],
           [
             163,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ],
           [
             165,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ],
           [
             167,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ],
           [
             169,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ],
           [
             171,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ],
           [
             173,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ],
           [
             175,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ],
           [
             177,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ],
           [
             179,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ],
           [
             181,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ],
           [
             183,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ],
           [
             185,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ],
           [
             187,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ],
           [
             189,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ],
           [
             191,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ],
           [
             193,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ],
           [
             195,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ],
           [
             197,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ],
           [
             199,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ],
           [
             201,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ],
           [
             203,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ],
           [
             205,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ],
           [
             207,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ],
           [
             209,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ],
           [
             211,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ],
           [
             213,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ],
           [
             215,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ],
           [
             217,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ],
           [
             219,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ],
           [
             221,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ],
           [
             223,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ],
           [
             225,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ],
           [
             227,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ],
           [
             229,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ],
           [
             231,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ],
           [
             233,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ],
           [
             235,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ],
           [
             237,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ],
           [
             239,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ],
           [
             241,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ],
           [
             243,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ],
           [
             245,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ],
           [
             247,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ],
           [
             249,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ],
           [
             251,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ],
           [
             253,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ],
           [
             255,
             1,
             "100",
-            "1000",
+            "998",
             "2"
           ]
         ]
@@ -5640,7 +5695,7 @@
         "dustQuote": "0",
         "matchedBaseBeforeTruncation": "25600",
         "fillsCount": 512,
-        "fillsRoot": "0x2e3e0f144886cd30db69bfa2f670dfc49383c3014755e6089cc37350d83092e3",
+        "fillsRoot": "0x13da70416545b8a16bf75422b03aa56ab1bf21cfbcf7f1bd63242d589663d8e3",
         "fills": [
           [
             0,

@@ -13,6 +13,14 @@
 // @facts           for cases marked "pinned", i.e. the 256/512-order batches).
 // @facts      ★ It NEVER overwrites a hand-written scalar or fill row. If it disagrees, it
 // @facts        REPORTS and exits 1. That asymmetry is the whole value of the file.
+// @facts      ⚠ FIXED 2026-07-26: this script used to build its own `clear()` input and OMITTED
+// @facts        `priceScale`, so it verified the fixtures at the 1e8 default while the vitest
+// @facts        suite verified them at the file's own 1e9. Two verifiers, two scales, one
+// @facts        fixture — the same failure mode as the 1e9/1e8 split itself. Both now go through
+// @facts        `clearingFixtures.buildInput`, which is the single decoder.
+// @facts      It also re-derives Move's fee identity (`feeQuote == Σ fill.fee + dustQuote` and
+// @facts        `quotePaid == quoteRecv + feeQuote`) so a hand-written `feeQuote` describing the
+// @facts        OLD aggregate-and-apportion model cannot slip through as merely "different".
 // @implements node --import ./scripts/register-ts.mjs scripts/gen-golden.mjs [--check]
 // @forbidden  silently "fixing" a fixture to match the code — that inverts the test
 // @invariant  1. --check never writes.
@@ -23,9 +31,9 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-import { clear } from '../src/clearing.ts';
+import { clear, SIDE_ASK } from '../src/clearing.ts';
 import { toHex } from '../src/hash.ts';
-import { buildBalances, buildOrders, expectedFills } from '../test/support/clearingFixtures.ts';
+import { buildInput, expectedFills } from '../test/support/clearingFixtures.ts';
 
 const CHECK_ONLY = process.argv.includes('--check');
 const PATH = fileURLToPath(new URL('../fixtures/clearing.golden.json', import.meta.url));
@@ -45,9 +53,7 @@ function cmp(caseName, field, actual, expected) {
 }
 
 for (const c of file.cases) {
-  const orders = buildOrders(c, file.addresses);
-  const balances = buildBalances(c, file.addresses);
-  const input = { orders, balances, feeMatchedBps: BigInt(c.feeMatchedBps) };
+  const input = buildInput(c, file);
 
   if (c.expectThrow) {
     let threw = null;
@@ -85,6 +91,18 @@ for (const c of file.cases) {
   cmp(c.name, 'feeQuote', r.feeQuote, e.feeQuote);
   cmp(c.name, 'dustQuote', r.dustQuote, e.dustQuote);
   cmp(c.name, 'matchedBaseBeforeTruncation', r.matchedBaseBeforeTruncation, e.matchedBaseBeforeTruncation);
+
+  // Move's own identity, re-derived rather than transcribed: the fee recipient's single credit
+  // is `quotePaid - quoteRecv`, and it ABSORBS the dust (D3). If this ever fails, a hand-written
+  // `feeQuote` above is describing a fee model the deployed contract does not implement.
+  let feeSum = 0n;
+  for (const f of r.fills) if (f.side === SIDE_ASK) feeSum += f.fee;
+  if (r.feeQuote !== feeSum + r.dustQuote) {
+    problems.push(`${c.name}: feeQuote ${r.feeQuote} != Σ fill.fee ${feeSum} + dust ${r.dustQuote}`);
+  }
+  if (r.quotePaid !== r.quoteRecv + r.feeQuote) {
+    problems.push(`${c.name}: quotePaid ${r.quotePaid} != quoteRecv ${r.quoteRecv} + fee ${r.feeQuote}`);
+  }
 
   if (e.fillsCount !== undefined && r.fills.length !== e.fillsCount) {
     problems.push(`${c.name}: fillsCount — fixture says ${e.fillsCount}, clear() says ${r.fills.length}`);
