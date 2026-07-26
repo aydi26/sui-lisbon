@@ -8,15 +8,19 @@
 // @spec       docs/BUILD-PLAN.md#phase-2 (T2.6) · docs/FACTS.md#seal
 // @rules      G2 G7 G8
 // @depends    ./seal.ts (T2.6) · ../config.ts · aphotic::vault::seal_approve (T1.2)
-// @facts      ★ A session key is SHORT-LIVED and scoped to (vault, versionEpoch, ttl). One per
-// @facts        `run` session. It authorizes SHARE RETRIEVAL, nothing else — it is not a capability
-// @facts        over funds (the keeper still holds only a DeepBook TradeCap, G2).
-// @facts      ★ Every share release is gated by an on-chain `aphotic::vault::seal_approve` dry run
+// @facts      ★ A session key is SHORT-LIVED and scoped to (package, policyVersion, ttl). It
+// @facts        authorizes SHARE RETRIEVAL, nothing else — it is not a capability over funds, and
+// @facts        no keeper function takes an address at all (DESIGN-V2 §7, INV-C1).
+// @facts      ★ It is NOT bound to a single batch. Seal scopes a SessionKey to a package and a
+// @facts        TTL, so one session legitimately opens several batches inside its window; minting
+// @facts        one per batch would buy nothing.
+// @facts      ★ Every share release is gated by an on-chain `aphotic::batch::seal_approve` dry run
 // @facts        at each key server. Expiring the session does not weaken that gate; it bounds the
 // @facts        blast radius of a leaked session key.
-// @facts      A keeper rotation bumps `vault.version_epoch` ⇒ existing sessions become useless
-// @facts        because the identity they were minted against no longer resolves (./rotation.ts).
-// @facts        On-chain this surfaces as `EStaleVersionEpoch` from `vault::check_seal_access`.
+// @facts      Bumping `BatchRegistry.policy_version` invalidates every outstanding identity at
+// @facts        once ⇒ sessions minted under the old version must be refused HERE, locally, before
+// @facts        the key servers decline them. Upstream `tle.move` has NO versioning; this is the
+// @facts        half we added, and it is worthless if only the Move side enforces it.
 // @facts      ⚠ Session keys are SECRETS: never journaled, never logged, never written to disk.
 // @facts        `redactSecrets` (../config.ts) is the pattern to follow for anything adjacent.
 // @facts      ⚠ `@mysten/seal` is NOT an installed dependency ⇒ the SDK is reached through
@@ -41,15 +45,14 @@
 
 import type { Signer } from '@mysten/sui/cryptography';
 
-import type { Millis, ObjectId } from '../types.js';
+import type { Millis } from '../types.js';
 import { AphoticError, ConfigError } from '../util/errors.js';
 
 import { requireSealBackend, type SealDeps, type SealIdentity } from './seal.js';
 
 export interface SessionOptions {
-  readonly vaultId: ObjectId;
-  /** Must match the vault's current `version_epoch`. */
-  readonly versionEpoch: number;
+  /** Must match `BatchRegistry.policy_version`. A bump invalidates every session. */
+  readonly policyVersion: number;
   /** Lifetime in ms. Short by design. */
   readonly ttlMs: Millis;
   /** Session creation time (ms epoch), supplied by the caller for replayability. */
@@ -61,8 +64,7 @@ export interface SessionOptions {
  * it is not a capability over funds (G2).
  */
 export interface SealSession {
-  readonly vaultId: ObjectId;
-  readonly versionEpoch: number;
+  readonly policyVersion: number;
   readonly createdAtMs: Millis;
   readonly expiresAtMs: Millis;
   /** Opaque handle to the underlying Seal session key. Never serialize this. */
@@ -82,13 +84,10 @@ export async function createSession(
 ): Promise<SealSession> {
   const backend = requireSealBackend(deps);
 
-  if (typeof opts.vaultId !== 'string' || opts.vaultId.trim() === '') {
-    throw new ConfigError('createSession requires a vault object id (VAULT_ID)', ['VAULT_ID']);
-  }
-  if (!Number.isInteger(opts.versionEpoch) || opts.versionEpoch < 0) {
+  if (!Number.isInteger(opts.policyVersion) || opts.policyVersion < 0) {
     throw new ConfigError(
-      `createSession requires a non-negative integer version epoch — got ${String(opts.versionEpoch)}`,
-      ['SEAL_VERSION_EPOCH'],
+      `createSession requires a non-negative integer policy version — got ${String(opts.policyVersion)}`,
+      ['SEAL_POLICY_VERSION'],
     );
   }
   if (!Number.isFinite(opts.ttlMs) || opts.ttlMs <= 0) {
@@ -114,8 +113,7 @@ export async function createSession(
   });
 
   return {
-    vaultId: opts.vaultId,
-    versionEpoch: opts.versionEpoch,
+    policyVersion: opts.policyVersion,
     createdAtMs: opts.createdAtMs,
     expiresAtMs: opts.createdAtMs + opts.ttlMs,
     key,
@@ -128,24 +126,24 @@ export function isExpired(session: SealSession, nowMs: Millis): boolean {
 }
 
 /**
- * PURE: not expired AND bound to exactly this (vault, versionEpoch). Throws otherwise.
+ * PURE: not expired AND minted under exactly this policy version. Throws otherwise.
  *
- * The epoch check is the whole point of rotation: after `vault::set_keeper` bumps
- * `version_epoch`, a session minted under the old epoch must be rejected HERE, before the key
- * servers reject it on-chain with `EStaleVersionEpoch`.
+ * The version check is the whole point of versioning: bumping
+ * `BatchRegistry.policy_version` invalidates every outstanding identity at once, and
+ * a session minted under the old version must be rejected HERE, locally, before the
+ * key servers decline it. Upstream's `tle.move` has no versioning at all — this is
+ * the half we added, and it is worthless if only the Move side enforces it.
+ *
+ * Note the session is NOT bound to a single batch. A Seal `SessionKey` is scoped to a
+ * package and a TTL, so one session legitimately decrypts several batches inside its
+ * window; binding it per batch would mint a key per batch for no security gain.
  */
 export function assertUsable(session: SealSession, id: SealIdentity, nowMs: Millis): void {
-  if (session.vaultId !== id.vaultId) {
+  if (session.policyVersion !== id.policyVersion) {
     throw new AphoticError(
       SESSION_UNUSABLE_CODE,
-      `session is bound to vault ${session.vaultId}, not ${id.vaultId}`,
-    );
-  }
-  if (session.versionEpoch !== id.versionEpoch) {
-    throw new AphoticError(
-      SESSION_UNUSABLE_CODE,
-      `session was minted under version epoch ${session.versionEpoch}, but the vault is at ` +
-        `${id.versionEpoch} — a rotation invalidated it (this is the epoch doing its job)`,
+      `session was minted under policy version ${session.policyVersion}, but the registry is at ` +
+        `${id.policyVersion} — a bump invalidated it (this is the versioning doing its job)`,
     );
   }
   if (isExpired(session, nowMs)) {

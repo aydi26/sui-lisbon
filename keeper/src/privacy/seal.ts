@@ -59,8 +59,6 @@
 import type { Signer } from '@mysten/sui/cryptography';
 
 import type { Config } from '../config.js';
-import type { StrategyParams } from '../strategy/params.js';
-import { deserialize, serialize } from '../strategy/serialize.js';
 import { put as walrusPut } from '../storage/walrus.js';
 import type { AnySuiClient } from '../sui/client.js';
 import type { ObjectId } from '../types.js';
@@ -69,12 +67,35 @@ import { AphoticError, ConfigError } from '../util/errors.js';
 
 import type { SealSession } from './session.js';
 
-/** 32-byte vault object id — the first half of the identity. */
-export const SEAL_ID_VAULT_LEN = 32 as const;
-/** big-endian u64 version epoch — the second half. */
-export const SEAL_ID_EPOCH_LEN = 8 as const;
-/** Total identity length. Must equal `aphotic::vault::SEAL_IDENTITY_LEN`. */
-export const SEAL_IDENTITY_LEN = SEAL_ID_VAULT_LEN + SEAL_ID_EPOCH_LEN;
+/**
+ * ⚠⚠ BYTE ORDER — READ THIS BEFORE TOUCHING ANY OFFSET BELOW.
+ *
+ * The v1 identity was `32-byte vault id ‖ u64 epoch BIG-ENDIAN`, and the v1
+ * `vault::seal_approve` decoded it by hand with `epoch = (epoch << 8) + byte`.
+ * Both sides agreed, so both were wrong together and nothing complained.
+ *
+ * v2's policy is the batch time-lock, and it parses with `bcs::peel_u64`, which
+ * reads **LITTLE-ENDIAN**. Emit big-endian here and the key servers decline
+ * forever: the batch simply never reveals, with no error anywhere to read. That
+ * is the same silent failure class as RECON R14's Bitcoin txid byte order — a
+ * value that is wrong in exactly one direction, on a path that never throws.
+ *
+ * Layout, 48 bytes, mirrored by `aphotic::batch::check_policy`:
+ *   [ 0..8 )  bcs u64      close_ms        LITTLE-ENDIAN
+ *   [ 8..16)  bcs u64      policy_version  LITTLE-ENDIAN
+ *   [16..48)  bcs address  batch object id (32 raw bytes)
+ * and trailing bytes are REJECTED on the Move side, so the length is exact, not
+ * a minimum.
+ *
+ * This is the INNER id only. Seal prefixes the package id itself to form the
+ * full IBE identity — never prepend it here or it lands twice.
+ */
+export const SEAL_ID_CLOSE_MS_LEN = 8 as const;
+export const SEAL_ID_POLICY_VERSION_LEN = 8 as const;
+export const SEAL_ID_BATCH_LEN = 32 as const;
+/** Total inner-identity length. Must equal what `aphotic::batch::check_policy` consumes. */
+export const SEAL_IDENTITY_LEN =
+  SEAL_ID_CLOSE_MS_LEN + SEAL_ID_POLICY_VERSION_LEN + SEAL_ID_BATCH_LEN;
 
 /**
  * The narrow port onto the Seal SDK. `@mysten/seal` is NOT installed (and, like every SDK in
@@ -133,11 +154,19 @@ export interface SealDeps {
   readonly storage?: BlobStore;
 }
 
-/** The Seal identity: vault object + version epoch. Rotation invalidates old shares. */
+/**
+ * The Seal identity: WHEN it opens, under WHICH policy, for WHICH batch.
+ *
+ * `closeMs` is the batch's scheduled close, derived from the cadence and never
+ * chosen by an operator — see `aphotic::batch::next_boundary`. Bumping
+ * `policyVersion` invalidates every outstanding identity at once.
+ */
 export interface SealIdentity {
-  readonly vaultId: ObjectId;
-  /** cfg.seal.versionEpoch, or the vault's current `version_epoch` on-chain. */
-  readonly versionEpoch: number;
+  readonly batchId: ObjectId;
+  /** The batch's scheduled close, unix ms. Derived from the cadence, never supplied. */
+  readonly closeMs: number;
+  /** `BatchRegistry.policy_version`. A mismatch is refused by the policy. */
+  readonly policyVersion: number;
 }
 
 export interface EncryptResult {
@@ -148,39 +177,65 @@ export interface EncryptResult {
 }
 
 /**
- * Deterministic identity bytes: 32-byte vault object id ‖ u64 version epoch (BIG-ENDIAN).
+ * The 48-byte INNER identity for the batch time-lock. See the byte-order note on
+ * `SEAL_IDENTITY_LEN` — the two u64s are LITTLE-ENDIAN because `bcs::peel_u64` is.
  *
- * This layout is mirrored byte-for-byte by `aphotic::vault::check_seal_access`. A short vault id
- * is LEFT-padded to 32 bytes, exactly as `object::id(vault).to_bytes()` yields it on-chain.
+ * A short batch id is LEFT-padded to 32 bytes, exactly as `object::id(b).to_bytes()`
+ * renders it on-chain.
  */
 export function sealIdentity(id: SealIdentity): Uint8Array {
-  if (typeof id.vaultId !== 'string' || id.vaultId.trim() === '') {
-    throw new ConfigError('sealIdentity requires a vault object id (VAULT_ID)', ['VAULT_ID']);
+  if (typeof id.batchId !== 'string' || id.batchId.trim() === '') {
+    throw new ConfigError('sealIdentity requires a batch object id', ['BATCH_ID']);
   }
-  if (!Number.isInteger(id.versionEpoch) || id.versionEpoch < 0) {
-    // Invariant 2 — no epoch, no encryption.
+  if (!Number.isInteger(id.closeMs) || id.closeMs < 0) {
     throw new ConfigError(
-      `sealIdentity requires a non-negative integer version epoch — got ${String(id.versionEpoch)}`,
-      ['SEAL_VERSION_EPOCH'],
+      `sealIdentity requires a non-negative integer close_ms — got ${String(id.closeMs)}`,
+      ['BATCH_CADENCE_MS'],
+    );
+  }
+  if (!Number.isInteger(id.policyVersion) || id.policyVersion < 0) {
+    // Invariant 2 — no policy version, no encryption. The version is what lets us
+    // invalidate every outstanding identity at once if the policy is ever wrong.
+    throw new ConfigError(
+      `sealIdentity requires a non-negative integer policy version — got ${String(id.policyVersion)}`,
+      ['SEAL_POLICY_VERSION'],
     );
   }
 
   let raw: Uint8Array;
   try {
-    raw = hexToBytes(id.vaultId);
+    raw = hexToBytes(id.batchId);
   } catch {
-    throw new ConfigError(`vault object id is not valid hex: ${id.vaultId}`, ['VAULT_ID']);
+    throw new ConfigError(`batch object id is not valid hex: ${id.batchId}`, ['BATCH_ID']);
   }
-  if (raw.length > SEAL_ID_VAULT_LEN) {
+  if (raw.length > SEAL_ID_BATCH_LEN) {
     throw new ConfigError(
-      `vault object id must be at most ${SEAL_ID_VAULT_LEN} bytes — got ${raw.length}`,
-      ['VAULT_ID'],
+      `batch object id must be at most ${SEAL_ID_BATCH_LEN} bytes — got ${raw.length}`,
+      ['BATCH_ID'],
     );
   }
 
   const out = new Uint8Array(SEAL_IDENTITY_LEN);
-  out.set(raw, SEAL_ID_VAULT_LEN - raw.length); // left-pad, as Sui renders object ids
-  new DataView(out.buffer).setBigUint64(SEAL_ID_VAULT_LEN, BigInt(id.versionEpoch), false);
+  const view = new DataView(out.buffer);
+  // `true` is DataView's LITTLE-ENDIAN flag. The v1 code passed `false` here and
+  // that single boolean is the whole bug — it is the difference between a policy
+  // that opens on schedule and one that never opens at all.
+  view.setBigUint64(0, BigInt(id.closeMs), true);
+  view.setBigUint64(SEAL_ID_CLOSE_MS_LEN, BigInt(id.policyVersion), true);
+  out.set(raw, SEAL_IDENTITY_LEN - raw.length); // left-pad, as Sui renders object ids
+  return out;
+}
+
+/**
+ * The SAME timestamp encoded big-endian. Exists ONLY so a test can assert that the
+ * two differ and that the big-endian form is rejected. Never call it in the run loop —
+ * the deliberately awkward name is the guard.
+ */
+export function sealIdentityBigEndianWRONG(id: SealIdentity): Uint8Array {
+  const out = sealIdentity(id);
+  const view = new DataView(out.buffer);
+  view.setBigUint64(0, BigInt(id.closeMs), false);
+  view.setBigUint64(SEAL_ID_CLOSE_MS_LEN, BigInt(id.policyVersion), false);
   return out;
 }
 
@@ -226,10 +281,21 @@ function assertPackageId(cfg: Config): string {
   return cfg.aphotic.packageId;
 }
 
-/** Pad → serialize → threshold-encrypt. The ONLY place plaintext parameters are encrypted. */
-export async function encryptParams(
+/**
+ * Threshold-encrypt an already-framed payload. The ONLY place plaintext is encrypted.
+ *
+ * This port deliberately does NOT know what it is encrypting. v1 took a
+ * `StrategyParams` and serialized it here, which put a domain type inside the
+ * crypto boundary; v2 takes bytes, so the caller owns the frame and this module
+ * has one job.
+ *
+ * ⚠ The CALLER must supply a CONSTANT-LENGTH frame. Seal does not pad, so
+ * ciphertext length tracks plaintext length — an unpadded order would leak its
+ * size through the one thing we encrypted it to hide.
+ */
+export async function encryptPayload(
   deps: SealDeps,
-  params: StrategyParams,
+  data: Uint8Array,
   id: SealIdentity,
 ): Promise<EncryptResult> {
   const backend = requireSealBackend(deps);
@@ -237,8 +303,10 @@ export async function encryptParams(
   const packageId = assertPackageId(deps.cfg);
   const identity = sealIdentity(id);
 
-  // Constant-length frame FIRST (invariant 3): the ciphertext must never be a size oracle.
-  const data = serialize(params);
+  if (!(data instanceof Uint8Array) || data.length === 0) {
+    throw new AphoticError('SealEncryptFailed', 'refusing to encrypt an empty payload');
+  }
+
   const ciphertext = await backend.encrypt({
     data,
     identity,
@@ -261,32 +329,35 @@ export async function encryptParams(
  * ⚠ The CALLER must have run `session.assertUsable(session, id, nowMs)` first: expiry is a
  * clock question and this module is kept clock-free so `verify/` can exercise it.
  */
-export async function decryptParams(
+export async function decryptPayload(
   deps: SealDeps,
   ciphertext: Uint8Array,
   session: SealSession,
-): Promise<StrategyParams> {
+  id: SealIdentity,
+): Promise<Uint8Array> {
   const backend = requireSealBackend(deps);
   const packageId = assertPackageId(deps.cfg);
-  // The identity is derived from the SESSION, never from a caller-supplied argument — a session
-  // minted under epoch N can only ever address epoch N's ciphertext (invariant 2).
-  const identity = sealIdentity({ vaultId: session.vaultId, versionEpoch: session.versionEpoch });
+  const identity = sealIdentity(id);
 
   const plaintext = await backend.decrypt({ ciphertext, identity, sessionKey: session.key, packageId });
 
-  // Invariant 4: a malformed frame is an error. `deserialize` rejects wrong length/version and
-  // never guesses, so a stale-epoch share can never masquerade as valid parameters.
-  return deserialize(plaintext);
+  // Invariant 4: never hand back an empty frame as if it were data. The caller
+  // decodes and checks the commitment; a mismatch there is what actually catches
+  // a substituted ciphertext, and it can only do that if it receives real bytes.
+  if (!(plaintext instanceof Uint8Array) || plaintext.length === 0) {
+    throw new AphoticError('SealDecryptFailed', 'Seal backend returned an empty plaintext');
+  }
+  return plaintext;
 }
 
-/** Encrypt then Walrus-put (explicit epochs, never 1) and return the blob id for the vault. */
-export async function publishStrategy(
+/** Encrypt then Walrus-put (explicit epochs, never 1) and return the blob id. */
+export async function publishSealed(
   deps: SealDeps,
-  params: StrategyParams,
+  data: Uint8Array,
   id: SealIdentity,
 ): Promise<{ blobId: string; ciphertext: Uint8Array }> {
   // ENCRYPT BEFORE UPLOAD, always (G8): Walrus blobs are public and permanently discoverable.
-  const { ciphertext } = await encryptParams(deps, params, id);
+  const { ciphertext } = await encryptPayload(deps, data, id);
   const store: BlobStore = deps.storage ?? { put: walrusPut };
   const { blobId } = await store.put(deps.cfg, ciphertext, { epochs: deps.cfg.walrus.epochs });
   if (typeof blobId !== 'string' || blobId === '') {

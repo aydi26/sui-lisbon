@@ -1,11 +1,11 @@
 // ┌── APHOTIC CONTRACT ────────────────────────────────────────────────────────
-// @task       T2.7
-// @phase      2  [CUT-LINE CRITICAL]
+// @task       P1.oracle
+// @phase      1
 // @status     DONE
 // @spec       docs/KEEPER.md §4 (`readBook(pool) -> L2Book`) + ERRATA E-K6 (the indexer is unusable)
 // @spec       docs/BUILD-PLAN.md#phase-2 (T2.7) · docs/FACTS.md#deepbook-venue · docs/RECON.md#r10 #r4
 // @rules      G4 G7 G9
-// @depends    ./book.ts (T2.7) · ../config.ts · ../sui/client.ts (T0.3)
+// @depends    ./book.ts (P1.oracle) · ../config.ts · ../sui/client.ts (T0.3)
 // @facts      ★★ READ THE BOOK BY SIMULATION, NEVER FROM THE HOSTED INDEXER.
 // @facts        `deepbook-indexer.testnet.mystenlabs.com/get_pools` lists 7 pools and DOES NOT
 // @facts        include hBTC/DBUSDC (docs/RECON.md R10). The pool exists on-chain and is correctly
@@ -50,7 +50,7 @@
 // @invariant  3. Prices/quantities decode to bigint; nothing becomes a `number`.
 // @invariant  4. `L2Book.atMs` comes from the caller, so a replayed read is byte-identical.
 // @ac         docs/BUILD-PLAN.md T2.7 — reads the L2 book for Pool<hBTC,DBUSDC>, DeepBook only
-// @verify     npm run test -- routing
+// @verify     npm run test -- oracle
 // @verify     powershell -NoProfile -File scripts/gates.ps1 g4
 // └── END CONTRACT ───────────────────────────────────────────────────────────
 

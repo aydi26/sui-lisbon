@@ -1,11 +1,11 @@
 // ┌── APHOTIC CONTRACT ────────────────────────────────────────────────────────
-// @task       T2.8
-// @phase      2
+// @task       P1.oracle
+// @phase      1
 // @status     DONE
 // @spec       docs/KEEPER.md §6 (`read() -> OracleSnapshot`), §1.2 (the run-loop tick)
 // @spec       docs/BUILD-PLAN.md#phase-2 (T2.8) · docs/FACTS.md#pyth-oracle
 // @rules      G4 G7 G9
-// @depends    ./pyth.ts (T2.8) · ./twap.ts (T2.8) · ./divergence.ts (T2.8) · ../routing/deepbook.ts (T2.7)
+// @depends    ./pyth.ts · ./twap.ts · ./divergence.ts · ./deepbook.ts · ./book.ts  (all P1.oracle)
 // @facts      OracleSnapshot (../types.ts) = { pythPx, pythSeq, pythPublishTimeMs, deepbookTwap, deepbookMid }.
 // @facts      ★ `deepbookMid` is the VALUATION reference for NAV/collateral (G9). `pythPx` is only
 // @facts        the divergence reference. Never swap those roles.
@@ -14,8 +14,8 @@
 // @facts      Both prices land in the journal so the breaker decision is publicly reproducible (G5).
 // @facts      ⚠ Empty book (docs/RECON.md R10) ⇒ `deepbookMid`/`deepbookTwap` may be unavailable;
 // @facts        `read` fails closed rather than substituting the Pyth price.
-// @facts      The spot mid is taken from `L2Book.mid`, which `routing/deepbook.ts::readBook`
-// @facts        populates via `routing/book.ts::bookMid` and sets to `0n` on an empty book
+// @facts      The spot mid is taken from `L2Book.mid`, which `oracle/deepbook.ts::readBook`
+// @facts        populates via `oracle/book.ts::bookMid` and sets to `0n` on an empty book
 // @facts        (deepbook.ts invariant 2). Reading the field rather than re-deriving it keeps the
 // @facts        journalled `book` and the snapshot from ever disagreeing.
 // @facts      ★ COMMON SCALE. Every price in an OracleSnapshot is "USD per 1 BTC carrying
@@ -39,13 +39,15 @@
 // └── END CONTRACT ───────────────────────────────────────────────────────────
 
 import type { Config } from '../config.js';
-import { readBook, type DeepbookDeps, type ReadBookOptions } from '../routing/deepbook.js';
 import type { L2Book, Millis, OracleSnapshot } from '../types.js';
 
+import { readBook, type DeepbookDeps, type ReadBookOptions } from './deepbook.js';
 import { OracleUnavailableError } from './divergence.js';
 import { assertFresh, fetchLatestPrice, scaleToSats, type PythPrice, type PythReadOptions } from './pyth.js';
 import { pushSample, twap, type TwapWindow } from './twap.js';
 
+export * from './book.js';
+export * from './deepbook.js';
 export * from './divergence.js';
 export * from './pyth.js';
 export * from './twap.js';
@@ -124,7 +126,7 @@ export async function tick(deps: OracleDeps, opts: OracleReadOptions): Promise<O
   }
 
   // 2. DeepBook book by SIMULATION (never the indexer, never `pool::mid_price` — E-K6/R10).
-  // `L2Book.mid` is populated by `routing/deepbook.ts::readBook` from `routing/book.ts::bookMid`;
+  // `L2Book.mid` is populated by `oracle/deepbook.ts::readBook` from `oracle/book.ts::bookMid`;
   // its documented empty-book value is `0n` (deepbook.ts invariant 2). We read the field rather
   // than re-deriving it so the journalled `book` and the snapshot can never disagree.
   const book = await readTheBook(deps.deepbook, { atMs: opts.nowMs });
