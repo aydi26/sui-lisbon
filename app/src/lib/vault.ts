@@ -36,6 +36,9 @@
 // @implements export async function readVaultTypeArgs(opts?)
 // @implements export async function readVaultSnapshot(typeArgs, opts?)
 // @implements export async function readProposal(typeArgs, opts?)
+// @implements export interface CapRegistryRead
+// @implements export function parseCapRegistry(fields)
+// @implements export async function readCapRegistry(opts?)
 // @implements export async function readEpochPrice(typeArgs, epoch, opts?)
 // @implements export async function readEscrowOf(typeArgs, who, opts?)
 // @implements export async function listReceipts(owner, opts?)
@@ -69,8 +72,11 @@ import {
   nth,
   objectTypeArgs,
   readMove,
+  readObjectFields,
   readObjectType,
   requireWired,
+  type ObjectFields,
+  type ObjectFieldsFn,
   type ObjectTypeFn,
   type ReadOptions,
 } from './moveRead';
@@ -306,6 +312,68 @@ export async function readProposal(
   });
   out.digest = decode.bytes(first(values, PROPOSAL_FIELDS.length + 1));
   return out as unknown as VaultProposal;
+}
+
+// ── who actually holds the two NAV roles ────────────────────────────────────
+
+/**
+ * The `CapRegistry` embedded in the vault — who `propose_nav` and `approve_nav`
+ * are answerable to, read off the chain rather than asserted from a document.
+ *
+ * `aphotic.md` §6.2 / G3 make NAV **two parties**: the keeper records a proposal
+ * that commits nothing, an admin multisig signs the approval that does. That is a
+ * claim about a DEPLOYMENT, not about the code — the Move is identical either way.
+ * If one address holds both roles, the split is a comment, and the screen has to
+ * say so (G2: honesty is a hard requirement, not a tone).
+ */
+export interface CapRegistryRead {
+  readonly admin: string;
+  readonly keeper: string;
+  readonly adminEpoch: bigint;
+  readonly keeperEpoch: bigint;
+  /** Set while a two-step admin handover is half-done. */
+  readonly pendingAdmin: string | null;
+  /** True only when the two roles resolve to DIFFERENT addresses. */
+  readonly splitLive: boolean;
+}
+
+function asAddress(v: unknown, field: string): string {
+  if (typeof v !== 'string' || !v.startsWith('0x')) {
+    throw new Error(`CapRegistry.${field} is not an address (got ${JSON.stringify(v)})`);
+  }
+  return v;
+}
+
+/**
+ * The parsing half of {@link readCapRegistry}, split out so the suite can drive it
+ * with no config and no network — the ids are pinned empty in `vitest.config.ts`.
+ */
+export function parseCapRegistry(vault: ObjectFields): CapRegistryRead {
+  const wrapper = vault.caps as { readonly fields?: Record<string, unknown> } | undefined;
+  const caps = wrapper?.fields;
+  if (caps === undefined) {
+    throw new Error('vault exposed no `caps` field — wrong object, or a package upgrade moved it');
+  }
+  const admin = asAddress(caps.admin, 'admin');
+  const keeper = asAddress(caps.keeper, 'keeper');
+  const pending = caps.pending_admin;
+  return {
+    admin,
+    keeper,
+    adminEpoch: BigInt((caps.admin_epoch as string | number | undefined) ?? 0),
+    keeperEpoch: BigInt((caps.keeper_epoch as string | number | undefined) ?? 0),
+    pendingAdmin: typeof pending === 'string' && pending.startsWith('0x') ? pending : null,
+    // Addresses are hex; a mixed-case twin is the same key, so never compare raw.
+    splitLive: admin.toLowerCase() !== keeper.toLowerCase(),
+  };
+}
+
+/** Reads the vault's embedded `CapRegistry`. One RPC call, no wallet, no signing. */
+export async function readCapRegistry(opts?: {
+  readonly objectFields?: ObjectFieldsFn;
+}): Promise<CapRegistryRead> {
+  requireWired([['VITE_VAULT_ID', config.aphotic.vaultId]]);
+  return parseCapRegistry(await readObjectFields(config.aphotic.vaultId, opts?.objectFields));
 }
 
 /** `(nav_assets, nav_supply)` for a settled epoch — the price a receipt claims at. */

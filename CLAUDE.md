@@ -125,7 +125,7 @@ verbatim run log.
 
 | Path | Purpose | Observed state |
 |---|---|---|
-| `move/Move.toml` · `move/Move.lock` | Package `aphotic`, `edition = "2024.beta"`. **Exactly two git deps** (`hashi`, `deepbook`) — no `Sui` line, no `[addresses]`, no `[dep-replacements]`, no Pyth, no Seal/Walrus, **no `[environments]`** (sui 1.76.0 rejects overriding system envs). ⚠ the lock records Windows backslash subdirs (**B8**). | present |
+| `move/Move.toml` · `move/Move.lock` | Package `aphotic`, `edition = "2024.beta"`. **Exactly two git deps** (`hashi`, `deepbook`) — no `Sui` line, no `[addresses]`, no `[dep-replacements]`, no Pyth, no Seal/Walrus, **no `[environments]`** (sui 1.76.0 rejects overriding system envs). ~~⚠ the lock records Windows backslash subdirs (**B8**).~~ **B8 FIXED 2026-07-26** — both lockfiles now carry forward slashes. The backslash form was not cosmetic: off Windows the resolver reads `crates\sui-framework\packages\move-stdlib` as a literal directory and dies with `Invalid directory`, so **the package did not build at all on macOS or Linux**. Forward slashes work on both. Never let a Windows toolchain rewrite this file back. | present |
 | `move/sources/events.move` | Package leaf. One emitter per externally-visible transition; carries the ceilings as `@facts`. | present, `@status DONE` |
 | `move/sources/caps.move` | `AdminCap` (key only) · `KeeperCap` (key only) · `VaultCap` (store only) · `CapRegistry`; two-step admin handover, keeper rotation by epoch, action allowlist. | present, `@status DONE` |
 | `move/sources/notes.move` | `DenomLadder` · `NoteTree` (depth 20, `filled_subtrees` in-object) · `NullifierSet`; blake2b256 domain-separated; **leaf index LITTLE-ENDIAN**. | present, `@status DONE` |
@@ -226,10 +226,25 @@ deposit → `propose_nav` → `approve_nav` → `claim`) plus a mocked Phase 3 (
 clear → push settlement, with the Move↔TS parity shown live).** Phase 2 (the carry) is
 **deliberately out** — `aphotic.md` §11 says so, and D2/D3/D6 each independently confirm it.
 
-**Where we stand (observed, not asserted).** `sui move build` is green and 122 Move tests pass
-across the seven modules that exist. `vault.move`, `batch.move` and `clearing.move` — the three
-modules the cut line is actually about — **are not written yet**, and neither is `sdk/`. The
-keeper and app still contain the v1 product. Nothing about the cut line is proven today.
+**Where we stand — RE-MEASURED 2026-07-26 on macOS, from a fresh clone.** ~~`sui move build` is
+green and 122 Move tests pass across the seven modules that exist. `vault.move`, `batch.move` and
+`clearing.move` — the three modules the cut line is actually about — **are not written yet**, and
+neither is `sdk/`. The keeper and app still contain the v1 product. Nothing about the cut line is
+proven today.~~ All ten Move modules exist, are published, and were **upgraded to v2**. Observed:
+
+| | |
+|---|---|
+| move `aphotic` | **283/283** · `lending` **37/37** · `sdk/` **376/376** · `keeper/` **252/252** · `app/` **345/345** — **1 293 total** |
+| gates | `bash scripts/gates.sh` → **12 PASS · 0 FAIL · 0 SKIP** (the four SKIPs are gone) |
+| on chain | `node scripts/verify-onchain.mjs` → **34 PASS · 1 FAIL · 0 WARN** |
+| cut line | **met** — deposit → `propose_nav` → `approve_nav` → claim has run to **epoch 4**, and **batch 0 is open** (closes 18:00:00.000Z, derived not passed) |
+
+**The one FAIL is worth reading before you touch governance:** `admin != keeper` fails because
+`Vault.caps.admin` and `.keeper` are both `0xd41b0cd8…f333d`. G3's two-party split is **not live on
+this deployment**, and no amount of Move review will show it — the bytecode is identical either
+way. `/vault` now reads the `CapRegistry` and discloses it rather than asserting the guarantee
+(`TwoPartyNote`, `app/test/capSplit.test.tsx`); `scripts/rotate-keeper.mjs <addr> --execute` fixes
+it in one transaction. **Do not re-add unconditional two-party copy anywhere.**
 
 ## SCOPE NOTES (do not get this wrong)
 

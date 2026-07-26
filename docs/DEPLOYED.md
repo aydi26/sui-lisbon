@@ -455,3 +455,61 @@ deployment PTB can inspect the pair before publishing it; `allocate::share` is t
 node scripts/verify-onchain.mjs
   33 PASS · 0 FAIL · 0 WARN · 6 INFO
 ```
+
+---
+
+## BATCH 0 — the first batch ever opened (2026-07-26)
+
+Until now `BatchRegistry.next_batch_id` was **0**: the sealed-order auction was published,
+configured and tested, but had **never run on chain**. `/verify` said so in as many words — *"No
+batch has ever been opened on this package."* That is now false, which is the point.
+
+`open_batch` is **permissionless** (G4 — liveness is never a privilege), so this needed no cap and
+no keeper. Two commands in one PTB, because `open_batch` returns the `Batch` **by value** and
+`share_batch` is the second step:
+
+```
+sui client ptb \
+  --move-call <pkg>::batch::open_batch @<registry> @0x6 --assign b \
+  --move-call <pkg>::batch::share_batch b \
+  --gas-budget 30000000
+```
+
+| What | Id / value |
+|---|---|
+| transaction digest | `3JWjDDmAserJXt1kokzgfRSs1stCrMnqPRLBZwcPxi2F` — `Success` |
+| shared **`Batch`** (batch 0) | `0xe73f034b90eef92a06db2b889e8d4514f2f097298aa4eecbca2a364a3e2c096f`, `Shared`, isv **954059098** |
+| opened by | `0x48ae587dfa4c0011e764ed5dfb8fd79aec082d79cd2a3969fe277ed6c887b725` — **not** the keeper, and that is the demonstration |
+| `opened_at_ms` | `2026-07-26T10:42:08.873Z` |
+| `close_ms` | **`2026-07-26T18:00:00.000Z`** — exactly the 18:00 UTC boundary |
+| state · policy · max_orders | `OPEN` · `1` · `256` |
+| registry after | `live_batches = 1`, `next_batch_id = 1` |
+
+**Why the close time is the headline.** `close_ms` was not passed in — `open_batch` takes **no
+timestamp parameter** and derives it from `next_boundary(now, 43_200_000, 21_600_000)`. It landed on
+`18:00:00.000Z` to the millisecond. G5 ("an operator can never choose when a batch closes") stops
+being a claim about the source and becomes a receipt.
+
+### What this immediately exposed — a real bug, invisible until a batch existed
+
+The app read the live batch and returned
+`CommandArgumentError { arg_idx: 0, kind: TypeMismatch } in command 0`.
+
+`discoverLiveBatch` finds the `Batch` by taking the transaction that emitted `BatchOpened` and
+looking through its object changes for a type matching `<pkg>::batch::Batch` — with `startsWith`.
+But **`Batch` is a prefix of `BatchRegistry`**, and `open_batch` creates the batch *and* mutates the
+registry in the same transaction, so the scan could return the **registry** id. `readBatch` then
+passed a `BatchRegistry` where a `&Batch` was expected.
+
+Fixed in `app/src/lib/batch.ts` by matching the whole type (`selectObjectOfType`, with a `<` case so
+generic structs still match), and pinned by six cases in `app/test/batch.test.tsx` — including the
+registry-listed-first ordering that produced the failure. **No batch had ever been opened, so no
+test and no run could have caught this.** It would have surfaced for the first time in front of a
+judge.
+
+### Still to do on batch 0
+
+`close_batch` reverts before `close_ms` and succeeds at exactly it — so after **18:00 UTC** the
+batch wants closing, and then `begin` / `step` / settle to free the registry (`live_batches` back to
+0). Every one of those is permissionless. An unsettled batch blocks the next `open_batch`
+(`EBatchAlreadyLive`), so this is a loose end, not a finished lifecycle.

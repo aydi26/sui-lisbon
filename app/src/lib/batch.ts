@@ -48,6 +48,13 @@
 // @implements export async function readRegistry · readBatch · readSealedOrders
 //             · readClearing · readFills · readBatchHistory · discoverLiveBatch
 //             · discoverClearing
+// @implements export function isObjectType · selectObjectOfType
+// @facts      ⚠ `Batch` IS A PREFIX OF `BatchRegistry`. `open_batch` creates the
+// @facts        Batch and mutates the registry in ONE transaction, so discovery sees
+// @facts        both and a `startsWith` test can return the REGISTRY id — the caller
+// @facts        then reads a BatchRegistry as a Batch and gets
+// @facts        `CommandArgumentError { arg_idx: 0, kind: TypeMismatch }`. Match the
+// @facts        WHOLE type (`selectObjectOfType`); `<` keeps generics working.
 // @implements export function buildDepositNote · buildSpendNote · buildTopUpBase
 //             · buildWithdrawBase · buildSubmitOrder · buildRevealOrder
 //             · buildOpenBatch · buildCloseBatch
@@ -58,7 +65,9 @@
 // @invariant  2. Nothing here decrypts, encrypts or touches a note secret — that
 //                is seal.ts and notes.ts.
 // @ac         app/test/batch.test.ts — snapshots decode from injected BCS; the
-//             submit builder carries exactly three byte vectors and a clock.
+//             submit builder carries exactly three byte vectors and a clock;
+//             `selectObjectOfType` returns the Batch whichever order the registry
+//             and the batch are listed in, and never the registry.
 // @verify     cd app && npm run build
 // @verify     cd app && npm test -- batch
 // └── END CONTRACT ───────────────────────────────────────────────────────────
@@ -477,9 +486,35 @@ function liveObjectChanges(): ObjectChangesFn {
   };
 }
 
+/**
+ * Whole-type match, never a prefix.
+ *
+ * ⚠ `startsWith('<pkg>::batch::Batch')` ALSO matches `<pkg>::batch::BatchRegistry`
+ * — `Batch` is a prefix of `BatchRegistry`. `open_batch` creates the `Batch` and
+ * mutates the registry in the SAME transaction, so a prefix test can return the
+ * registry id and the caller then reads a `BatchRegistry` as if it were a `Batch`:
+ * `CommandArgumentError { arg_idx: 0, kind: TypeMismatch }`. Observed the moment
+ * batch 0 was opened on testnet (2026-07-26), and invisible before that because
+ * no batch had ever existed. The `<` case keeps this correct for a generic struct.
+ */
+export function isObjectType(actual: string, wanted: string): boolean {
+  return actual === wanted || actual.startsWith(`${wanted}<`);
+}
+
+/**
+ * The one object of `wanted` type among a transaction's changes, or null.
+ * Exported so the prefix trap above is pinned by a test that needs no config.
+ */
+export function selectObjectOfType(
+  changes: readonly { readonly objectId: string; readonly objectType: string }[],
+  wanted: string,
+): string | null {
+  return changes.find((c) => isObjectType(c.objectType, wanted))?.objectId ?? null;
+}
+
 async function discoverByEvent(
   moveEventType: string,
-  objectTypeSuffix: string,
+  objectType: string,
   opts?: { readonly events?: EventQueryFn; readonly objectChanges?: ObjectChangesFn },
 ): Promise<string | null> {
   const query = opts?.events ?? liveEventQuery();
@@ -487,8 +522,7 @@ async function discoverByEvent(
   const latest = rows[0];
   if (latest === undefined) return null;
   const changes = await (opts?.objectChanges ?? liveObjectChanges())(latest.txDigest);
-  const match = changes.find((c) => c.objectType.startsWith(objectTypeSuffix));
-  return match?.objectId ?? null;
+  return selectObjectOfType(changes, objectType);
 }
 
 /**

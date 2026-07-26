@@ -15,6 +15,18 @@
 // @facts      NAV IS TWO PARTIES, NOT TWO SCOPES: `propose_nav` (keeper, records
 // @facts        only) and `approve_nav` (admin multisig, commits). That sentence is
 // @facts        load-bearing and stays on screen in both states.
+// @facts      ⚠ BUT THE SPLIT IS A PROPERTY OF THE DEPLOYMENT, NOT OF THE MOVE.
+// @facts        The bytecode is byte-identical whether one key holds both caps or
+// @facts        two parties do, so the claim cannot be read off the package — only
+// @facts        off `Vault.caps` (the embedded `CapRegistry`, fields `admin` and
+// @facts        `keeper`). This panel therefore READS them and reports what is true:
+// @facts        different addresses → the guarantee, stated with both; the SAME
+// @facts        address → a warning that the split is not live, because a screen
+// @facts        asserting a separation that does not exist is the dishonest case G2
+// @facts        exists to forbid. `scripts/verify-onchain.mjs` fails the same check
+// @facts        (`admin != keeper`), and `scripts/rotate-keeper.sh` is the fix.
+// @facts        Reached via ONE json-rpc object read: `vault::cap_registry` returns
+// @facts        `&CapRegistry`, and a reference cannot cross a PTB command boundary.
 // @facts      THE FOUR LEGS: idle + deployed + in-flight + native BTC.
 // @facts        · idle is the one leg MOVE CHECKS ITSELF: `approve_nav` asserts
 // @facts          `p.idle_sats == v.base.value()` (EIdleMismatch).
@@ -37,7 +49,12 @@
 // @invariant  1. The unverifiable leg is visually distinct AND annotated.
 // @invariant  2. The digest comparison is a real byte comparison, or it says it
 //                could not be made.
+// @invariant  3. The two-party guarantee is NEVER asserted for a deployment whose
+//                `admin` and `keeper` are the same address.
 // @ac         renders unconfigured, reads nothing, and says why.
+// @ac         app/test/capSplit.test.tsx — admin == keeper renders the warning and
+//             never the guarantee; admin != keeper renders the guarantee with both
+//             addresses; the pre-read state promises neither.
 // @verify     cd app && npm test -- vault
 // └── END CONTRACT ───────────────────────────────────────────────────────────
 
@@ -50,9 +67,11 @@ import { useAsyncAction } from '../../lib/useAsyncAction';
 import {
   proposalDigest,
   proposalNavAssets,
+  readCapRegistry,
   readProposal,
   readVaultSnapshot,
   readVaultTypeArgs,
+  type CapRegistryRead,
   type VaultProposal,
   type VaultSnapshot,
 } from '../../lib/vault';
@@ -60,6 +79,7 @@ import {
 interface NavRead {
   readonly snapshot: VaultSnapshot;
   readonly proposal: VaultProposal | null;
+  readonly caps: CapRegistryRead;
 }
 
 function Leg({
@@ -101,6 +121,47 @@ function Check({ label, value }: { label: string; value: string }) {
   );
 }
 
+/**
+ * Who actually holds the two NAV roles — the one claim on this screen that the Move
+ * cannot back, because the bytecode is identical whether one key holds both caps or
+ * two parties do. Exported so `test/capSplit.test.tsx` can pin all three states
+ * without standing up the whole panel.
+ *
+ * `caps === null` means nothing has been read yet: promise neither.
+ */
+export function TwoPartyNote({ caps }: { readonly caps: CapRegistryRead | null }) {
+  if (caps === null) {
+    return (
+      <p className="ap-reason">
+        Two <strong>parties</strong>, not two scopes of one automation key: the keeper writes a{' '}
+        <strong>proposal</strong> that commits nothing, an admin multisig signs the{' '}
+        <strong>approval</strong> that does. Which addresses hold those two roles is a property of
+        this deployment, not of the code — read from chain and this panel says which.
+      </p>
+    );
+  }
+  if (caps.splitLive) {
+    return (
+      <p className="ap-reason">
+        Two <strong>parties</strong>, and this deployment holds it: the keeper{' '}
+        <code>{truncateMiddle(caps.keeper)}</code> writes a <strong>proposal</strong> that commits
+        nothing, the admin <code>{truncateMiddle(caps.admin)}</code> signs the{' '}
+        <strong>approval</strong> that does.
+      </p>
+    );
+  }
+  return (
+    <p className="ap-reason ap-reason--warn">
+      <strong>The two-party NAV split is not live on this deployment.</strong>{' '}
+      <code>propose_nav</code> and <code>approve_nav</code> both answer to{' '}
+      <code>{truncateMiddle(caps.admin)}</code> — one key holds both roles, so the separation the
+      design leans on is a comment right now, not a control. Move enforces two{' '}
+      <strong>capabilities</strong>; only a deployment can make them two <strong>parties</strong>.
+      Rotating either role closes it, and nothing in the contract changes.
+    </p>
+  );
+}
+
 export function NavPanel() {
   const nav = useAsyncAction<NavRead>();
   const gap = wiringGap([
@@ -112,7 +173,8 @@ export function NavPanel() {
     const typeArgs = await readVaultTypeArgs();
     const snapshot = await readVaultSnapshot(typeArgs);
     const proposal = snapshot.hasProposal ? await readProposal(typeArgs) : null;
-    return { snapshot, proposal };
+    const caps = await readCapRegistry();
+    return { snapshot, proposal, caps };
   };
 
   const data = nav.state.data;
@@ -149,11 +211,7 @@ export function NavPanel() {
           <p className="ap-reason ap-reason--error">{nav.state.error}</p>
         ) : null}
 
-        <p className="ap-reason">
-          Two <strong>parties</strong>, not two scopes of one automation key: the keeper writes a{' '}
-          <strong>proposal</strong> that commits nothing, an admin multisig signs the{' '}
-          <strong>approval</strong> that does.
-        </p>
+        <TwoPartyNote caps={data?.caps ?? null} />
         <p className="ap-reason">
           Four legs — idle, deployed, in flight, native BTC. The last is{' '}
           <strong>not verifiable by Move</strong> and is capped at the on-Sui withdrawal claims
