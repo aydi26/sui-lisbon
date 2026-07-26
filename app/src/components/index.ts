@@ -44,3 +44,6 @@ export type { WalletBarProps } from './WalletBar';
 
 export { ZkLoginButton, EnokiSetupPanel, SponsorshipNote } from './ZkLoginButton';
 export type { ZkLoginButtonProps, EnokiSetupPanelProps } from './ZkLoginButton';
+
+export { WalletGate } from './WalletGate';
+export type { WalletGateProps } from './WalletGate';

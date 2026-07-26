@@ -1,11 +1,11 @@
 // ┌── APHOTIC CONTRACT ────────────────────────────────────────────────────────
-// @task       T0.4, T3.2
+// @task       X.app
 // @phase      0
 // @status     DONE
-// @spec       docs/APP.md §1 (lib/: sats formatting, bech32 render, explorer links)
-// @spec       docs/APP.md §3.1 (<ExitRequestForm/> validation)
+// @spec       docs/FACTS.md#hbtc (8 decimals, symbol hBTC, unit satoshis)
+// @spec       docs/FACTS.md#hashi-onchain-config (bitcoin_withdrawal_minimum, dust floor)
 // @rules      G1 G10
-// @depends    ../config.ts (T0.4)
+// @depends    ../config.ts (X.app)
 // @facts      hBTC has 8 decimals; ALL amounts are satoshis.        (RECON R5)
 // @facts      TypeScript money type is `bigint`, NEVER `number` — a 1 BTC bucket
 // @facts        times a large elapsed exceeds Number.MAX_SAFE_INTEGER (RECON R9).
@@ -21,8 +21,9 @@
 // @forbidden  floating-point arithmetic on sats
 // @invariant  1. parseBtcToSats never loses precision (string math, no Number).
 // @invariant  2. classifyExitAmount returns 'pooled' below the Hashi minimum —
-//                the UI must NEVER offer a priority/fast path (G3).
-// @ac         docs/APP.md §7 A6
+//                the UI must NEVER offer a priority/fast path (G1: over-capacity is
+//                REJECTED, never queued, so priority cannot be bought).
+// @ac         app/test/format.test.ts — the sats formatting/parsing safety net
 // @verify     cd app && npx tsc --noEmit
 // └── END CONTRACT ───────────────────────────────────────────────────────────
 

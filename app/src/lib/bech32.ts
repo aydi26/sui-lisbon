@@ -1,11 +1,12 @@
 // ┌── APHOTIC CONTRACT ────────────────────────────────────────────────────────
-// @task       T3.2
+// @task       X.app
 // @phase      3  [CUT-LINE CRITICAL]
 // @status     DONE
-// @spec       docs/APP.md §3.1 (<PinnedAddressPanel/> renders the 20-byte P2WPKH /
-//             32-byte P2TR witness program), §7 A4
+// @spec       aphotic.md §6.3 (the one boundary Move cannot enforce — the pinned
+//             redemption address, enforced at signing rather than by Move)
 // @spec       docs/RECON.md R7 (request_withdrawal asserts addr_len == 20 || 32)
-// @rules      G2 G7
+// @spec       docs/FACTS.md#hashi-move-api (request_withdrawal's bitcoin_address)
+// @rules      G2 G3 G7
 // @depends    (none — pure, offline, zero network)
 // @facts      BIP-173 bech32 checksum constant  = 1          (witness version 0)
 // @facts      BIP-350 bech32m checksum constant = 0x2bc830a3 (witness versions 1..16)
@@ -17,8 +18,9 @@
 // @facts        32 (P2TR). A 32-byte witness *v0* program is P2WSH and would pass
 // @facts        the upstream length assert while being an address the guardians
 // @facts        cannot pay to the way the user expects, so we reject it HERE, at
-// @facts        pin time, where the mistake is still recoverable. After
-// @facts        gateway::register_exit_address it is write-once forever (G2).
+// @facts        pin time, where the mistake is still recoverable. Once the vault's
+// @facts        redemption address is published and pinned it is not re-pointed —
+// @facts        and Move cannot enforce that, the co-signer does (aphotic.md §6.3).
 // @external   public fun hashi::withdraw::request_withdrawal(..., bitcoin_address: vector<u8>, ...)
 //             // asserts addr_len == 20 || addr_len == 32   EInvalidBitcoinAddress
 // @implements export function encodeWitnessAddress(hrp, version, program): string
@@ -27,13 +29,14 @@
 //             export function hexFromProgram(program: Uint8Array): string
 // @forbidden  a network call — pinning must work fully offline
 // @forbidden  a canonical on-chain id literal here — G7
+// @forbidden  copy claiming Move enforces the destination — it does not (G2)
 // @invariant  1. parseExitAddressInput NEVER returns ok for a program that is not
 //                exactly 20 or 32 bytes — the upstream assert would abort.
 // @invariant  2. Witness version 0 is validated against bech32, versions 1..16
 //                against bech32m. A spec mismatch is rejected, never coerced.
 // @invariant  3. An address for another Bitcoin network is REJECTED, not warned
-//                about: the pin is write-once and unrecoverable (G2).
-// @ac         docs/APP.md §7 A4
+//                about: a wrong destination is unrecoverable.
+// @ac         app/test/bech32.test.ts — BIP-173 / BIP-350 known-answer vectors
 // @verify     cd app && npx tsc --noEmit
 // └── END CONTRACT ───────────────────────────────────────────────────────────
 
@@ -202,7 +205,7 @@ export type ExitAddressKind = 'P2WPKH' | 'P2TR';
 export interface ParsedExitAddress {
   readonly kind: ExitAddressKind;
   readonly witnessVersion: 0 | 1;
-  /** The bytes that `gateway::register_exit_address` writes into the Vault. */
+  /** The witness-program bytes that get pinned as the redemption destination. */
   readonly program: Uint8Array;
   readonly hex: string;
   readonly bech32: string;
@@ -236,8 +239,8 @@ const LEGACY_BASE58 = /^[123mn][1-9A-HJ-NP-Za-km-z]{25,39}$/;
  * in hex, and returns the exact bytes that will be pinned on-chain.
  *
  * Every rejection carries the precise reason — this is the ONLY moment a user
- * ever chooses the destination, and `gateway::register_exit_address` is
- * write-once (G2). A wrong pin cannot be undone.
+ * ever chooses the destination, and the pin is not re-pointed afterwards
+ * (aphotic.md §6.3). A wrong pin cannot be undone.
  */
 export function parseExitAddressInput(raw: string, hrp: string = SIGNET_HRP): ExitAddressParse {
   const input = raw.trim();

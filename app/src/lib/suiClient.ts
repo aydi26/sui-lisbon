@@ -1,15 +1,15 @@
 // ┌── APHOTIC CONTRACT ────────────────────────────────────────────────────────
-// @task       T0.4
+// @task       X.app
 // @phase      0
 // @status     DONE
 // @spec       docs/RECON.md R1 (transport decision)
-// @spec       docs/APP.md §1 (all async reads go through React Query)
-// @rules      G7 G9
-// @depends    ../config.ts (T0.4)
+// @spec       docs/FACTS.md#rpc-transport
+// @rules      G7
+// @depends    ../config.ts (X.app)
 // @facts      ⚠ The testnet fullnode https://fullnode.testnet.sui.io:443 serves
 // @facts        gRPC v2 ONLY — its JSON-RPC endpoint is 404/removed. (RECON R1)
 // @facts      ⇒ SuiGrpcClient is the DEFAULT read transport for everything the
-// @facts        app reads itself (Vault, journal blob ids, DeepBook mid).
+// @facts        app reads itself (vault state, batch state, the DeepBook mid).
 // @facts      ⚠ @mysten/dapp-kit 1.1.9's SuiClientProvider is typed to
 // @facts        SuiJsonRpcClient and CANNOT accept a gRPC client. Wallet-side
 // @facts        reads therefore run over a verified JSON-RPC MIRROR
@@ -26,7 +26,8 @@
 // @invariant  1. Exactly one SuiGrpcClient instance per page load (memoised).
 // @invariant  2. Nothing in screens/ or components/ imports @mysten/sui directly
 //                for client construction.
-// @ac         docs/APP.md §7 A11 — mock mode never touches either client.
+// @ac         docs/DEPLOY.md "Environment variables" — VITE_DEMO_MODE=mock renders
+//             from fixtures with zero network, so mock mode never touches either client.
 // @verify     cd app && npx tsc --noEmit
 // └── END CONTRACT ───────────────────────────────────────────────────────────
 

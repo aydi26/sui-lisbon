@@ -45,10 +45,11 @@
 //                button and show that same one-line reason.
 // @invariant  3. The SENDER is always the connected account. Sponsorship (Enoki gas
 //                pool) changes who pays, never who signs — that is what keeps a
-//                reclaim satisfying Hashi's `request.sender == ctx.sender()` (E-A3).
+//                reclaim satisfying Hashi's `request.sender == ctx.sender()`
+//                (docs/FACTS.md#hashi-move-api).
 // @invariant  4. waitForTransaction is best-effort: it can never turn a successful
 //                execution into a reported failure.
-// @ac         docs/APP.md §7 A4 — a Move abort renders as human text, not a hex dump.
+// @ac         app/test/tx.test.ts — a Move abort renders as human text, not a hex dump.
 // @verify     cd app && npx tsc --noEmit
 // @verify     cd app && npm run build
 // └── END CONTRACT ───────────────────────────────────────────────────────────
@@ -82,7 +83,7 @@ export type TxErrorKind =
   | 'unknown';
 
 export interface MoveAbortInfo {
-  /** Move module name, e.g. `gateway`. Null when the string did not carry one. */
+  /** Move module name, e.g. `vault`. Null when the string did not carry one. */
   readonly module: string | null;
   /** Move function name when the node reported it. */
   readonly functionName: string | null;
@@ -167,9 +168,9 @@ const CLEVER_BIT = 1n << 63n;
  * when the string is not a Move abort at all.
  *
  * Handles both renderings we have seen:
- *   MoveAbort(MoveLocation { module: ModuleId { address: …, name: Identifier("gateway") },
- *             function: 4, instruction: 27, function_name: Some("exit_to_bitcoin") }, 4)
- *   MoveAbort(MoveLocation { module: 0x148a…::gateway, function: 4, … }, 4)
+ *   MoveAbort(MoveLocation { module: ModuleId { address: …, name: Identifier("vault") },
+ *             function: 4, instruction: 27, function_name: Some("claim_deposit") }, 4)
+ *   MoveAbort(MoveLocation { module: 0x148a…::vault, function: 4, … }, 4)
  * and the terse `... abort code: 4` form, which carries no module.
  */
 export function parseMoveAbort(raw: string): MoveAbortInfo | null {

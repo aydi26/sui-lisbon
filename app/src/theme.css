@@ -633,3 +633,232 @@ button {
     scroll-behavior: auto !important;
   }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SURFACE LAYER — the card grammar
+   ───────────────────────────────────────────────────────────────────────────
+   Borrowed shape, not borrowed code: a 20px radius, a HAIRLINE border, a card
+   background one step off the page, and a sticky head inside the card rather
+   than above it. The hairline matters more than it looks — a 1px border at this
+   radius reads as a box, 0.5px reads as a plane, and the whole calm of the
+   layout comes from that one value.
+
+   Type runs SMALL and quiet. Numbers are the only thing allowed to be loud,
+   because on a page whose job is to state positions, the number IS the content.
+   ═════════════════════════════════════════════════════════════════════════ */
+
+.aphotic-card,
+.ap-panel {
+  background: var(--bg-elevated);
+  border: 0.5px solid var(--border-soft);
+  border-radius: 20px;
+  box-shadow: var(--shadow-md);
+  padding: var(--space-5);
+}
+
+/* A panel with its own head/body split, for anything list- or table-shaped. */
+.ap-panel {
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.ap-panel-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg-elevated);
+  border-bottom: 0.5px solid var(--border-soft);
+  padding: var(--space-4) var(--space-5);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.ap-panel-title {
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: 500;
+  letter-spacing: var(--tracking-tight);
+}
+
+.ap-panel-body { padding: var(--space-5); min-height: 0; }
+.ap-panel-body--flush { padding: 0; }
+
+/* Quiet uppercase field label. */
+.ap-label {
+  display: block;
+  font-size: 0.6875rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: var(--space-3);
+}
+
+/* A metric: small label above, large tabular number below. */
+.ap-metric { display: grid; gap: var(--space-1); }
+.ap-metric-label { font-size: var(--text-xs); color: var(--text-muted); }
+.ap-metric-value {
+  font-family: var(--font-mono);
+  font-size: var(--text-xl);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: var(--tracking-tight);
+  color: var(--text-primary);
+}
+.ap-metric-sub { font-size: var(--text-xs); color: var(--text-secondary); }
+
+/* Pill badge, for units and states that sit beside a number. */
+.ap-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: 18px;
+  padding: 0 8px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-secondary);
+  border: 0.5px solid var(--border-soft);
+  color: var(--text-secondary);
+  font-size: 0.625rem;
+  white-space: nowrap;
+}
+.ap-badge--live { color: var(--green); }
+.ap-badge--warn { color: var(--amber); }
+
+/* Hairline-separated rows. Hover is the only decoration. */
+.ap-rows { list-style: none; margin: 0; padding: 0; }
+.ap-rows > li { border-bottom: 0.5px solid var(--border-soft); }
+.ap-rows > li:last-child { border-bottom: 0; }
+
+.ap-rowline {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  width: 100%;
+  padding: var(--space-4) var(--space-5);
+  background: transparent;
+  border: 0;
+  color: inherit;
+  text-align: left;
+  font: inherit;
+  transition: background var(--dur-fast) var(--ease);
+}
+button.ap-rowline { cursor: pointer; }
+button.ap-rowline:hover:not(:disabled) { background: var(--bg-secondary); }
+button.ap-rowline:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ─── The connect gate ──────────────────────────────────────────────────── */
+
+.ap-gate {
+  display: flex;
+  justify-content: center;
+  padding: var(--space-8) var(--space-4);
+}
+
+.ap-gate-card { width: 100%; max-width: 27rem; padding: 0; }
+
+.ap-gate-head {
+  padding: var(--space-6) var(--space-6) var(--space-4);
+  border-bottom: 0.5px solid var(--border-soft);
+}
+.ap-gate-title {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-lg);
+  font-weight: 500;
+  letter-spacing: var(--tracking-tight);
+}
+.ap-gate-sub { margin: 0; font-size: var(--text-sm); color: var(--text-secondary); }
+
+.ap-gate-body { padding: var(--space-5) var(--space-6); display: grid; gap: var(--space-5); }
+.ap-gate-section { display: grid; gap: var(--space-3); }
+
+.ap-gate-rule {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+.ap-gate-rule::before,
+.ap-gate-rule::after {
+  content: '';
+  flex: 1;
+  height: 0.5px;
+  background: var(--border-soft);
+}
+
+.ap-wallet-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
+
+.ap-wallet-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-secondary);
+  border: 0.5px solid transparent;
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+.ap-wallet-row:hover:not(:disabled) {
+  background: var(--bg-primary);
+  border-color: var(--border);
+}
+.ap-wallet-row:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.ap-wallet-icon { width: 20px; height: 20px; border-radius: 6px; object-fit: contain; flex-shrink: 0; }
+.ap-wallet-icon--mono {
+  display: grid;
+  place-items: center;
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  font-size: 0.6875rem;
+}
+.ap-wallet-name { flex: 1; }
+.ap-wallet-cue { color: var(--text-muted); }
+
+.ap-gate-empty,
+.ap-gate-note { margin: 0; font-size: var(--text-xs); color: var(--text-muted); line-height: var(--leading-normal); }
+.ap-gate-empty a { color: var(--accent); }
+
+.ap-gate-problems {
+  margin: 0;
+  padding-left: 1.1rem;
+  font-size: var(--text-xs);
+  color: var(--amber);
+  display: grid;
+  gap: var(--space-1);
+}
+
+.ap-gate-foot {
+  padding: var(--space-4) var(--space-6) var(--space-6);
+  border-top: 0.5px solid var(--border-soft);
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  line-height: var(--leading-normal);
+}
+
+.ap-btn--block { width: 100%; justify-content: center; }
+
+.ap-msg {
+  margin: 0 var(--space-6) var(--space-4);
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+}
+.ap-msg--bad { color: var(--red); }
+.ap-msg--warn { color: var(--amber); }
+.ap-msg--ok { color: var(--green); }
+
+@media (max-width: 640px) {
+  .aphotic-card,
+  .ap-panel { border-radius: 16px; padding: var(--space-4); }
+  .ap-panel { padding: 0; }
+  .ap-gate { padding: var(--space-5) var(--space-3); }
+}

@@ -32,6 +32,7 @@ import { Suspense, lazy } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 
 import App from './App';
+import { WalletGate } from './components';
 import BatchScreen from './screens/batch/BatchScreen';
 import VaultScreen from './screens/vault/VaultScreen';
 import VerifyScreen from './screens/verify/VerifyScreen';
@@ -62,8 +63,26 @@ export function AppRoutes() {
             </Suspense>
           }
         />
-        <Route path="vault" element={<VaultScreen />} />
-        <Route path="batch" element={<BatchScreen />} />
+        {/* /vault and /batch build transactions, so they sit behind the connect
+            gate. /verify deliberately does NOT: it recomputes published state and
+            proves fills against a public root, and demanding a wallet to check
+            someone else's arithmetic would defeat the point of shipping it. */}
+        <Route
+          path="vault"
+          element={
+            <WalletGate purpose="Depositing and redeeming are requests you sign yourself. Connect the address they should settle to.">
+              <VaultScreen />
+            </WalletGate>
+          }
+        />
+        <Route
+          path="batch"
+          element={
+            <WalletGate purpose="Orders are encrypted in your browser and drawn against your own internal balance. Connect the address that holds it.">
+              <BatchScreen />
+            </WalletGate>
+          }
+        />
         <Route path="verify" element={<VerifyScreen />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
